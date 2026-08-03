@@ -1,0 +1,63 @@
+[fsm]
+initial = "idle"
+
+[fsm.states.idle]
+label = "Room Empty"
+models = ["detect-fast"]
+
+[fsm.states.watching]
+label = "Person Present"
+models = ["detect-fast", "pose-standard"]
+
+[fsm.states.bed_alert]
+label = "ALERT: Bed Exit Attempt"
+models = ["detect-fast", "face-v12"]
+dwell_min_ms = 3_000
+
+[fsm.states.blind]
+label = "BLIND: No Camera Signal"
+
+# ── Wildcard → blind on data stale ──
+
+[[fsm.transitions]]
+from = "*"
+to = "blind"
+guards = [{ type = "data_stale" }]
+
+# ── Idle ↔ Watching ──
+
+[[fsm.transitions]]
+from = "idle"
+to = "watching"
+guards = [
+    { type = "zone_occupied", zone = "bed", min_confidence = 0.5 },
+    { type = "zone_occupied", zone = "chair", min_confidence = 0.5 }
+]
+
+[[fsm.transitions]]
+from = "watching"
+to = "idle"
+guards = [{ type = "all_zones_vacant", min_duration_ms = 60_000 }]
+
+# ── Watching → Bed Alert ──
+
+[[fsm.transitions]]
+from = "watching"
+to = "bed_alert"
+guards = [{ type = "zone_vacated", zone = "bed", min_duration_ms = 3_000 }]
+
+# ── Bed Alert → Watching (recovery) ──
+
+[[fsm.transitions]]
+from = "bed_alert"
+to = "watching"
+guards = [
+    { type = "zone_occupied", zone = "bed", min_duration_ms = 5_000 }
+]
+
+# ── Bed Alert dwell timeout ──
+
+[[fsm.transitions]]
+from = "bed_alert"
+to = "blind"
+dwell = "5m"

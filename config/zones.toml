@@ -1,0 +1,31 @@
+[zones.bed]
+x1 = 100
+y1 = 200
+x2 = 500
+y2 = 800
+label = "Bed A"
+hysteresis_ms = 500
+
+[zones.chair]
+x1 = 600
+y1 = 300
+x2 = 750
+y2 = 600
+label = "Chair 1"
+hysteresis_ms = 1000
+
+[zones.door]
+x1 = 0
+y1 = 0
+x2 = 150
+y2 = 900
+label = "Entrance Door"
+hysteresis_ms = 2000
+
+[zones.floor]
+x1 = 0
+y1 = 500
+x2 = 800
+y2 = 900
+label = "Floor Area"
+hysteresis_ms = 1000

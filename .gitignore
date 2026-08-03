@@ -1,0 +1,21 @@
+/target/
+/Cargo.lock
+
+# Models (large binary files)
+*.onnx
+*.pt
+*.pth
+*.safetensors
+
+# Output
+logs/
+*.jsonl
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# macOS
+.DS_Store

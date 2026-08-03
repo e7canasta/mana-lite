@@ -1,0 +1,20 @@
+[source]
+url = "rtsp://192.168.1.100:554/stream1"
+username = "admin"
+password = ""
+transport = "tcp"
+keyframes_only = true
+
+[inference]
+model_catalog = "config/models.toml"
+default_model = "detect-fast"
+zones_file = "config/zones.toml"
+fsm_file = "config/fsm.toml"
+
+[health]
+data_stale_ms = 10_000
+max_consecutive_panics = 3
+heartbeat_every_n_cycles = 100
+
+[output]
+format = "jsonl"

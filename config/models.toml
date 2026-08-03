@@ -1,0 +1,46 @@
+[models.detect-fast]
+path = "models/yolo26n.onnx"
+task = "detect"
+confidence = 0.5
+imgsz = 320
+
+[models.detect-large]
+path = "models/yolo26x.onnx"
+task = "detect"
+confidence = 0.3
+imgsz = 640
+
+[models.detect-v2]
+path = "models/yolo27n.onnx"
+task = "detect"
+confidence = 0.3
+imgsz = 320
+
+[models.pose-standard]
+path = "models/yolo26n-pose.onnx"
+task = "pose"
+confidence = 0.3
+imgsz = 640
+
+[models.face-v11]
+path = "models/yolov11n-face.onnx"
+task = "detect"
+confidence = 0.6
+imgsz = 320
+
+[models.face-v12]
+path = "models/yolov12n-face.onnx"
+task = "detect"
+confidence = 0.5
+imgsz = 320
+
+[models.segment-large]
+path = "models/yolo26x-seg.onnx"
+task = "segment"
+confidence = 0.3
+imgsz = 640
+
+[models.depth-small]
+path = "models/depth-anything-small.onnx"
+task = "depth"
+imgsz = 384
