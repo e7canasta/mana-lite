@@ -72,10 +72,10 @@ fn main() -> Result<()> {
     // ── Superloop ──
     let mut frame_count: u64 = 0;
     let mut cycle_start = Instant::now();
-    let mut last_frame_at = cycle_start;
+    let mut last_frame_at;
+    #[allow(unused_variables)]
     let mut panic_count: u32 = 0;
     let mut current_state: Option<String> = fsm.as_ref().map(|f| f.fsm.initial.clone());
-    let mut last_heartbeat_cycle: u64 = 0;
 
     loop {
         let cycle_us = cycle_start.elapsed().as_micros() as u64;

@@ -1,4 +1,3 @@
-use serde::Serialize;
 use std::io::{self, BufWriter, Write};
 use std::time::Instant;
 
@@ -77,52 +76,35 @@ impl Logger {
     }
 }
 
-#[derive(Serialize)]
-#[serde(tag = "type")]
 pub enum Event {
-    #[serde(rename = "meta")]
     Meta {
         event: String,
         detail: String,
-        #[serde(skip_serializing_if = "Vec::is_empty")]
         attrs: Vec<(String, String)>,
     },
-
-    #[serde(rename = "health")]
     Health {
         event: String,
-        #[serde(skip_serializing_if = "Option::is_none")]
         f: Option<u64>,
-        #[serde(skip_serializing_if = "Option::is_none")]
         cyc_us: Option<u64>,
-        #[serde(skip_serializing_if = "Option::is_none")]
         msg: Option<String>,
     },
-
-    #[serde(rename = "frame")]
     Frame {
         f: u64,
         kf: bool,
         dec_ms: u64,
     },
-
-    #[serde(rename = "detection")]
     Detection {
         f: u64,
         m: String,
         inf_ms: u64,
         det: Vec<DetRecord>,
     },
-
-    #[serde(rename = "zone")]
     Zone {
         z: String,
         e: String,
         cls: String,
         f: u64,
     },
-
-    #[serde(rename = "fsm")]
     Fsm {
         from: String,
         to: String,
@@ -131,7 +113,6 @@ pub enum Event {
     },
 }
 
-#[derive(Serialize)]
 pub struct DetRecord {
     pub c: String,
     pub conf: f32,
@@ -269,7 +250,7 @@ impl Event {
                 buf.extend_from_slice(b"\",\"detail\":\"");
                 buf.extend_from_slice(detail.as_bytes());
                 buf.extend_from_slice(b"\"");
-                for (k, v) in *attrs {
+                for (k, v) in attrs {
                     buf.extend_from_slice(b",\"");
                     buf.extend_from_slice(k.as_bytes());
                     buf.extend_from_slice(b"\":\"");
