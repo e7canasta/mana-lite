@@ -10,7 +10,6 @@ pub struct Logger {
 
 enum OutputTarget {
     Stdout(BufWriter<io::Stdout>),
-    #[allow(dead_code)]
     File(BufWriter<std::fs::File>),
 }
 
@@ -46,19 +45,26 @@ impl Logger {
             return;
         }
         let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+        let events: Vec<Event> = self.buffer.drain(..).collect();
+        let mut buf = Vec::with_capacity(512);
+        for event in &events {
+            write_event(event, &now, &mut buf);
+            let _ = self.write_buf(&buf);
+        }
+        self.flush_target();
+    }
+
+    fn flush_target(&mut self) {
         match &mut self.target {
-            OutputTarget::Stdout(w) => {
-                for event in self.buffer.drain(..) {
-                    let _ = event.write_line(w, &now);
-                }
-                let _ = w.flush();
-            }
-            OutputTarget::File(w) => {
-                for event in self.buffer.drain(..) {
-                    let _ = event.write_line(w, &now);
-                }
-                let _ = w.flush();
-            }
+            OutputTarget::Stdout(w) => { let _ = w.flush(); }
+            OutputTarget::File(w) => { let _ = w.flush(); }
+        }
+    }
+
+    fn write_buf(&mut self, buf: &[u8]) -> io::Result<()> {
+        match &mut self.target {
+            OutputTarget::Stdout(w) => w.write_all(buf),
+            OutputTarget::File(w) => w.write_all(buf),
         }
     }
 
@@ -73,6 +79,14 @@ impl Logger {
         });
         self.flush();
         Ok(())
+    }
+
+    #[doc(hidden)]
+    pub fn flush_to_buffer(&mut self, out: &mut Vec<u8>) {
+        let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+        for event in self.buffer.drain(..) {
+            write_event(&event, &now, out);
+        }
     }
 }
 
@@ -227,132 +241,129 @@ impl Event {
             dwell: dwell_ms,
         }
     }
-
-    fn write_line(&self, w: &mut impl Write, ts: &str) -> io::Result<()> {
-        let mut buf = Vec::with_capacity(512);
-        self.write_prefixed(w, ts, &mut buf)
-    }
-
-    fn write_prefixed(&self, w: &mut impl Write, ts: &str, buf: &mut Vec<u8>) -> io::Result<()> {
-        buf.clear();
-        buf.extend_from_slice(b"{\"t\":\"");
-        buf.extend_from_slice(ts.as_bytes());
-        buf.extend_from_slice(b"\",");
-
-        match self {
-            Event::Meta {
-                event,
-                detail,
-                attrs,
-            } => {
-                buf.extend_from_slice(b"\"type\":\"meta\",\"event\":\"");
-                buf.extend_from_slice(event.as_bytes());
-                buf.extend_from_slice(b"\",\"detail\":\"");
-                buf.extend_from_slice(detail.as_bytes());
-                buf.extend_from_slice(b"\"");
-                for (k, v) in attrs {
-                    buf.extend_from_slice(b",\"");
-                    buf.extend_from_slice(k.as_bytes());
-                    buf.extend_from_slice(b"\":\"");
-                    buf.extend_from_slice(v.as_bytes());
-                    buf.extend_from_slice(b"\"");
-                }
-            }
-            Event::Health {
-                event,
-                f,
-                cyc_us,
-                msg,
-            } => {
-                buf.extend_from_slice(b"\"type\":\"health\",\"event\":\"");
-                buf.extend_from_slice(event.as_bytes());
-                buf.extend_from_slice(b"\"");
-                if let Some(frame) = f {
-                    buf.extend_from_slice(b",\"f\":");
-                    itoa_fast(*frame, buf);
-                }
-                if let Some(cyc) = cyc_us {
-                    buf.extend_from_slice(b",\"cyc_us\":");
-                    itoa_fast(*cyc, buf);
-                }
-                if let Some(m) = msg {
-                    buf.extend_from_slice(b",\"msg\":\"");
-                    buf.extend_from_slice(m.as_bytes());
-                    buf.extend_from_slice(b"\"");
-                }
-            }
-            Event::Frame { f, kf, dec_ms } => {
-                buf.extend_from_slice(b"\"type\":\"frame\",\"f\":");
-                itoa_fast(*f, buf);
-                buf.extend_from_slice(b",\"kf\":");
-                buf.extend_from_slice(if *kf { b"true" } else { b"false" });
-                buf.extend_from_slice(b",\"dec_ms\":");
-                itoa_fast(*dec_ms, buf);
-            }
-            Event::Detection {
-                f,
-                m,
-                inf_ms,
-                det,
-            } => {
-                buf.extend_from_slice(b"\"type\":\"detection\",\"f\":");
-                itoa_fast(*f, buf);
-                buf.extend_from_slice(b",\"m\":\"");
-                buf.extend_from_slice(m.as_bytes());
-                buf.extend_from_slice(b"\",\"inf_ms\":");
-                itoa_fast(*inf_ms, buf);
-                buf.extend_from_slice(b",\"det\":[");
-                for (i, d) in det.iter().enumerate() {
-                    if i > 0 {
-                        buf.push(b',');
-                    }
-                    buf.extend_from_slice(b"{\"c\":\"");
-                    buf.extend_from_slice(d.c.as_bytes());
-                    buf.extend_from_slice(b"\",\"conf\":");
-                    write_f32_short(d.conf, buf);
-                    buf.extend_from_slice(b",\"bb\":[");
-                    for (j, v) in d.bb.iter().enumerate() {
-                        if j > 0 {
-                            buf.push(b',');
-                        }
-                        write_f32_short(*v, buf);
-                    }
-                    buf.extend_from_slice(b"]}");
-                }
-                buf.extend_from_slice(b"]");
-            }
-            Event::Zone { z, e, cls, f } => {
-                buf.extend_from_slice(b"\"type\":\"zone\",\"z\":\"");
-                buf.extend_from_slice(z.as_bytes());
-                buf.extend_from_slice(b"\",\"e\":\"");
-                buf.extend_from_slice(e.as_bytes());
-                buf.extend_from_slice(b"\",\"cls\":\"");
-                buf.extend_from_slice(cls.as_bytes());
-                buf.extend_from_slice(b"\",\"f\":");
-                itoa_fast(*f, buf);
-            }
-            Event::Fsm {
-                from,
-                to,
-                tr,
-                dwell,
-            } => {
-                buf.extend_from_slice(b"\"type\":\"fsm\",\"from\":\"");
-                buf.extend_from_slice(from.as_bytes());
-                buf.extend_from_slice(b"\",\"to\":\"");
-                buf.extend_from_slice(to.as_bytes());
-                buf.extend_from_slice(b"\",\"tr\":\"");
-                buf.extend_from_slice(tr.as_bytes());
-                buf.extend_from_slice(b"\",\"dwell\":");
-                itoa_fast(*dwell, buf);
-            }
-        }
-        buf.extend_from_slice(b"}\n");
-        w.write_all(buf)
-    }
 }
 
-fn itoa_fast(n: u64, buf: &mut Vec<u8>) {
+fn write_event(event: &Event, ts: &str, buf: &mut Vec<u8>) {
+    buf.clear();
+    buf.extend_from_slice(b"{\"t\":\"");
+    buf.extend_from_slice(ts.as_bytes());
+    buf.extend_from_slice(b"\",");
+    match event {
+        Event::Meta { event, detail, attrs } => {
+            buf.extend_from_slice(b"\"type\":\"meta\",\"event\":\"");
+            write_json_string(event, buf);
+            buf.extend_from_slice(b"\",\"detail\":\"");
+            write_json_string(detail, buf);
+            buf.extend_from_slice(b"\"");
+            for (k, v) in attrs {
+                buf.extend_from_slice(b",\"");
+                buf.extend_from_slice(k.as_bytes());
+                buf.extend_from_slice(b"\":\"");
+                write_json_string(v, buf);
+                buf.extend_from_slice(b"\"");
+            }
+        }
+        Event::Health { event, f, cyc_us, msg } => {
+            buf.extend_from_slice(b"\"type\":\"health\",\"event\":\"");
+            write_json_string(event, buf);
+            buf.extend_from_slice(b"\"");
+            if let Some(frame) = f {
+                buf.extend_from_slice(b",\"f\":");
+                write_u64(*frame, buf);
+            }
+            if let Some(cyc) = cyc_us {
+                buf.extend_from_slice(b",\"cyc_us\":");
+                write_u64(*cyc, buf);
+            }
+            if let Some(m) = msg {
+                buf.extend_from_slice(b",\"msg\":\"");
+                write_json_string(m, buf);
+                buf.extend_from_slice(b"\"");
+            }
+        }
+        Event::Frame { f, kf, dec_ms } => {
+            buf.extend_from_slice(b"\"type\":\"frame\",\"f\":");
+            write_u64(*f, buf);
+            buf.extend_from_slice(b",\"kf\":");
+            buf.extend_from_slice(if *kf { b"true" } else { b"false" });
+            buf.extend_from_slice(b",\"dec_ms\":");
+            write_u64(*dec_ms, buf);
+        }
+        Event::Detection { f, m, inf_ms, det } => {
+            buf.extend_from_slice(b"\"type\":\"detection\",\"f\":");
+            write_u64(*f, buf);
+            buf.extend_from_slice(b",\"m\":\"");
+            write_json_string(m, buf);
+            buf.extend_from_slice(b"\",\"inf_ms\":");
+            write_u64(*inf_ms, buf);
+            buf.extend_from_slice(b",\"det\":[");
+            for (i, d) in det.iter().enumerate() {
+                if i > 0 { buf.push(b','); }
+                buf.extend_from_slice(b"{\"c\":\"");
+                write_json_string(&d.c, buf);
+                buf.extend_from_slice(b"\",\"conf\":");
+                write_f32(d.conf, buf);
+                buf.extend_from_slice(b",\"bb\":[");
+                for (j, v) in d.bb.iter().enumerate() {
+                    if j > 0 { buf.push(b','); }
+                    write_f32(*v, buf);
+                }
+                buf.extend_from_slice(b"]}");
+            }
+            buf.extend_from_slice(b"]");
+        }
+        Event::Zone { z, e, cls, f } => {
+            buf.extend_from_slice(b"\"type\":\"zone\",\"z\":\"");
+            write_json_string(z, buf);
+            buf.extend_from_slice(b"\",\"e\":\"");
+            write_json_string(e, buf);
+            buf.extend_from_slice(b"\",\"cls\":\"");
+            write_json_string(cls, buf);
+            buf.extend_from_slice(b"\",\"f\":");
+            write_u64(*f, buf);
+        }
+        Event::Fsm { from, to, tr, dwell } => {
+            buf.extend_from_slice(b"\"type\":\"fsm\",\"from\":\"");
+            write_json_string(from, buf);
+            buf.extend_from_slice(b"\",\"to\":\"");
+            write_json_string(to, buf);
+            buf.extend_from_slice(b"\",\"tr\":\"");
+            write_json_string(tr, buf);
+            buf.extend_from_slice(b"\",\"dwell\":");
+            write_u64(*dwell, buf);
+        }
+    }
+    buf.extend_from_slice(b"}\n");
+}
+
+fn write_json_string(s: &str, buf: &mut Vec<u8>) {
+    let bytes = s.as_bytes();
+    let mut last = 0;
+    for (i, &b) in bytes.iter().enumerate() {
+        let esc: Option<&[u8]> = match b {
+            b'"' => Some(b"\\\""),
+            b'\\' => Some(b"\\\\"),
+            b'\n' => Some(b"\\n"),
+            b'\r' => Some(b"\\r"),
+            b'\t' => Some(b"\\t"),
+            c if c < 0x20 => {
+                buf.extend_from_slice(&bytes[last..i]);
+                buf.extend_from_slice(format!("\\u{:04x}", c).as_bytes());
+                last = i + 1;
+                continue;
+            }
+            _ => None,
+        };
+        if let Some(escaped) = esc {
+            buf.extend_from_slice(&bytes[last..i]);
+            buf.extend_from_slice(escaped);
+            last = i + 1;
+        }
+    }
+    buf.extend_from_slice(&bytes[last..]);
+}
+
+fn write_u64(n: u64, buf: &mut Vec<u8>) {
     let mut temp = [0u8; 20];
     let mut i = 20;
     let mut v = n;
@@ -368,49 +379,107 @@ fn itoa_fast(n: u64, buf: &mut Vec<u8>) {
     buf.extend_from_slice(&temp[i..]);
 }
 
-fn write_f32_short(v: f32, buf: &mut Vec<u8>) {
-    if v.fract() == 0.0 && v.abs() < 1e7 {
-        itoa_fast(v as u64, buf);
-    } else {
-        let s = format!("{v:.2}");
-        buf.extend_from_slice(s.as_bytes());
+fn write_f32(v: f32, buf: &mut Vec<u8>) {
+    if v.is_nan() || v.is_infinite() {
+        buf.extend_from_slice(b"null");
+        return;
     }
+    let neg = v < 0.0;
+    let abs = if neg { -v } else { v };
+    let scaled = (abs * 100.0 + 0.5) as u64;
+    let int_part = scaled / 100;
+    let frac_part = scaled % 100;
+    if neg { buf.push(b'-'); }
+    write_u64(int_part, buf);
+    buf.push(b'.');
+    if frac_part < 10 { buf.push(b'0'); }
+    write_u64(frac_part, buf);
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_meta_startup() {
-        let mut logger = Logger::new();
-        logger.emit(Event::meta_startup("0.1.0", "mana.toml"));
-        logger.flush();
+    fn collect(logger: &mut Logger) -> String {
+        let mut buf = Vec::new();
+        logger.flush_to_buffer(&mut buf);
+        String::from_utf8(buf).unwrap()
     }
 
     #[test]
-    fn test_detection_roundtrip() {
-        let det = vec![DetRecord {
-            c: "person".into(),
-            conf: 0.87,
-            bb: [100.0, 200.0, 300.0, 500.0],
-        }];
-        let mut logger = Logger::new();
-        logger.emit(Event::detection(1, "detect-fast", 52, det));
-        logger.flush();
+    fn meta_startup_has_type_and_version() {
+        let mut log = Logger::new();
+        log.emit(Event::meta_startup("0.1.0", "mana.toml"));
+        let out = collect(&mut log);
+        assert!(out.contains("\"type\":\"meta\""));
+        assert!(out.contains("\"event\":\"startup\""));
+        assert!(out.contains("\"v\":\"0.1.0\""));
     }
 
     #[test]
-    fn test_fsm_transition() {
-        let mut logger = Logger::new();
-        logger.emit(Event::fsm_transition("idle", "monitoring", "bed_occupied", 0));
-        logger.flush();
+    fn detection_emits_class_and_bbox() {
+        let det = vec![DetRecord { c: "person".into(), conf: 0.87, bb: [100.0, 200.0, 300.0, 500.0] }];
+        let mut log = Logger::new();
+        log.emit(Event::detection(1, "detect-fast", 52, det));
+        let out = collect(&mut log);
+        assert!(out.contains("\"type\":\"detection\""));
+        assert!(out.contains("\"c\":\"person\""));
+        assert!(out.contains("\"conf\":0.87"));
+        assert!(out.contains("\"bb\":[100.00,200.00,300.00,500.00]"));
     }
 
     #[test]
-    fn test_serialize_health_blind() {
-        let mut logger = Logger::new();
-        logger.emit(Event::health_blind(10_000));
-        logger.flush();
+    fn fsm_transition_has_from_to_trigger() {
+        let mut log = Logger::new();
+        log.emit(Event::fsm_transition("idle", "monitoring", "bed_occupied", 0));
+        let out = collect(&mut log);
+        assert!(out.contains("\"type\":\"fsm\""));
+        assert!(out.contains("\"from\":\"idle\""));
+        assert!(out.contains("\"to\":\"monitoring\""));
+        assert!(out.contains("\"tr\":\"bed_occupied\""));
+    }
+
+    #[test]
+    fn health_blind_has_message() {
+        let mut log = Logger::new();
+        log.emit(Event::health_blind(10_000));
+        let out = collect(&mut log);
+        assert!(out.contains("\"type\":\"health\""));
+        assert!(out.contains("\"event\":\"blind\""));
+        assert!(out.contains("10000ms"));
+    }
+
+    #[test]
+    fn escape_json_string_quotes_and_backslash() {
+        let mut log = Logger::new();
+        log.emit(Event::Meta {
+            event: "test".into(),
+            detail: "say \"hello\"".into(),
+            attrs: vec![("path".into(), "C:\\Users\\test".into())],
+        });
+        let out = collect(&mut log);
+        assert!(out.contains("say \\\"hello\\\""));
+        assert!(out.contains("C:\\\\Users\\\\test"));
+    }
+
+    #[test]
+    fn escape_json_control_chars() {
+        let mut log = Logger::new();
+        log.emit(Event::Meta {
+            event: "test".into(),
+            detail: "line1\nline2".into(),
+            attrs: vec![],
+        });
+        let out = collect(&mut log);
+        assert!(out.contains("line1\\nline2"));
+    }
+
+    #[test]
+    fn negative_float_is_valid_json() {
+        let det = vec![DetRecord { c: "x".into(), conf: 0.5, bb: [-10.5, 0.0, 100.0, 200.3] }];
+        let mut log = Logger::new();
+        log.emit(Event::detection(1, "m", 10, det));
+        let out = collect(&mut log);
+        assert!(out.contains("\"bb\":[-10.50,0.00,100.00,200.30]"));
     }
 }

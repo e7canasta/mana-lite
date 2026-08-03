@@ -3,9 +3,13 @@ name = "mana-lite"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.89"
-description = "Clinical-grade real-time vision pipeline lite — single-binary superloop"
+description = "Clinical-grade real-time vision pipeline — single-binary PLC superloop"
 license = "AGPL-3.0"
-repository = "https://github.com/mana/mana-lite"
+repository = "https://github.com/mana-os/mana-lite"
+readme = "README.md"
+keywords = ["clinical", "vision", "rtsp", "onnx", "pipeline"]
+categories = ["command-line-utilities", "science"]
+authors = ["Mana OS Contributors"]
 
 [[bin]]
 name = "mana-lite"
