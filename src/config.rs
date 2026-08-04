@@ -96,7 +96,7 @@ pub struct OutputConfig {
     pub save_dir: Option<PathBuf>,
     #[serde(default = "default_rotate")]
     pub rotate: Rotate,
-    #[serde(default)]
+    #[serde(default = "default_snapshot_dir")]
     pub snapshot_dir: Option<PathBuf>,
     #[serde(default = "default_jsonl_level")]
     pub jsonl_level: String,
@@ -108,7 +108,7 @@ impl Default for OutputConfig {
             format: default_format(),
             save_dir: None,
             rotate: default_rotate(),
-            snapshot_dir: None,
+            snapshot_dir: default_snapshot_dir(),
             jsonl_level: default_jsonl_level(),
         }
     }
@@ -125,6 +125,7 @@ pub enum Rotate {
 fn default_format() -> String { "jsonl".into() }
 fn default_rotate() -> Rotate { Rotate::Hourly }
 fn default_jsonl_level() -> String { "info".into() }
+fn default_snapshot_dir() -> Option<PathBuf> { Some("./snapshots".into()) }
 
 #[derive(Debug, Default, Deserialize)]
 pub struct ModelCatalog {
