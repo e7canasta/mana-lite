@@ -1,9 +1,17 @@
 [source]
+# url = "rtsp://192.168.1.6:8554/home"
 url = "rtsp://192.168.1.6:8554/clip1"
 username = "admin"
 password = ""
 transport = "tcp"
 keyframes_only = true
+
+[ingest]
+poll_timeout_ms = 50
+error_window_size = 128
+error_window_threshold = 25
+reconnect_backoff_initial_ms = 1000
+reconnect_backoff_max_ms = 30000
 
 [inference]
 model_catalog = "config/models.toml"
@@ -20,4 +28,3 @@ report_interval_s = 5
 format = "jsonl"
 save_dir = "./logs"
 rotate = "hourly"
-snapshot_dir = "./snapshots"

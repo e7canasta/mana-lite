@@ -69,7 +69,7 @@ async fn main() -> Result<()> {
     let mut current_state: Option<String> = fsm.as_ref().map(|f| f.fsm.initial.clone());
     let mut fsm_stub_fired = false;
 
-    let demo_mode = app_config.source.url.contains("demo") || args_has_flag("--demo");
+    let demo_mode = app_config.source.demo || app_config.source.url.contains("demo") || args_has_flag("--demo");
     let mut ingest: IngestEngine<AnyReader> = if demo_mode {
         let frames = demo_frames();
         IngestEngine::new(AnyReader::Queued(QueuedReader::new(frames)))
@@ -79,6 +79,7 @@ async fn main() -> Result<()> {
             app_config.source.username.as_deref(),
             app_config.source.password.as_deref(),
             &app_config.source.transport,
+            &app_config.ingest,
         ).await?;
         IngestEngine::new(AnyReader::Retina(reader))
     };

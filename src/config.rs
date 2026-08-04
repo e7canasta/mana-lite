@@ -7,6 +7,8 @@ use crate::error::{ConfigError, Result};
 #[derive(Debug, Deserialize)]
 pub struct AppConfig {
     pub source: SourceConfig,
+    #[serde(default)]
+    pub ingest: IngestConfig,
     pub inference: InferenceConfig,
     pub health: HealthConfig,
     #[serde(default)]
@@ -24,9 +26,43 @@ pub struct SourceConfig {
     pub transport: String,
     #[serde(default)]
     pub keyframes_only: bool,
+    #[serde(default)]
+    pub demo: bool,
 }
 
 fn default_transport() -> String { "tcp".into() }
+
+#[derive(Debug, Deserialize)]
+pub struct IngestConfig {
+    #[serde(default = "default_poll_timeout_ms")]
+    pub poll_timeout_ms: u64,
+    #[serde(default = "default_error_window_size")]
+    pub error_window_size: usize,
+    #[serde(default = "default_error_window_threshold")]
+    pub error_window_threshold: u32,
+    #[serde(default = "default_backoff_initial_ms")]
+    pub reconnect_backoff_initial_ms: u64,
+    #[serde(default = "default_backoff_max_ms")]
+    pub reconnect_backoff_max_ms: u64,
+}
+
+impl Default for IngestConfig {
+    fn default() -> Self {
+        Self {
+            poll_timeout_ms: default_poll_timeout_ms(),
+            error_window_size: default_error_window_size(),
+            error_window_threshold: default_error_window_threshold(),
+            reconnect_backoff_initial_ms: default_backoff_initial_ms(),
+            reconnect_backoff_max_ms: default_backoff_max_ms(),
+        }
+    }
+}
+
+fn default_poll_timeout_ms() -> u64 { 50 }
+fn default_error_window_size() -> usize { 128 }
+fn default_error_window_threshold() -> u32 { 25 }
+fn default_backoff_initial_ms() -> u64 { 1000 }
+fn default_backoff_max_ms() -> u64 { 30_000 }
 
 #[derive(Debug, Deserialize)]
 pub struct InferenceConfig {
@@ -214,7 +250,40 @@ pub fn load_config<T: DeserializeOwned>(path: &Path) -> Result<T> {
         .into())
 }
 
-pub fn load_app_config(path: &Path) -> Result<AppConfig> { load_config(path) }
+pub fn load_app_config(path: &Path) -> Result<AppConfig> {
+    let mut config: AppConfig = load_config(path)?;
+    apply_env_overrides(&mut config);
+    Ok(config)
+}
+
+fn apply_env_overrides(cfg: &mut AppConfig) {
+    if let Ok(v) = std::env::var("MANA_SOURCE_URL") { cfg.source.url = v; }
+    if let Ok(v) = std::env::var("MANA_SOURCE_USERNAME") {
+        cfg.source.username = if v.is_empty() { None } else { Some(v) };
+    }
+    if let Ok(v) = std::env::var("MANA_SOURCE_PASSWORD") {
+        cfg.source.password = if v.is_empty() { None } else { Some(v) };
+    }
+    if let Ok(v) = std::env::var("MANA_TRANSPORT") { cfg.source.transport = v; }
+    if let Ok(v) = std::env::var("MANA_KEYFRAMES_ONLY") { cfg.source.keyframes_only = v.parse().unwrap_or(true); }
+    if let Ok(v) = std::env::var("MANA_DEMO") { cfg.source.demo = v == "1" || v == "true"; }
+    if let Ok(v) = std::env::var("MANA_MODEL_CATALOG") { cfg.inference.model_catalog = v.into(); }
+    if let Ok(v) = std::env::var("MANA_DEFAULT_MODEL") { cfg.inference.default_model = v; }
+    if let Ok(v) = std::env::var("MANA_DATA_STALE_MS") { if let Ok(n) = v.parse() { cfg.health.data_stale_ms = n; } }
+    if let Ok(v) = std::env::var("MANA_REPORT_INTERVAL") { if let Ok(n) = v.parse() { cfg.health.report_interval_s = n; } }
+    if let Ok(v) = std::env::var("MANA_SAVE_DIR") {
+        cfg.output.save_dir = if v.is_empty() { None } else { Some(v.into()) };
+    }
+    if let Ok(v) = std::env::var("MANA_SNAPSHOT_DIR") {
+        cfg.output.snapshot_dir = if v.is_empty() { None } else { Some(v.into()) };
+    }
+    if let Ok(v) = std::env::var("MANA_POLL_TIMEOUT_MS") { if let Ok(n) = v.parse() { cfg.ingest.poll_timeout_ms = n; } }
+    if let Ok(v) = std::env::var("MANA_ERROR_WINDOW_SIZE") { if let Ok(n) = v.parse() { cfg.ingest.error_window_size = n; } }
+    if let Ok(v) = std::env::var("MANA_ERROR_WINDOW_THRESHOLD") { if let Ok(n) = v.parse() { cfg.ingest.error_window_threshold = n; } }
+    if let Ok(v) = std::env::var("MANA_BACKOFF_INITIAL_MS") { if let Ok(n) = v.parse() { cfg.ingest.reconnect_backoff_initial_ms = n; } }
+    if let Ok(v) = std::env::var("MANA_BACKOFF_MAX_MS") { if let Ok(n) = v.parse() { cfg.ingest.reconnect_backoff_max_ms = n; } }
+}
+
 pub fn load_model_catalog(path: &Path) -> Result<ModelCatalog> { load_config(path) }
 pub fn load_zone_catalog(path: &Path) -> Result<ZoneCatalog> { load_config(path) }
 pub fn load_fsm_catalog(path: &Path) -> Result<FsmCatalog> { load_config(path) }

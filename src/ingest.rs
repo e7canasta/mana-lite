@@ -1,3 +1,4 @@
+use crate::config::IngestConfig;
 use crate::error::*;
 use std::collections::VecDeque;
 
@@ -119,6 +120,9 @@ pub struct RetinaReader {
     retry_count: u32,
     rtp_window: ErrorWindow,
     pub counters: RetinaCounters,
+    poll_timeout_ms: u64,
+    backoff_initial_ms: u64,
+    backoff_max_ms: u64,
 }
 
 fn fast_jitter(half: u64, seed: u64) -> u64 {
@@ -159,6 +163,7 @@ impl RetinaReader {
         username: Option<&str>,
         password: Option<&str>,
         transport: &str,
+        cfg: &IngestConfig,
     ) -> Result<Self> {
         let parsed = url::Url::parse(url)
             .map_err(|e| ManaError::Ingest(format!("invalid url: {e}")))?;
@@ -171,14 +176,17 @@ impl RetinaReader {
             password: password.map(String::from),
             transport: transport.to_string(),
             retry_count: 0,
-            rtp_window: ErrorWindow::new(128, 25),
+            rtp_window: ErrorWindow::new(cfg.error_window_size, cfg.error_window_threshold),
             counters: RetinaCounters::default(),
+            poll_timeout_ms: cfg.poll_timeout_ms,
+            backoff_initial_ms: cfg.reconnect_backoff_initial_ms,
+            backoff_max_ms: cfg.reconnect_backoff_max_ms,
         })
     }
 
     async fn reconnect(&mut self) {
-        let mut base_ms: u64 = 1000;
-        let max_ms: u64 = 30_000;
+        let mut base_ms: u64 = self.backoff_initial_ms;
+        let max_ms: u64 = self.backoff_max_ms;
         loop {
             self.retry_count += 1;
             self.counters.reconnect_attempts += 1;
@@ -262,7 +270,7 @@ impl FrameReader for RetinaReader {
     async fn next_frame(&mut self) -> Option<Frame> {
         loop {
             let poll = tokio::time::timeout(
-                std::time::Duration::from_millis(50),
+                std::time::Duration::from_millis(self.poll_timeout_ms),
                 futures::StreamExt::next(&mut self.demuxed),
             )
             .await;
