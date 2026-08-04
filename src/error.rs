@@ -24,6 +24,9 @@ pub enum ManaError {
     #[error("fsm guard: {0}")]
     FsmGuardError(String),
 
+    #[error("viz: {0}")]
+    Viz(String),
+
     #[error("io: {0}")]
     Io(#[from] std::io::Error),
 }

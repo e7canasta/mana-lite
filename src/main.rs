@@ -14,7 +14,6 @@ use mana_types::RawFrameV1;
 use metrics::*;
 use snapshot::*;
 use viz::*;
-use std::collections::VecDeque;
 use std::path::PathBuf;
 
 static VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -69,14 +68,10 @@ async fn main() -> Result<()> {
         0,
     ));
 
-    let mut frame_count: u64 = 0;
-    let mut current_state: Option<String> = fsm.as_ref().map(|f| f.fsm.initial.clone());
-    let mut fsm_stub_fired = false;
+    let demo_mode = app_config.source.demo || args_has_flag("--demo");
 
-    let demo_mode = app_config.source.demo || app_config.source.url.contains("demo") || args_has_flag("--demo");
     let mut ingest: IngestEngine<AnyReader> = if demo_mode {
-        let frames = demo_frames();
-        IngestEngine::new(AnyReader::Queued(QueuedReader::new(frames)))
+        IngestEngine::new(AnyReader::Queued(QueuedReader::new(demo_frames())))
     } else {
         let reader = RetinaReader::connect(
             &app_config.source.url,
@@ -111,41 +106,22 @@ async fn main() -> Result<()> {
         None
     };
 
+    let mut state = PipelineState {
+        frame_count: 0,
+        current_state: fsm.as_ref().map(|f| f.fsm.initial.clone()),
+        fsm_stub_fired: false,
+        demo_mode,
+    };
+
     loop {
         metrics.tick_cycle();
 
-        // PHASE 1: TIMERS (no-op until fsm.rs)
-
-        // PHASE 2: EVALUATE (no-op until inference pipeline)
-
-        // PHASE 3: INGEST
-        if let Some(decoded) = ingest.poll_freshest_keyframe().await {
-            frame_count += 1;
-            health.touch();
-            metrics.tick_keyframe();
-            metrics.tick_decode(decoded.decode_us);
-            log.emit(Event::frame_ingest(frame_count, true, decoded.decode_us));
-
-            let rgb = snapshots.as_mut().and_then(|s| s.decode_rgb(&decoded.data));
-
-            if let Some(ref mut s) = snapshots {
-                s.save_h264(&decoded.data).ok();
-                if let Some((w, h, ref rgb_data)) = rgb {
-                    s.save_png(rgb_data, w, h).ok();
-                }
-            }
-
-            if let (Some(ref mut v), Some((w, h, rgb_data))) = (viz.as_mut(), &rgb) {
-                let header = RawFrameV1 {
-                    width: *w,
-                    height: *h,
-                    frame_id: frame_count,
-                    timestamp_ns: chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0),
-                    ..Default::default()
-                };
-                if let Err(e) = v.log_frame(&header, rgb_data) {
-                    log::warn!("viz frame log failed: {e}");
-                }
+        let keyframe = ingest.poll_freshest_keyframe().await;
+        if let Some(decoded) = keyframe {
+            state.on_keyframe(&decoded, &mut metrics, &mut health, &mut log);
+            let frame_buf = snapshots.as_mut().and_then(|s| s.capture(&decoded.data));
+            if let (Some(ref mut v), Some(fb)) = (viz.as_mut(), &frame_buf) {
+                v.log_frame(&raw_frame_header(fb, state.frame_count), &fb.rgb);
             }
         }
 
@@ -155,18 +131,53 @@ async fn main() -> Result<()> {
             );
         }
 
-        // PHASE 4: INFER (stub)
-        if !fsm_stub_fired && frame_count >= 1 && current_state.is_some() {
-            log.emit(Event::fsm_transition("idle", "watching", "bed_occupied", 0));
-            current_state = Some("watching".into());
-            fsm_stub_fired = true;
+        state.on_stub_fsm(&mut log);
+        state.on_health_eval(&mut health, &mut log, &mut metrics);
+        log.flush();
+
+        if let Some(ref mut v) = viz {
+            v.tick();
         }
 
-        // PHASE 5: ZONES (no-op until inference)
+        if state.should_exit() {
+            break;
+        }
 
-        // PHASE 6: FSM (no-op until fsm.rs)
+        if demo_mode {
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+    }
 
-        // PHASE 7: PUBLISH
+    #[allow(unreachable_code)]
+    log.shutdown("loop_exit");
+    Ok(())
+}
+
+struct PipelineState {
+    frame_count: u64,
+    current_state: Option<String>,
+    fsm_stub_fired: bool,
+    demo_mode: bool,
+}
+
+impl PipelineState {
+    fn on_keyframe(&mut self, decoded: &DecodedFrame, metrics: &mut MetricsEngine, health: &mut Health, log: &mut Logger) {
+        self.frame_count += 1;
+        health.touch();
+        metrics.tick_keyframe();
+        metrics.tick_decode(decoded.decode_us);
+        log.emit(Event::frame_ingest(self.frame_count, true, decoded.decode_us));
+    }
+
+    fn on_stub_fsm(&mut self, log: &mut Logger) {
+        if !self.fsm_stub_fired && self.frame_count >= 1 && self.current_state.is_some() {
+            log.emit(Event::fsm_transition("idle", "watching", "bed_occupied", 0));
+            self.current_state = Some("watching".into());
+            self.fsm_stub_fired = true;
+        }
+    }
+
+    fn on_health_eval(&mut self, health: &mut Health, log: &mut Logger, metrics: &mut MetricsEngine) {
         match health.evaluate() {
             HealthTransition::Blind { ms_since_frame } => {
                 log.emit(Event::health_blind(ms_since_frame));
@@ -179,45 +190,39 @@ async fn main() -> Result<()> {
             }
             HealthTransition::None => {}
         }
-
         if health.is_blind() {
             metrics.tick_blind();
         }
-
         if let Some(report) = metrics.take_report() {
             log.emit(Event::metrics(&report));
         }
-
-        log.flush();
-
-        if let Some(ref mut v) = viz {
-            v.tick();
-        }
-
-        if demo_mode {
-            if frame_count >= 5 {
-                log::info!("demo: exiting after 5 frames");
-                break;
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-        }
     }
 
-    #[allow(unreachable_code)]
-    log.shutdown("loop_exit");
-    Ok(())
+    fn should_exit(&self) -> bool {
+        if self.demo_mode && self.frame_count >= 5 {
+            log::info!("demo: exiting after 5 frames");
+            return true;
+        }
+        false
+    }
+}
+
+fn raw_frame_header(fb: &FrameBuffer, frame_id: u64) -> RawFrameV1 {
+    RawFrameV1 {
+        width: fb.w,
+        height: fb.h,
+        frame_id,
+        timestamp_ns: chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0),
+        ..Default::default()
+    }
 }
 
 fn demo_frames() -> Vec<Frame> {
-    let mut frames = VecDeque::new();
-    for i in 1u8..=5 {
-        frames.push_back(Frame {
-            data: vec![i; 64],
-            is_keyframe: true,
-            timestamp: i as i64 * 2000,
-        });
-    }
-    frames.into()
+    (1u8..=5).map(|i| Frame {
+        data: vec![i; 64],
+        is_keyframe: true,
+        timestamp: i as i64 * 2000,
+    }).collect()
 }
 
 fn parse_args() -> Result<PathBuf> {
