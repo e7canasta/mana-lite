@@ -49,6 +49,7 @@ impl MetricsEngine {
         self.current.frames_total += 1;
     }
 
+    #[allow(dead_code)]
     pub fn tick_pframe_dropped(&mut self) {
         self.current.pframes_dropped += 1;
         self.current.frames_total += 1;
@@ -102,6 +103,7 @@ pub struct Health {
     last_frame_at: Instant,
     data_stale_ms: u64,
     blind: bool,
+    stale: bool,
 }
 
 impl Health {
@@ -110,11 +112,14 @@ impl Health {
             last_frame_at: Instant::now(),
             data_stale_ms,
             blind: false,
+            stale: false,
         }
     }
 
     pub fn touch(&mut self) {
         self.last_frame_at = Instant::now();
+        self.blind = false;
+        self.stale = false;
     }
 
     pub fn evaluate(&mut self) -> HealthTransition {
@@ -126,14 +131,19 @@ impl Health {
                 return HealthTransition::Blind { ms_since_frame: stale_ms };
             }
         } else if stale_ms > self.data_stale_ms / 2 {
-            if !self.blind {
+            if !self.blind && !self.stale {
+                self.stale = true;
                 return HealthTransition::Stale { component: "ingest", ms_since_frame: stale_ms };
             }
         }
 
-        if self.blind && stale_ms <= self.data_stale_ms / 2 {
+        if (self.blind || self.stale) && stale_ms <= self.data_stale_ms / 2 {
+            let was_blind = self.blind;
             self.blind = false;
-            return HealthTransition::Recovered;
+            self.stale = false;
+            if was_blind {
+                return HealthTransition::Recovered;
+            }
         }
 
         HealthTransition::None

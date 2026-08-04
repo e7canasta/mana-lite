@@ -99,8 +99,6 @@ async fn main() -> Result<()> {
             metrics.tick_keyframe();
             metrics.tick_decode(decoded.decode_us);
             log.emit(Event::frame_ingest(frame_count, true, decoded.decode_us));
-        } else {
-            metrics.tick_pframe_dropped();
         }
 
         // PHASE 4: INFER (stub)
@@ -117,7 +115,6 @@ async fn main() -> Result<()> {
         // PHASE 7: PUBLISH
         match health.evaluate() {
             HealthTransition::Blind { ms_since_frame } => {
-                metrics.tick_blind();
                 log.emit(Event::health_blind(ms_since_frame));
             }
             HealthTransition::Stale { component, ms_since_frame } => {
