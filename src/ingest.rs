@@ -183,22 +183,29 @@ async fn open_rtsp(
 impl FrameReader for RetinaReader {
     async fn next_frame(&mut self) -> Option<Frame> {
         loop {
-            match futures::StreamExt::next(&mut self.demuxed).await {
-                Some(Ok(retina::codec::CodecItem::VideoFrame(vf))) => {
+            let poll = tokio::time::timeout(
+                std::time::Duration::ZERO,
+                futures::StreamExt::next(&mut self.demuxed),
+            )
+            .await;
+
+            match poll {
+                Ok(Some(Ok(retina::codec::CodecItem::VideoFrame(vf)))) => {
                     let is_keyframe = vf.is_random_access_point();
                     let timestamp = vf.timestamp().timestamp();
                     let data = vf.into_data();
                     return Some(Frame { data, is_keyframe, timestamp });
                 }
-                Some(Err(e)) => {
+                Ok(Some(Err(e))) => {
                     log::error!("retina stream: {e}");
                     continue;
                 }
-                Some(Ok(_)) => continue,
-                None => {
+                Ok(Some(Ok(_))) => continue,
+                Ok(None) => {
                     log::warn!("rtsp stream ended, reconnecting...");
                     self.reconnect().await;
                 }
+                Err(_elapsed) => return None,
             }
         }
     }
