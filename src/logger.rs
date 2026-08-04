@@ -125,6 +125,17 @@ pub enum Event {
         tr: String,
         dwell: u64,
     },
+    Metrics {
+        window_s: u64,
+        cycles: u64,
+        frames_total: u64,
+        keyframes: u64,
+        pframes_dropped: u64,
+        inferences: u64,
+        infer_total_ms: u64,
+        decode_total_ms: u64,
+        blind_cycles: u64,
+    },
 }
 
 pub struct DetRecord {
@@ -241,6 +252,18 @@ impl Event {
             dwell: dwell_ms,
         }
     }
+
+    pub fn metrics(
+        window_s: u64, cycles: u64, frames_total: u64, keyframes: u64,
+        pframes_dropped: u64, inferences: u64, infer_total_ms: u64,
+        decode_total_ms: u64, blind_cycles: u64,
+    ) -> Self {
+        Event::Metrics {
+            window_s, cycles, frames_total, keyframes,
+            pframes_dropped, inferences, infer_total_ms,
+            decode_total_ms, blind_cycles,
+        }
+    }
 }
 
 fn write_event(event: &Event, ts: &str, buf: &mut Vec<u8>) {
@@ -331,6 +354,28 @@ fn write_event(event: &Event, ts: &str, buf: &mut Vec<u8>) {
             write_json_string(tr, buf);
             buf.extend_from_slice(b"\",\"dwell\":");
             write_u64(*dwell, buf);
+        }
+        Event::Metrics { window_s, cycles, frames_total, keyframes,
+            pframes_dropped, inferences, infer_total_ms, decode_total_ms, blind_cycles } => {
+            buf.extend_from_slice(b"\"type\":\"metrics\"");
+            buf.extend_from_slice(b",\"window_s\":");
+            write_u64(*window_s, buf);
+            buf.extend_from_slice(b",\"cycles\":");
+            write_u64(*cycles, buf);
+            buf.extend_from_slice(b",\"frames_total\":");
+            write_u64(*frames_total, buf);
+            buf.extend_from_slice(b",\"keyframes\":");
+            write_u64(*keyframes, buf);
+            buf.extend_from_slice(b",\"pframes_dropped\":");
+            write_u64(*pframes_dropped, buf);
+            buf.extend_from_slice(b",\"inferences\":");
+            write_u64(*inferences, buf);
+            buf.extend_from_slice(b",\"infer_total_ms\":");
+            write_u64(*infer_total_ms, buf);
+            buf.extend_from_slice(b",\"decode_total_ms\":");
+            write_u64(*decode_total_ms, buf);
+            buf.extend_from_slice(b",\"blind_cycles\":");
+            write_u64(*blind_cycles, buf);
         }
     }
     buf.extend_from_slice(b"}\n");

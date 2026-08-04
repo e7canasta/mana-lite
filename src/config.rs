@@ -43,13 +43,13 @@ pub struct HealthConfig {
     pub data_stale_ms: u64,
     #[serde(default = "default_max_panics")]
     pub max_consecutive_panics: u32,
-    #[serde(default = "default_heartbeat_cycles")]
-    pub heartbeat_every_n_cycles: u64,
+    #[serde(default = "default_report_interval_s")]
+    pub report_interval_s: u64,
 }
 
 fn default_data_stale_ms() -> u64 { 10_000 }
 fn default_max_panics() -> u32 { 3 }
-fn default_heartbeat_cycles() -> u64 { 100 }
+fn default_report_interval_s() -> u64 { 5 }
 
 #[derive(Debug, Default, Deserialize)]
 pub struct OutputConfig {

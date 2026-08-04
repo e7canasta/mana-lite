@@ -2,14 +2,15 @@ mod config;
 mod error;
 mod ingest;
 mod logger;
+mod metrics;
 
 use config::*;
 use error::*;
 use ingest::*;
 use logger::*;
+use metrics::*;
 use std::collections::VecDeque;
 use std::path::PathBuf;
-use std::time::Instant;
 
 static VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -65,9 +66,6 @@ async fn main() -> Result<()> {
     ));
 
     let mut frame_count: u64 = 0;
-    let mut cycle_start = Instant::now();
-    #[allow(unused_assignments)]
-    let mut last_frame_at = Instant::now();
     #[allow(unused_variables)]
     let panic_count: u32 = 0;
     let mut current_state: Option<String> = fsm.as_ref().map(|f| f.fsm.initial.clone());
@@ -85,10 +83,11 @@ async fn main() -> Result<()> {
         IngestEngine::new(AnyReader::Retina(reader))
     };
 
+    let mut metrics = MetricsEngine::new(app_config.health.report_interval_s);
+    let mut health = Health::new(app_config.health.data_stale_ms);
+
     loop {
-        let cycle_us = cycle_start.elapsed().as_micros() as u64;
-        cycle_start = Instant::now();
-        log.set_frame(frame_count);
+        metrics.tick_cycle();
 
         // PHASE 1: TIMERS (no-op until fsm.rs)
 
@@ -97,8 +96,12 @@ async fn main() -> Result<()> {
         // PHASE 3: INGEST
         if let Some(decoded) = ingest.poll_freshest_keyframe().await {
             frame_count += 1;
-            last_frame_at = Instant::now();
+            health.touch();
+            metrics.tick_keyframe();
+            metrics.tick_decode(decoded.decode_us);
             log.emit(Event::frame_ingest(frame_count, true, decoded.decode_us));
+        } else {
+            metrics.tick_pframe_dropped();
         }
 
         // PHASE 4: INFER (stub)
@@ -113,20 +116,39 @@ async fn main() -> Result<()> {
         // PHASE 6: FSM (no-op until fsm.rs)
 
         // PHASE 7: PUBLISH
+        match health.evaluate() {
+            HealthTransition::Blind { ms_since_frame } => {
+                metrics.tick_blind();
+                log.emit(Event::health_blind(ms_since_frame));
+            }
+            HealthTransition::Stale { component, ms_since_frame } => {
+                log.emit(Event::health_stale(component, ms_since_frame));
+            }
+            HealthTransition::Recovered => {
+                log.emit(Event::health_heartbeat(0, "ingest", 0));
+            }
+            HealthTransition::None => {}
+        }
+
+        if health.is_blind() {
+            metrics.tick_blind();
+        }
+
+        if let Some(report) = metrics.take_report() {
+            log.emit(Event::metrics(
+                report.window_s,
+                report.cycles,
+                report.frames_total,
+                report.keyframes,
+                report.pframes_dropped,
+                report.inferences,
+                report.infer_total_ms,
+                report.decode_total_ms,
+                report.blind_cycles,
+            ));
+        }
+
         log.flush();
-
-        // Health
-        let stale_ms = last_frame_at.elapsed().as_millis() as u64;
-        if stale_ms > app_config.health.data_stale_ms {
-            log.emit(Event::health_blind(stale_ms));
-            log.flush();
-        } else if stale_ms > app_config.health.data_stale_ms / 2 {
-            log.emit(Event::health_stale("ingest", stale_ms));
-        }
-
-        if frame_count.rem_euclid(app_config.health.heartbeat_every_n_cycles) == 0 {
-            log.emit(Event::health_heartbeat(frame_count, "publish", cycle_us));
-        }
 
         if demo_mode {
             if frame_count >= 5 {
