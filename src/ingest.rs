@@ -93,6 +93,7 @@ pub struct RetinaReader {
     url: url::Url,
     username: Option<String>,
     password: Option<String>,
+    transport: String,
     retry_count: u32,
 }
 
@@ -101,21 +102,24 @@ impl RetinaReader {
         url: &str,
         username: Option<&str>,
         password: Option<&str>,
+        transport: &str,
     ) -> Result<Self> {
         let parsed = url::Url::parse(url)
             .map_err(|e| ManaError::Ingest(format!("invalid url: {e}")))?;
-        let demuxed = open_rtsp(&parsed, username, password).await?;
+        let demuxed = open_rtsp(&parsed, username, password, transport).await?;
         log::info!("rtsp connected: {url}");
         Ok(Self {
             demuxed,
             url: parsed,
             username: username.map(String::from),
             password: password.map(String::from),
+            transport: transport.to_string(),
             retry_count: 0,
         })
     }
 
     async fn reconnect(&mut self) {
+        let transport = self.transport.clone();
         let mut backoff_ms: u64 = 1000;
         let max_backoff_ms: u64 = 30_000;
         loop {
@@ -129,6 +133,7 @@ impl RetinaReader {
                 &self.url,
                 self.username.as_deref(),
                 self.password.as_deref(),
+                &transport,
             )
             .await
             {
@@ -151,6 +156,7 @@ async fn open_rtsp(
     url: &url::Url,
     username: Option<&str>,
     password: Option<&str>,
+    transport: &str,
 ) -> Result<retina::client::Demuxed> {
     let mut opts = retina::client::SessionOptions::default();
     if let (Some(u), Some(p)) = (username, password) {
@@ -164,11 +170,17 @@ async fn open_rtsp(
         .await
         .map_err(|e| ManaError::Ingest(format!("rtsp describe: {e}")))?;
 
+    let rtsp_transport = match transport {
+        "tcp" => retina::client::Transport::Tcp(retina::client::TcpTransportOptions::default()),
+        _ => retina::client::Transport::Udp(retina::client::UdpTransportOptions::default()),
+    };
+
     let mut session = session;
     session
         .setup(
             0,
             retina::client::SetupOptions::default()
+                .transport(rtsp_transport)
                 .frame_format(retina::codec::FrameFormat::SIMPLE),
         )
         .await
@@ -188,7 +200,7 @@ impl FrameReader for RetinaReader {
     async fn next_frame(&mut self) -> Option<Frame> {
         loop {
             let poll = tokio::time::timeout(
-                std::time::Duration::ZERO,
+                std::time::Duration::from_millis(50),
                 futures::StreamExt::next(&mut self.demuxed),
             )
             .await;

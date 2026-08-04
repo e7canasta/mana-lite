@@ -60,6 +60,8 @@ pub struct OutputConfig {
     pub save_dir: Option<PathBuf>,
     #[serde(default = "default_rotate")]
     pub rotate: Rotate,
+    #[serde(default)]
+    pub snapshot_dir: Option<PathBuf>,
 }
 
 impl Default for OutputConfig {
@@ -68,6 +70,7 @@ impl Default for OutputConfig {
             format: default_format(),
             save_dir: None,
             rotate: default_rotate(),
+            snapshot_dir: None,
         }
     }
 }
