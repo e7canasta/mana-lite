@@ -5,7 +5,9 @@ mod serialize;
 pub use event::{DetRecord, Event};
 use serialize::write_event;
 
+use std::fs;
 use std::io::{self, BufWriter, Write};
+use std::path::PathBuf;
 use std::time::Instant;
 
 pub struct Logger {
@@ -16,7 +18,11 @@ pub struct Logger {
 
 enum OutputTarget {
     Stdout(BufWriter<io::Stdout>),
-    File(BufWriter<std::fs::File>),
+    Rotating {
+        dir: PathBuf,
+        writer: BufWriter<fs::File>,
+        current_hour: u32,
+    },
 }
 
 impl Logger {
@@ -28,11 +34,13 @@ impl Logger {
         }
     }
 
-    pub fn with_file(path: &str) -> io::Result<Self> {
+    pub fn rotating(dir: PathBuf) -> io::Result<Self> {
+        fs::create_dir_all(&dir)?;
+        let (writer, hour) = open_hour_file(&dir)?;
         Ok(Self {
             buffer: Vec::with_capacity(32),
             started_at: Instant::now(),
-            target: OutputTarget::File(BufWriter::new(std::fs::File::create(path)?)),
+            target: OutputTarget::Rotating { dir, writer, current_hour: hour },
         })
     }
 
@@ -51,24 +59,29 @@ impl Logger {
             write_event(event, &now, &mut buf);
             let _ = self.write_buf(&buf);
         }
-        self.flush_target();
-    }
-
-    fn flush_target(&mut self) {
-        match &mut self.target {
-            OutputTarget::Stdout(w) => { let _ = w.flush(); }
-            OutputTarget::File(w) => { let _ = w.flush(); }
-        }
     }
 
     fn write_buf(&mut self, buf: &[u8]) -> io::Result<()> {
         match &mut self.target {
-            OutputTarget::Stdout(w) => w.write_all(buf),
-            OutputTarget::File(w) => w.write_all(buf),
+            OutputTarget::Stdout(w) => {
+                w.write_all(buf)?;
+                w.flush()
+            }
+            OutputTarget::Rotating { dir, writer, current_hour } => {
+                let now = chrono::Utc::now();
+                let this_hour = now.format("%H").to_string().parse::<u32>().unwrap_or(0);
+                if this_hour != *current_hour {
+                    let (new_writer, new_hour) = open_hour_file(dir)?;
+                    *writer = new_writer;
+                    *current_hour = new_hour;
+                }
+                writer.write_all(buf)?;
+                writer.flush()
+            }
         }
     }
 
-    pub fn shutdown(&mut self, reason: &str) -> io::Result<()> {
+    pub fn shutdown(&mut self, reason: &str) {
         self.emit(Event::Meta {
             event: "shutdown".into(),
             detail: reason.into(),
@@ -78,7 +91,6 @@ impl Logger {
             )],
         });
         self.flush();
-        Ok(())
     }
 
     #[doc(hidden)]
@@ -92,9 +104,26 @@ impl Logger {
     }
 }
 
+fn open_hour_file(dir: &PathBuf) -> io::Result<(BufWriter<fs::File>, u32)> {
+    let now = chrono::Utc::now();
+    let filename = format!("mana-{}.jsonl", now.format("%Y%m%dT%H"));
+    let path = dir.join(&filename);
+    let hour = now.format("%H").to_string().parse::<u32>().unwrap_or(0);
+    let file = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)?;
+    log::info!("logger: writing to {}", path.display());
+    Ok((BufWriter::new(file), hour))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn test_logger() -> Logger {
+        Logger::new()
+    }
 
     fn collect(logger: &mut Logger) -> String {
         let mut buf = Vec::new();
@@ -104,7 +133,7 @@ mod tests {
 
     #[test]
     fn meta_startup_has_type_and_version() {
-        let mut log = Logger::new();
+        let mut log = test_logger();
         log.emit(Event::meta_startup("0.1.0", "mana.toml"));
         let out = collect(&mut log);
         assert!(out.contains("\"type\":\"meta\""));
@@ -115,7 +144,7 @@ mod tests {
     #[test]
     fn detection_emits_class_and_bbox() {
         let det = vec![DetRecord { c: "person".into(), conf: 0.87, bb: [100.0, 200.0, 300.0, 500.0] }];
-        let mut log = Logger::new();
+        let mut log = test_logger();
         log.emit(Event::detection(1, "detect-fast", 52, det));
         let out = collect(&mut log);
         assert!(out.contains("\"type\":\"detection\""));
@@ -126,7 +155,7 @@ mod tests {
 
     #[test]
     fn fsm_transition_has_from_to_trigger() {
-        let mut log = Logger::new();
+        let mut log = test_logger();
         log.emit(Event::fsm_transition("idle", "monitoring", "bed_occupied", 0));
         let out = collect(&mut log);
         assert!(out.contains("\"type\":\"fsm\""));
@@ -137,7 +166,7 @@ mod tests {
 
     #[test]
     fn health_blind_has_message() {
-        let mut log = Logger::new();
+        let mut log = test_logger();
         log.emit(Event::health_blind(10_000));
         let out = collect(&mut log);
         assert!(out.contains("\"type\":\"health\""));
@@ -147,7 +176,7 @@ mod tests {
 
     #[test]
     fn escape_json_string_quotes_and_backslash() {
-        let mut log = Logger::new();
+        let mut log = test_logger();
         log.emit(Event::Meta {
             event: "test".into(),
             detail: "say \"hello\"".into(),
@@ -160,7 +189,7 @@ mod tests {
 
     #[test]
     fn escape_json_control_chars() {
-        let mut log = Logger::new();
+        let mut log = test_logger();
         log.emit(Event::Meta {
             event: "test".into(),
             detail: "line1\nline2".into(),
@@ -173,7 +202,7 @@ mod tests {
     #[test]
     fn negative_float_is_valid_json() {
         let det = vec![DetRecord { c: "x".into(), conf: 0.5, bb: [-10.5, 0.0, 100.0, 200.3] }];
-        let mut log = Logger::new();
+        let mut log = test_logger();
         log.emit(Event::detection(1, "m", 10, det));
         let out = collect(&mut log);
         assert!(out.contains("\"bb\":[-10.50,0.00,100.00,200.30]"));

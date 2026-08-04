@@ -48,9 +48,7 @@ async fn main() -> Result<()> {
     }
 
     let mut log = if let Some(ref dir) = app_config.output.save_dir {
-        std::fs::create_dir_all(dir)?;
-        let filename = dir.join(format!("mana-{}.jsonl", chrono::Utc::now().format("%Y%m%dT%H%M%S")));
-        Logger::with_file(&filename.display().to_string())?
+        Logger::rotating(dir.clone())?
     } else {
         Logger::new()
     };
@@ -160,7 +158,7 @@ async fn main() -> Result<()> {
     }
 
     #[allow(unreachable_code)]
-    log.shutdown("loop_exit")?;
+    log.shutdown("loop_exit");
     Ok(())
 }
 
