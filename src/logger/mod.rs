@@ -1,0 +1,179 @@
+mod event;
+mod serialize;
+
+pub use event::{DetRecord, Event};
+use serialize::write_event;
+
+use std::io::{self, BufWriter, Write};
+use std::time::Instant;
+
+pub struct Logger {
+    buffer: Vec<Event>,
+    started_at: Instant,
+    target: OutputTarget,
+}
+
+enum OutputTarget {
+    Stdout(BufWriter<io::Stdout>),
+    File(BufWriter<std::fs::File>),
+}
+
+impl Logger {
+    pub fn new() -> Self {
+        Self {
+            buffer: Vec::with_capacity(32),
+            started_at: Instant::now(),
+            target: OutputTarget::Stdout(BufWriter::new(io::stdout())),
+        }
+    }
+
+    pub fn with_file(path: &str) -> io::Result<Self> {
+        Ok(Self {
+            buffer: Vec::with_capacity(32),
+            started_at: Instant::now(),
+            target: OutputTarget::File(BufWriter::new(std::fs::File::create(path)?)),
+        })
+    }
+
+    pub fn emit(&mut self, event: Event) {
+        self.buffer.push(event);
+    }
+
+    pub fn flush(&mut self) {
+        if self.buffer.is_empty() {
+            return;
+        }
+        let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+        let events: Vec<Event> = self.buffer.drain(..).collect();
+        let mut buf = Vec::with_capacity(512);
+        for event in &events {
+            write_event(event, &now, &mut buf);
+            let _ = self.write_buf(&buf);
+        }
+        self.flush_target();
+    }
+
+    fn flush_target(&mut self) {
+        match &mut self.target {
+            OutputTarget::Stdout(w) => { let _ = w.flush(); }
+            OutputTarget::File(w) => { let _ = w.flush(); }
+        }
+    }
+
+    fn write_buf(&mut self, buf: &[u8]) -> io::Result<()> {
+        match &mut self.target {
+            OutputTarget::Stdout(w) => w.write_all(buf),
+            OutputTarget::File(w) => w.write_all(buf),
+        }
+    }
+
+    pub fn shutdown(&mut self, reason: &str) -> io::Result<()> {
+        self.emit(Event::Meta {
+            event: "shutdown".into(),
+            detail: reason.into(),
+            attrs: vec![(
+                "uptime".into(),
+                self.started_at.elapsed().as_secs().to_string(),
+            )],
+        });
+        self.flush();
+        Ok(())
+    }
+
+    #[doc(hidden)]
+    pub fn flush_to_buffer(&mut self, out: &mut Vec<u8>) {
+        let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+        let events: Vec<Event> = self.buffer.drain(..).collect();
+        for event in &events {
+            write_event(event, &now, out);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn collect(logger: &mut Logger) -> String {
+        let mut buf = Vec::new();
+        logger.flush_to_buffer(&mut buf);
+        String::from_utf8(buf).unwrap()
+    }
+
+    #[test]
+    fn meta_startup_has_type_and_version() {
+        let mut log = Logger::new();
+        log.emit(Event::meta_startup("0.1.0", "mana.toml"));
+        let out = collect(&mut log);
+        assert!(out.contains("\"type\":\"meta\""));
+        assert!(out.contains("\"event\":\"startup\""));
+        assert!(out.contains("\"v\":\"0.1.0\""));
+    }
+
+    #[test]
+    fn detection_emits_class_and_bbox() {
+        let det = vec![DetRecord { c: "person".into(), conf: 0.87, bb: [100.0, 200.0, 300.0, 500.0] }];
+        let mut log = Logger::new();
+        log.emit(Event::detection(1, "detect-fast", 52, det));
+        let out = collect(&mut log);
+        assert!(out.contains("\"type\":\"detection\""));
+        assert!(out.contains("\"c\":\"person\""));
+        assert!(out.contains("\"conf\":0.87"));
+        assert!(out.contains("\"bb\":[100.00,200.00,300.00,500.00]"));
+    }
+
+    #[test]
+    fn fsm_transition_has_from_to_trigger() {
+        let mut log = Logger::new();
+        log.emit(Event::fsm_transition("idle", "monitoring", "bed_occupied", 0));
+        let out = collect(&mut log);
+        assert!(out.contains("\"type\":\"fsm\""));
+        assert!(out.contains("\"from\":\"idle\""));
+        assert!(out.contains("\"to\":\"monitoring\""));
+        assert!(out.contains("\"tr\":\"bed_occupied\""));
+    }
+
+    #[test]
+    fn health_blind_has_message() {
+        let mut log = Logger::new();
+        log.emit(Event::health_blind(10_000));
+        let out = collect(&mut log);
+        assert!(out.contains("\"type\":\"health\""));
+        assert!(out.contains("\"event\":\"blind\""));
+        assert!(out.contains("10000ms"));
+    }
+
+    #[test]
+    fn escape_json_string_quotes_and_backslash() {
+        let mut log = Logger::new();
+        log.emit(Event::Meta {
+            event: "test".into(),
+            detail: "say \"hello\"".into(),
+            attrs: vec![("path".into(), "C:\\Users\\test".into())],
+        });
+        let out = collect(&mut log);
+        assert!(out.contains("say \\\"hello\\\""));
+        assert!(out.contains("C:\\\\Users\\\\test"));
+    }
+
+    #[test]
+    fn escape_json_control_chars() {
+        let mut log = Logger::new();
+        log.emit(Event::Meta {
+            event: "test".into(),
+            detail: "line1\nline2".into(),
+            attrs: vec![],
+        });
+        let out = collect(&mut log);
+        assert!(out.contains("line1\\nline2"));
+    }
+
+    #[test]
+    fn negative_float_is_valid_json() {
+        let det = vec![DetRecord { c: "x".into(), conf: 0.5, bb: [-10.5, 0.0, 100.0, 200.3] }];
+        let mut log = Logger::new();
+        log.emit(Event::detection(1, "m", 10, det));
+        let out = collect(&mut log);
+        assert!(out.contains("\"bb\":[-10.50,0.00,100.00,200.30]"));
+    }
+}
