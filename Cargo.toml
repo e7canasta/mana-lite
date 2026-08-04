@@ -1,5 +1,5 @@
 [workspace]
-members = ["std/mana-rtsp"]
+members = ["std/mana-rtsp", "std/mana-types", "std/mana-video"]
 
 [package]
 name = "mana-lite"
@@ -20,6 +20,7 @@ path = "src/main.rs"
 
 [dependencies]
 mana-rtsp = { path = "std/mana-rtsp" }
+mana-video = { path = "std/mana-video" }
 retina = "0.4"
 tokio = { version = "1", features = ["macros", "rt", "net", "time"] }
 futures = "0.3"

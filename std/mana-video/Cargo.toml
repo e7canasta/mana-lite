@@ -1,0 +1,9 @@
+[package]
+name = "mana-video"
+version = "0.1.0"
+edition = "2024"
+description = "Video decoding commons: FrameDecoder trait, BufferPool"
+
+[dependencies]
+mana-types = { path = "../mana-types" }
+log = "0.4"
