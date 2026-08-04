@@ -10,6 +10,11 @@ pub struct Metrics {
     pub infer_total_us: u64,
     pub decode_total_us: u64,
     pub blind_cycles: u64,
+    pub timeouts: u64,
+    pub ssrc_changes: u64,
+    pub rtp_errors: u64,
+    pub stream_ends: u64,
+    pub reconnect_attempts: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -23,6 +28,11 @@ pub struct MetricsReport {
     pub infer_total_ms: u64,
     pub decode_total_ms: u64,
     pub blind_cycles: u64,
+    pub timeouts: u64,
+    pub ssrc_changes: u64,
+    pub rtp_errors: u64,
+    pub stream_ends: u64,
+    pub reconnect_attempts: u64,
 }
 
 pub struct MetricsEngine {
@@ -69,6 +79,14 @@ impl MetricsEngine {
         self.current.blind_cycles += 1;
     }
 
+    pub fn tick_retina_counters(&mut self, c: &crate::ingest::RetinaCounters) {
+        self.current.timeouts = (self.current.timeouts).saturating_add(c.timeouts);
+        self.current.ssrc_changes = (self.current.ssrc_changes).saturating_add(c.ssrc_changes);
+        self.current.rtp_errors = (self.current.rtp_errors).saturating_add(c.rtp_errors);
+        self.current.stream_ends = (self.current.stream_ends).saturating_add(c.stream_ends);
+        self.current.reconnect_attempts = (self.current.reconnect_attempts).saturating_add(c.reconnect_attempts);
+    }
+
     pub fn take_report(&mut self) -> Option<MetricsReport> {
         let elapsed = self.window_start.elapsed().as_secs();
         if elapsed < self.report_interval_s {
@@ -84,6 +102,11 @@ impl MetricsEngine {
             infer_total_ms: self.current.infer_total_us / 1000,
             decode_total_ms: self.current.decode_total_us / 1000,
             blind_cycles: self.current.blind_cycles,
+            timeouts: self.current.timeouts,
+            ssrc_changes: self.current.ssrc_changes,
+            rtp_errors: self.current.rtp_errors,
+            stream_ends: self.current.stream_ends,
+            reconnect_attempts: self.current.reconnect_attempts,
         };
         self.current = Metrics::default();
         self.window_start = Instant::now();

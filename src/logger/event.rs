@@ -45,6 +45,11 @@ pub enum Event {
         infer_total_ms: u64,
         decode_total_ms: u64,
         blind_cycles: u64,
+        timeouts: u64,
+        ssrc_changes: u64,
+        rtp_errors: u64,
+        stream_ends: u64,
+        reconnect_attempts: u64,
     },
 }
 
@@ -172,11 +177,15 @@ impl Event {
         window_s: u64, cycles: u64, frames_total: u64, keyframes: u64,
         pframes_dropped: u64, inferences: u64, infer_total_ms: u64,
         decode_total_ms: u64, blind_cycles: u64,
+        timeouts: u64, ssrc_changes: u64, rtp_errors: u64,
+        stream_ends: u64, reconnect_attempts: u64,
     ) -> Self {
         Event::Metrics {
             window_s, cycles, frames_total, keyframes,
             pframes_dropped, inferences, infer_total_ms,
             decode_total_ms, blind_cycles,
+            timeouts, ssrc_changes, rtp_errors,
+            stream_ends, reconnect_attempts,
         }
     }
 }

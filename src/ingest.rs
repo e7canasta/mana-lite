@@ -12,6 +12,15 @@ pub struct Frame {
     pub timestamp: i64,
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct RetinaCounters {
+    pub ssrc_changes: u64,
+    pub rtp_errors: u64,
+    pub stream_ends: u64,
+    pub reconnect_attempts: u64,
+    pub timeouts: u64,
+}
+
 pub struct DecodedFrame {
     #[allow(dead_code)]
     pub data: Vec<u8>,
@@ -37,6 +46,14 @@ impl<R: FrameReader> IngestEngine<R> {
             target_width: 640,
             target_height: 480,
         }
+    }
+
+    pub fn reader(&self) -> &R {
+        &self.reader
+    }
+
+    pub fn reader_mut(&mut self) -> &mut R {
+        &mut self.reader
     }
 
     pub async fn poll_freshest_keyframe(&mut self) -> Option<DecodedFrame> {
@@ -96,6 +113,7 @@ pub struct RetinaReader {
     transport: String,
     retry_count: u32,
     rtp_window: ErrorWindow,
+    pub counters: RetinaCounters,
 }
 
 fn fast_jitter(half: u64, seed: u64) -> u64 {
@@ -149,6 +167,7 @@ impl RetinaReader {
             transport: transport.to_string(),
             retry_count: 0,
             rtp_window: ErrorWindow::new(128, 25),
+            counters: RetinaCounters::default(),
         })
     }
 
@@ -157,6 +176,7 @@ impl RetinaReader {
         let max_ms: u64 = 30_000;
         loop {
             self.retry_count += 1;
+            self.counters.reconnect_attempts += 1;
             let half = base_ms / 2;
             let jitter = fast_jitter(half, self.retry_count as u64);
             let delay = half + jitter;
@@ -253,10 +273,12 @@ impl FrameReader for RetinaReader {
                 Ok(Some(Err(e))) => {
                     let msg = e.to_string();
                     if msg.contains("wrong ssrc") {
+                        self.counters.ssrc_changes += 1;
                         log::error!("rtp ssrc changed — reconnecting: {msg}");
                         self.reconnect().await;
                         continue;
                     }
+                    self.counters.rtp_errors += 1;
                     if self.rtp_window.record(true) {
                         log::error!("rtp errors exceeded threshold — reconnecting: {msg}");
                         self.reconnect().await;
@@ -267,10 +289,14 @@ impl FrameReader for RetinaReader {
                 }
                 Ok(Some(Ok(_))) => continue,
                 Ok(None) => {
+                    self.counters.stream_ends += 1;
                     log::warn!("rtsp stream ended, reconnecting...");
                     self.reconnect().await;
                 }
-                Err(_elapsed) => return None,
+                Err(_elapsed) => {
+                    self.counters.timeouts += 1;
+                    return None;
+                }
             }
         }
     }
@@ -279,6 +305,26 @@ impl FrameReader for RetinaReader {
 pub enum AnyReader {
     Queued(QueuedReader),
     Retina(RetinaReader),
+}
+
+impl AnyReader {
+    pub fn retina_counters(&self) -> Option<&RetinaCounters> {
+        match self {
+            Self::Retina(r) => Some(&r.counters),
+            _ => None,
+        }
+    }
+
+    pub fn drain_retina_counters(&mut self) -> Option<RetinaCounters> {
+        match self {
+            Self::Retina(r) => {
+                let c = r.counters.clone();
+                r.counters = RetinaCounters::default();
+                Some(c)
+            }
+            _ => None,
+        }
+    }
 }
 
 impl FrameReader for AnyReader {

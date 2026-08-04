@@ -90,7 +90,8 @@ pub fn write_event(event: &Event, ts: &str, buf: &mut Vec<u8>) {
             write_u64(*dwell, buf);
         }
         Event::Metrics { window_s, cycles, frames_total, keyframes,
-            pframes_dropped, inferences, infer_total_ms, decode_total_ms, blind_cycles } => {
+            pframes_dropped, inferences, infer_total_ms, decode_total_ms, blind_cycles,
+            timeouts, ssrc_changes, rtp_errors, stream_ends, reconnect_attempts } => {
             buf.extend_from_slice(b"\"type\":\"metrics\"");
             buf.extend_from_slice(b",\"window_s\":");
             write_u64(*window_s, buf);
@@ -110,6 +111,16 @@ pub fn write_event(event: &Event, ts: &str, buf: &mut Vec<u8>) {
             write_u64(*decode_total_ms, buf);
             buf.extend_from_slice(b",\"blind_cycles\":");
             write_u64(*blind_cycles, buf);
+            buf.extend_from_slice(b",\"timeouts\":");
+            write_u64(*timeouts, buf);
+            buf.extend_from_slice(b",\"ssrc_changes\":");
+            write_u64(*ssrc_changes, buf);
+            buf.extend_from_slice(b",\"rtp_errors\":");
+            write_u64(*rtp_errors, buf);
+            buf.extend_from_slice(b",\"stream_ends\":");
+            write_u64(*stream_ends, buf);
+            buf.extend_from_slice(b",\"reconnect_attempts\":");
+            write_u64(*reconnect_attempts, buf);
         }
     }
     buf.extend_from_slice(b"}\n");

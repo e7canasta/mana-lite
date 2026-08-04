@@ -114,6 +114,11 @@ async fn main() -> Result<()> {
             }
         }
 
+        if let Some(counters) = ingest.reader().retina_counters() {
+            metrics.tick_retina_counters(counters);
+        }
+        ingest.reader_mut().drain_retina_counters();
+
         // PHASE 4: INFER (stub)
         if !fsm_stub_fired && frame_count >= 1 && current_state.is_some() {
             log.emit(Event::fsm_transition("idle", "watching", "bed_occupied", 0));
@@ -154,6 +159,11 @@ async fn main() -> Result<()> {
                 report.infer_total_ms,
                 report.decode_total_ms,
                 report.blind_cycles,
+                report.timeouts,
+                report.ssrc_changes,
+                report.rtp_errors,
+                report.stream_ends,
+                report.reconnect_attempts,
             ));
         }
 
