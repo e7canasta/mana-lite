@@ -108,7 +108,7 @@ async fn main() -> Result<()> {
 
             if let Some(ref mut s) = snapshots {
                 if let Err(e) = s.save(&decoded.data) {
-                    log::error!("snapshot save failed: {e}");
+                    log::warn!("snapshot save failed: {e}");
                 }
             }
         }

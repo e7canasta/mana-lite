@@ -297,7 +297,7 @@ impl FrameReader for RetinaReader {
                         self.reconnect().await;
                         continue;
                     }
-                    log::error!("retina stream: {msg}");
+                    log::debug!("retina rtp: {msg}");
                     continue;
                 }
                 Ok(Some(Ok(_))) => continue,

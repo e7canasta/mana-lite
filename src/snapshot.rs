@@ -95,7 +95,7 @@ impl SnapshotSaver {
         }) {
             Ok(()) => {}
             Err(e) => {
-                log::warn!("snapshot decode failed: {e}");
+                log::debug!("snapshot decode failed: {e}");
             }
         }
 
