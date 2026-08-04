@@ -2,7 +2,7 @@ mod event;
 mod serialize;
 
 #[allow(unused_imports)]
-pub use event::{DetRecord, Event};
+pub use event::{DetRecord, Event, JsonlLevel};
 use serialize::write_event;
 
 use crate::config::Rotate;
@@ -15,6 +15,7 @@ pub struct Logger {
     buffer: Vec<Event>,
     started_at: Instant,
     target: OutputTarget,
+    level: JsonlLevel,
 }
 
 enum OutputTarget {
@@ -28,15 +29,16 @@ enum OutputTarget {
 }
 
 impl Logger {
-    pub fn new() -> Self {
+    pub fn new(level: JsonlLevel) -> Self {
         Self {
             buffer: Vec::with_capacity(32),
             started_at: Instant::now(),
             target: OutputTarget::Stdout(BufWriter::new(io::stdout())),
+            level,
         }
     }
 
-    pub fn rotating(dir: PathBuf, rotate: &Rotate) -> io::Result<Self> {
+    pub fn rotating(dir: PathBuf, rotate: &Rotate, level: JsonlLevel) -> io::Result<Self> {
         fs::create_dir_all(&dir)?;
         let (writer, hour, day) = match rotate {
             Rotate::Hourly => {
@@ -56,11 +58,14 @@ impl Logger {
             buffer: Vec::with_capacity(32),
             started_at: Instant::now(),
             target: OutputTarget::Rotating { dir, writer, current_hour: hour, current_day: day },
+            level,
         })
     }
 
     pub fn emit(&mut self, event: Event) {
-        self.buffer.push(event);
+        if self.level.allows(event.min_level()) {
+            self.buffer.push(event);
+        }
     }
 
     pub fn flush(&mut self) {
@@ -159,7 +164,7 @@ mod tests {
     use super::*;
 
     fn test_logger() -> Logger {
-        Logger::new()
+        Logger::new(JsonlLevel::Debug)
     }
 
     fn collect(logger: &mut Logger) -> String {

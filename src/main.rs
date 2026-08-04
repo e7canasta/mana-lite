@@ -49,10 +49,11 @@ async fn main() -> Result<()> {
         }
     }
 
+    let jsonl_level = JsonlLevel::from_str(&app_config.output.jsonl_level);
     let mut log = if let Some(ref dir) = app_config.output.save_dir {
-        Logger::rotating(dir.clone(), &app_config.output.rotate)?
+        Logger::rotating(dir.clone(), &app_config.output.rotate, jsonl_level)?
     } else {
-        Logger::new()
+        Logger::new(jsonl_level)
     };
 
     log::info!("mana-lite v{VERSION} starting");

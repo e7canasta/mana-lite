@@ -55,6 +55,42 @@ pub enum Event {
     },
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum JsonlLevel {
+    Debug = 0,
+    Info = 1,
+    Quiet = 2,
+}
+
+impl JsonlLevel {
+    pub fn from_str(s: &str) -> Self {
+        match s {
+            "debug" => JsonlLevel::Debug,
+            "info" => JsonlLevel::Info,
+            "quiet" => JsonlLevel::Quiet,
+            _ => JsonlLevel::Info,
+        }
+    }
+
+    pub fn allows(&self, event_level: JsonlLevel) -> bool {
+        *self <= event_level
+    }
+}
+
+impl Event {
+    pub fn min_level(&self) -> JsonlLevel {
+        match self {
+            Event::Meta { .. } => JsonlLevel::Info,
+            Event::Health { .. } => JsonlLevel::Info,
+            Event::Fsm { .. } => JsonlLevel::Info,
+            Event::Metrics { .. } => JsonlLevel::Info,
+            Event::Frame { .. } => JsonlLevel::Debug,
+            Event::Detection { .. } => JsonlLevel::Debug,
+            Event::Zone { .. } => JsonlLevel::Debug,
+        }
+    }
+}
+
 pub struct DetRecord {
     pub c: String,
     pub conf: f32,

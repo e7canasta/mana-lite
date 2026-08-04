@@ -98,6 +98,8 @@ pub struct OutputConfig {
     pub rotate: Rotate,
     #[serde(default)]
     pub snapshot_dir: Option<PathBuf>,
+    #[serde(default = "default_jsonl_level")]
+    pub jsonl_level: String,
 }
 
 impl Default for OutputConfig {
@@ -107,6 +109,7 @@ impl Default for OutputConfig {
             save_dir: None,
             rotate: default_rotate(),
             snapshot_dir: None,
+            jsonl_level: default_jsonl_level(),
         }
     }
 }
@@ -121,6 +124,7 @@ pub enum Rotate {
 
 fn default_format() -> String { "jsonl".into() }
 fn default_rotate() -> Rotate { Rotate::Hourly }
+fn default_jsonl_level() -> String { "info".into() }
 
 #[derive(Debug, Default, Deserialize)]
 pub struct ModelCatalog {
@@ -277,6 +281,7 @@ fn apply_env_overrides(cfg: &mut AppConfig) {
     if let Ok(v) = std::env::var("MANA_SNAPSHOT_DIR") {
         cfg.output.snapshot_dir = if v.is_empty() { None } else { Some(v.into()) };
     }
+    if let Ok(v) = std::env::var("MANA_JSONL_LEVEL") { cfg.output.jsonl_level = v; }
     if let Ok(v) = std::env::var("MANA_POLL_TIMEOUT_MS") { if let Ok(n) = v.parse() { cfg.ingest.poll_timeout_ms = n; } }
     if let Ok(v) = std::env::var("MANA_ERROR_WINDOW_SIZE") { if let Ok(n) = v.parse() { cfg.ingest.error_window_size = n; } }
     if let Ok(v) = std::env::var("MANA_ERROR_WINDOW_THRESHOLD") { if let Ok(n) = v.parse() { cfg.ingest.error_window_threshold = n; } }
