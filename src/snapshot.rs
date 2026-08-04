@@ -3,6 +3,9 @@ use std::io::Write;
 use std::path::PathBuf;
 
 use ffmpeg_next::util::frame::Video;
+use image::codecs::png::{CompressionType, FilterType, PngEncoder};
+use image::ExtendedColorType;
+use image::ImageEncoder;
 use mana_video::decoder::SoftwareDecoder;
 
 pub struct SnapshotSaver {
@@ -63,15 +66,26 @@ impl SnapshotSaver {
 
             let data = rgb.data(0);
             let stride = rgb.stride(0);
-            let ppm = dir.join(".latest_frame.ppm.tmp");
-            let mut f = fs::File::create(&ppm)?;
-            write!(f, "P6\n{w} {h}\n255\n")?;
+            let tight = w as usize * 3;
+            let mut packed = Vec::with_capacity(tight * h as usize);
             for row in 0..h as usize {
-                f.write_all(&data[row * stride..row * stride + w as usize * 3])?;
+                packed.extend_from_slice(&data[row * stride..row * stride + tight]);
             }
-            f.flush()?;
-            drop(f);
-            fs::rename(&ppm, dir.join("latest_frame.ppm"))?;
+
+            let png_path = dir.join(".latest_frame.png.tmp");
+            let f = fs::File::create(&png_path)?;
+            let encoder = PngEncoder::new_with_quality(
+                f,
+                CompressionType::Fast,
+                FilterType::NoFilter,
+            );
+            encoder
+                .write_image(
+                    &packed, w, h,
+                    ExtendedColorType::Rgb8,
+                )
+                .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+            fs::rename(&png_path, dir.join("latest_frame.png"))?;
 
             Ok(())
         }) {
@@ -90,7 +104,7 @@ impl Drop for SnapshotSaver {
         if let Ok(exists) = fs::exists(&self.dir) {
             if exists {
                 let _ = fs::remove_file(self.dir.join("latest_frame.h264"));
-                let _ = fs::remove_file(self.dir.join("latest_frame.ppm"));
+                let _ = fs::remove_file(self.dir.join("latest_frame.png"));
             }
         }
     }

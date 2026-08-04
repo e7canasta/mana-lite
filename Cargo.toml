@@ -33,6 +33,7 @@ thiserror = "2"
 log = "0.4"
 env_logger = "0.11"
 ffmpeg-next = "8"
+image = "0.25"
 
 [profile.release]
 opt-level = 3
