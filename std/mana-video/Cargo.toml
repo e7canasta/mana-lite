@@ -2,8 +2,10 @@
 name = "mana-video"
 version = "0.1.0"
 edition = "2024"
-description = "Video decoding commons: FrameDecoder trait, BufferPool"
+description = "Video decoding commons: FrameDecoder trait, BufferPool, pixel format utils"
 
 [dependencies]
 mana-types = { path = "../mana-types" }
 log = "0.4"
+anyhow = "1"
+ffmpeg-next = "8"
