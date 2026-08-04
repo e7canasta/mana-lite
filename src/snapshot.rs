@@ -36,15 +36,17 @@ impl SnapshotSaver {
         f.flush()?;
         fs::rename(&tmp_path, &final_path)?;
 
-        let _ = self.decoder.decode(h264_data, |frame| {
+        let Self { decoder, scaler, dec_width, dec_height, dir, .. } = self;
+
+        match decoder.decode(h264_data, |frame| {
             let w = frame.width();
             let h = frame.height();
             let fmt = frame.format();
 
-            if self.scaler.is_none() || self.dec_width != w || self.dec_height != h {
-                self.dec_width = w;
-                self.dec_height = h;
-                self.scaler = Some(
+            if scaler.is_none() || *dec_width != w || *dec_height != h {
+                *dec_width = w;
+                *dec_height = h;
+                *scaler = Some(
                     ffmpeg_next::software::scaling::Context::get(
                         fmt, w, h,
                         ffmpeg_next::format::Pixel::RGB24,
@@ -56,12 +58,12 @@ impl SnapshotSaver {
             }
 
             let mut rgb = Video::empty();
-            self.scaler.as_mut().unwrap().run(frame, &mut rgb)
+            scaler.as_mut().unwrap().run(frame, &mut rgb)
                 .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
 
             let data = rgb.data(0);
             let stride = rgb.stride(0);
-            let ppm = self.dir.join(".latest_frame.ppm.tmp");
+            let ppm = dir.join(".latest_frame.ppm.tmp");
             let mut f = fs::File::create(&ppm)?;
             write!(f, "P6\n{w} {h}\n255\n")?;
             for row in 0..h as usize {
@@ -69,10 +71,15 @@ impl SnapshotSaver {
             }
             f.flush()?;
             drop(f);
-            fs::rename(&ppm, self.dir.join("latest_frame.ppm"))?;
+            fs::rename(&ppm, dir.join("latest_frame.ppm"))?;
 
             Ok(())
-        });
+        }) {
+            Ok(()) => {}
+            Err(e) => {
+                log::warn!("snapshot decode failed: {e}");
+            }
+        }
 
         Ok(())
     }
