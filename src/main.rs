@@ -67,6 +67,7 @@ async fn main() -> Result<()> {
     #[allow(unused_variables)]
     let panic_count: u32 = 0;
     let mut current_state: Option<String> = fsm.as_ref().map(|f| f.fsm.initial.clone());
+    let mut fsm_stub_fired = false;
 
     let demo_mode = app_config.source.url.contains("demo") || args_has_flag("--demo");
     let mut ingest: IngestEngine<AnyReader> = if demo_mode {
@@ -103,10 +104,10 @@ async fn main() -> Result<()> {
         }
 
         // PHASE 4: INFER (stub)
-        #[allow(clippy::collapsible_if)]
-        if frame_count == 1 && current_state.is_some() {
+        if !fsm_stub_fired && frame_count >= 1 && current_state.is_some() {
             log.emit(Event::fsm_transition("idle", "watching", "bed_occupied", 0));
             current_state = Some("watching".into());
+            fsm_stub_fired = true;
         }
 
         // PHASE 5: ZONES (no-op until inference)
