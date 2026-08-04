@@ -48,14 +48,6 @@ impl<R: FrameReader> IngestEngine<R> {
         }
     }
 
-    pub fn reader(&self) -> &R {
-        &self.reader
-    }
-
-    pub fn reader_mut(&mut self) -> &mut R {
-        &mut self.reader
-    }
-
     pub async fn poll_freshest_keyframe(&mut self) -> Option<DecodedFrame> {
         let mut latest: Option<Frame> = None;
 
@@ -86,6 +78,19 @@ impl<R: FrameReader> IngestEngine<R> {
         };
         self.last_keyframe_data = Some(kf.data);
         Some(decoded)
+    }
+}
+
+impl IngestEngine<AnyReader> {
+    pub fn drain_retina_counters(&mut self) -> Option<RetinaCounters> {
+        match &mut self.reader {
+            AnyReader::Retina(r) => {
+                let c = r.counters.clone();
+                r.counters = RetinaCounters::default();
+                Some(c)
+            }
+            _ => None,
+        }
     }
 }
 
@@ -305,26 +310,6 @@ impl FrameReader for RetinaReader {
 pub enum AnyReader {
     Queued(QueuedReader),
     Retina(RetinaReader),
-}
-
-impl AnyReader {
-    pub fn retina_counters(&self) -> Option<&RetinaCounters> {
-        match self {
-            Self::Retina(r) => Some(&r.counters),
-            _ => None,
-        }
-    }
-
-    pub fn drain_retina_counters(&mut self) -> Option<RetinaCounters> {
-        match self {
-            Self::Retina(r) => {
-                let c = r.counters.clone();
-                r.counters = RetinaCounters::default();
-                Some(c)
-            }
-            _ => None,
-        }
-    }
 }
 
 impl FrameReader for AnyReader {

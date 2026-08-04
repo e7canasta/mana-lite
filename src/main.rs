@@ -66,8 +66,6 @@ async fn main() -> Result<()> {
     ));
 
     let mut frame_count: u64 = 0;
-    #[allow(unused_variables)]
-    let panic_count: u32 = 0;
     let mut current_state: Option<String> = fsm.as_ref().map(|f| f.fsm.initial.clone());
     let mut fsm_stub_fired = false;
 
@@ -114,10 +112,11 @@ async fn main() -> Result<()> {
             }
         }
 
-        if let Some(counters) = ingest.reader().retina_counters() {
-            metrics.tick_retina_counters(counters);
+        if let Some(c) = ingest.drain_retina_counters() {
+            metrics.tick_retina_counters(
+                c.timeouts, c.ssrc_changes, c.rtp_errors, c.stream_ends, c.reconnect_attempts,
+            );
         }
-        ingest.reader_mut().drain_retina_counters();
 
         // PHASE 4: INFER (stub)
         if !fsm_stub_fired && frame_count >= 1 && current_state.is_some() {
@@ -149,22 +148,7 @@ async fn main() -> Result<()> {
         }
 
         if let Some(report) = metrics.take_report() {
-            log.emit(Event::metrics(
-                report.window_s,
-                report.cycles,
-                report.frames_total,
-                report.keyframes,
-                report.pframes_dropped,
-                report.inferences,
-                report.infer_total_ms,
-                report.decode_total_ms,
-                report.blind_cycles,
-                report.timeouts,
-                report.ssrc_changes,
-                report.rtp_errors,
-                report.stream_ends,
-                report.reconnect_attempts,
-            ));
+            log.emit(Event::metrics(&report));
         }
 
         log.flush();

@@ -35,6 +35,27 @@ pub struct MetricsReport {
     pub reconnect_attempts: u64,
 }
 
+impl From<&Metrics> for MetricsReport {
+    fn from(m: &Metrics) -> Self {
+        Self {
+            window_s: 0,
+            cycles: m.cycles,
+            frames_total: m.frames_total,
+            keyframes: m.keyframes,
+            pframes_dropped: m.pframes_dropped,
+            inferences: m.inferences,
+            infer_total_ms: m.infer_total_us / 1000,
+            decode_total_ms: m.decode_total_us / 1000,
+            blind_cycles: m.blind_cycles,
+            timeouts: m.timeouts,
+            ssrc_changes: m.ssrc_changes,
+            rtp_errors: m.rtp_errors,
+            stream_ends: m.stream_ends,
+            reconnect_attempts: m.reconnect_attempts,
+        }
+    }
+}
+
 pub struct MetricsEngine {
     current: Metrics,
     window_start: Instant,
@@ -79,12 +100,15 @@ impl MetricsEngine {
         self.current.blind_cycles += 1;
     }
 
-    pub fn tick_retina_counters(&mut self, c: &crate::ingest::RetinaCounters) {
-        self.current.timeouts = (self.current.timeouts).saturating_add(c.timeouts);
-        self.current.ssrc_changes = (self.current.ssrc_changes).saturating_add(c.ssrc_changes);
-        self.current.rtp_errors = (self.current.rtp_errors).saturating_add(c.rtp_errors);
-        self.current.stream_ends = (self.current.stream_ends).saturating_add(c.stream_ends);
-        self.current.reconnect_attempts = (self.current.reconnect_attempts).saturating_add(c.reconnect_attempts);
+    pub fn tick_retina_counters(
+        &mut self, timeouts: u64, ssrc_changes: u64, rtp_errors: u64,
+        stream_ends: u64, reconnect_attempts: u64,
+    ) {
+        self.current.timeouts = self.current.timeouts.saturating_add(timeouts);
+        self.current.ssrc_changes = self.current.ssrc_changes.saturating_add(ssrc_changes);
+        self.current.rtp_errors = self.current.rtp_errors.saturating_add(rtp_errors);
+        self.current.stream_ends = self.current.stream_ends.saturating_add(stream_ends);
+        self.current.reconnect_attempts = self.current.reconnect_attempts.saturating_add(reconnect_attempts);
     }
 
     pub fn take_report(&mut self) -> Option<MetricsReport> {
@@ -92,22 +116,8 @@ impl MetricsEngine {
         if elapsed < self.report_interval_s {
             return None;
         }
-        let report = MetricsReport {
-            window_s: elapsed,
-            cycles: self.current.cycles,
-            frames_total: self.current.frames_total,
-            keyframes: self.current.keyframes,
-            pframes_dropped: self.current.pframes_dropped,
-            inferences: self.current.inferences,
-            infer_total_ms: self.current.infer_total_us / 1000,
-            decode_total_ms: self.current.decode_total_us / 1000,
-            blind_cycles: self.current.blind_cycles,
-            timeouts: self.current.timeouts,
-            ssrc_changes: self.current.ssrc_changes,
-            rtp_errors: self.current.rtp_errors,
-            stream_ends: self.current.stream_ends,
-            reconnect_attempts: self.current.reconnect_attempts,
-        };
+        let mut report = MetricsReport::from(&self.current);
+        report.window_s = elapsed;
         self.current = Metrics::default();
         self.window_start = Instant::now();
         Some(report)
