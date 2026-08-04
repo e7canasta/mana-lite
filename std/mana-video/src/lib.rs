@@ -36,6 +36,7 @@
 #![forbid(unsafe_code)]
 
 pub mod buffer_pool;
+pub mod decoder;
 pub mod format;
 
 pub use mana_types::PixelFormat;

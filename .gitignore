@@ -19,3 +19,4 @@ logs/
 
 # macOS
 .DS_Store
+snapshots/

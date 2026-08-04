@@ -88,7 +88,7 @@ async fn main() -> Result<()> {
     let mut metrics = MetricsEngine::new(app_config.health.report_interval_s);
     let mut health = Health::new(app_config.health.data_stale_ms);
 
-    let snapshots = app_config.output.snapshot_dir.as_ref().map(|dir| {
+    let mut snapshots = app_config.output.snapshot_dir.as_ref().map(|dir| {
         SnapshotSaver::new(dir.clone()).expect("create snapshot dir")
     });
 
@@ -107,7 +107,7 @@ async fn main() -> Result<()> {
             metrics.tick_decode(decoded.decode_us);
             log.emit(Event::frame_ingest(frame_count, true, decoded.decode_us));
 
-            if let Some(ref s) = snapshots {
+            if let Some(ref mut s) = snapshots {
                 if let Err(e) = s.save(&decoded.data) {
                     log::error!("snapshot save failed: {e}");
                 }
