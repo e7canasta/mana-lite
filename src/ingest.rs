@@ -7,7 +7,6 @@ pub trait FrameReader {
 
 pub struct Frame {
     pub data: Vec<u8>,
-    #[allow(dead_code)]
     pub is_keyframe: bool,
     #[allow(dead_code)]
     pub timestamp: i64,
@@ -46,7 +45,9 @@ impl<R: FrameReader> IngestEngine<R> {
         loop {
             match self.reader.next_frame().await {
                 Some(frame) => {
-                    latest = Some(frame);
+                    if frame.is_keyframe {
+                        latest = Some(frame);
+                    }
                 }
                 None => break,
             }
@@ -165,7 +166,11 @@ async fn open_rtsp(
 
     let mut session = session;
     session
-        .setup(0, retina::client::SetupOptions::default())
+        .setup(
+            0,
+            retina::client::SetupOptions::default()
+                .frame_format(retina::codec::FrameFormat::SIMPLE),
+        )
         .await
         .map_err(|e| ManaError::Ingest(format!("rtsp setup: {e}")))?;
 
@@ -190,9 +195,9 @@ impl FrameReader for RetinaReader {
 
             match poll {
                 Ok(Some(Ok(retina::codec::CodecItem::VideoFrame(vf)))) => {
-                    let is_keyframe = vf.is_random_access_point();
                     let timestamp = vf.timestamp().timestamp();
                     let data = vf.into_data();
+                    let is_keyframe = mana_rtsp::h264::contains_idr(&data);
                     return Some(Frame { data, is_keyframe, timestamp });
                 }
                 Ok(Some(Err(e))) => {
@@ -255,14 +260,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn processes_all_frames() {
+    async fn drops_all_pframes() {
         let mut engine = make_reader(vec![
             make_pframe(1),
             make_pframe(2),
             make_pframe(3),
         ]);
-        let decoded = engine.poll_freshest_keyframe().await.unwrap();
-        assert_eq!(decoded.data, vec![3u8; 32]);
+        assert!(engine.poll_freshest_keyframe().await.is_none());
     }
 
     #[tokio::test]
