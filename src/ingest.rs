@@ -7,6 +7,7 @@ pub trait FrameReader {
 
 pub struct Frame {
     pub data: Vec<u8>,
+    #[allow(dead_code)]
     pub is_keyframe: bool,
     #[allow(dead_code)]
     pub timestamp: i64,
@@ -40,20 +41,18 @@ impl<R: FrameReader> IngestEngine<R> {
     }
 
     pub async fn poll_freshest_keyframe(&mut self) -> Option<DecodedFrame> {
-        let mut latest_keyframe: Option<Frame> = None;
+        let mut latest: Option<Frame> = None;
 
         loop {
             match self.reader.next_frame().await {
                 Some(frame) => {
-                    if frame.is_keyframe {
-                        latest_keyframe = Some(frame);
-                    }
+                    latest = Some(frame);
                 }
                 None => break,
             }
         }
 
-        let kf = latest_keyframe?;
+        let kf = latest?;
 
         let is_new = self.last_keyframe_data.as_ref() != Some(&kf.data);
         if !is_new {
@@ -256,13 +255,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn drops_all_pframes() {
+    async fn processes_all_frames() {
         let mut engine = make_reader(vec![
             make_pframe(1),
             make_pframe(2),
             make_pframe(3),
         ]);
-        assert!(engine.poll_freshest_keyframe().await.is_none());
+        let decoded = engine.poll_freshest_keyframe().await.unwrap();
+        assert_eq!(decoded.data, vec![3u8; 32]);
     }
 
     #[tokio::test]
@@ -298,12 +298,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn same_keyframe_returns_none_on_second_poll() {
+    async fn same_frame_returns_none_on_second_poll() {
         let mut engine = make_reader(vec![make_keyframe(7)]);
         let first = engine.poll_freshest_keyframe().await;
         assert!(first.is_some());
 
-        engine.reader.frames.push_back(make_pframe(99));
+        engine.reader.frames.push_back(make_keyframe(7));
         let second = engine.poll_freshest_keyframe().await;
         assert!(second.is_none());
     }
