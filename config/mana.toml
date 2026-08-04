@@ -29,4 +29,5 @@ format = "jsonl"
 save_dir = "./logs"
 rotate = "hourly"
 snapshot_dir = "./snapshots"
+snapshot_verbose = false
 jsonl_level = "info"

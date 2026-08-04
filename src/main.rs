@@ -89,7 +89,7 @@ async fn main() -> Result<()> {
     let mut health = Health::new(app_config.health.data_stale_ms);
 
     let mut snapshots = app_config.output.snapshot_dir.as_ref().map(|dir| {
-        SnapshotSaver::new(dir.clone()).expect("create snapshot dir")
+        SnapshotSaver::new(dir.clone(), app_config.output.snapshot_verbose).expect("create snapshot dir")
     });
 
     loop {

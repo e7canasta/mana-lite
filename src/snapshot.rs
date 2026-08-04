@@ -11,15 +11,16 @@ use mana_video::decoder::SoftwareDecoder;
 pub struct SnapshotSaver {
     dir: PathBuf,
     decoder: SoftwareDecoder,
+    verbose: bool,
 }
 
 impl SnapshotSaver {
-    pub fn new(dir: PathBuf) -> std::io::Result<Self> {
+    pub fn new(dir: PathBuf, verbose: bool) -> std::io::Result<Self> {
         fs::create_dir_all(&dir)?;
         ffmpeg_next::init().map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
         let decoder = SoftwareDecoder::new(ffmpeg_next::codec::Id::H264)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
-        Ok(Self { dir, decoder })
+        Ok(Self { dir, decoder, verbose })
     }
 
     pub fn save(&mut self, h264_data: &[u8]) -> std::io::Result<()> {
@@ -65,7 +66,9 @@ impl SnapshotSaver {
 
             Ok(())
         }) {
-            log::debug!("snapshot decode failed: {e}");
+            if self.verbose {
+                log::warn!("snapshot decode failed: {e}");
+            }
         }
 
         Ok(())
@@ -92,7 +95,7 @@ mod tests {
         let dir = std::env::temp_dir().join("mana_snapshot_test");
         let _ = fs::remove_dir_all(&dir);
 
-        let mut saver = SnapshotSaver::new(dir.clone()).unwrap();
+        let mut saver = SnapshotSaver::new(dir.clone(), false).unwrap();
 
         saver.save(&[1, 2, 3]).unwrap();
         let data = fs::read(dir.join("latest_frame.h264")).unwrap();
@@ -110,7 +113,7 @@ mod tests {
         let dir = std::env::temp_dir().join("mana_snapshot_tmp_test");
         let _ = fs::remove_dir_all(&dir);
 
-        let mut saver = SnapshotSaver::new(dir.clone()).unwrap();
+        let mut saver = SnapshotSaver::new(dir.clone(), false).unwrap();
         saver.save(b"hello").unwrap();
 
         assert!(!dir.join(".latest_frame.h264.tmp").exists());
