@@ -18,5 +18,5 @@ report_interval_s = 5
 
 [output]
 format = "jsonl"
-# save_dir = "./logs"
+save_dir = "./logs"
 rotate = "hourly"
