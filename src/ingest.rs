@@ -95,6 +95,39 @@ pub struct RetinaReader {
     password: Option<String>,
     transport: String,
     retry_count: u32,
+    rtp_window: ErrorWindow,
+}
+
+fn fast_jitter(half: u64, seed: u64) -> u64 {
+    let m = half.max(1);
+    ((seed.wrapping_mul(0x9E3779B97F4A7C15).wrapping_add(0xBF58476D1CE4E5B9) >> 32) as u64) % m
+}
+
+struct ErrorWindow {
+    ring: VecDeque<bool>,
+    count: u32,
+    cap: usize,
+    threshold: u32,
+}
+
+impl ErrorWindow {
+    fn new(cap: usize, threshold: u32) -> Self {
+        Self { ring: VecDeque::with_capacity(cap), count: 0, cap, threshold }
+    }
+
+    fn record(&mut self, is_error: bool) -> bool {
+        self.ring.push_back(is_error);
+        if is_error { self.count += 1; }
+        if self.ring.len() > self.cap {
+            if self.ring.pop_front().unwrap() { self.count -= 1; }
+        }
+        self.count > self.threshold
+    }
+
+    fn reset(&mut self) {
+        self.ring.clear();
+        self.count = 0;
+    }
 }
 
 impl RetinaReader {
@@ -115,37 +148,41 @@ impl RetinaReader {
             password: password.map(String::from),
             transport: transport.to_string(),
             retry_count: 0,
+            rtp_window: ErrorWindow::new(128, 25),
         })
     }
 
     async fn reconnect(&mut self) {
-        let transport = self.transport.clone();
-        let mut backoff_ms: u64 = 1000;
-        let max_backoff_ms: u64 = 30_000;
+        let mut base_ms: u64 = 1000;
+        let max_ms: u64 = 30_000;
         loop {
             self.retry_count += 1;
+            let half = base_ms / 2;
+            let jitter = fast_jitter(half, self.retry_count as u64);
+            let delay = half + jitter;
             log::warn!(
-                "rtsp reconnect attempt {} (backoff {}ms)",
-                self.retry_count, backoff_ms
+                "rtsp reconnect attempt {} (delay {}ms)",
+                self.retry_count, delay
             );
-            tokio::time::sleep(std::time::Duration::from_millis(backoff_ms)).await;
+            tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
             match open_rtsp(
                 &self.url,
                 self.username.as_deref(),
                 self.password.as_deref(),
-                &transport,
+                &self.transport,
             )
             .await
             {
                 Ok(demuxed) => {
                     self.demuxed = demuxed;
+                    self.rtp_window.reset();
                     log::info!("rtsp reconnected after {} attempts", self.retry_count);
                     self.retry_count = 0;
                     return;
                 }
                 Err(e) => {
                     log::error!("rtsp reconnect failed: {e}");
-                    backoff_ms = (backoff_ms * 2).min(max_backoff_ms);
+                    base_ms = (base_ms * 2).min(max_ms);
                 }
             }
         }
@@ -207,13 +244,25 @@ impl FrameReader for RetinaReader {
 
             match poll {
                 Ok(Some(Ok(retina::codec::CodecItem::VideoFrame(vf)))) => {
+                    self.rtp_window.record(false);
                     let timestamp = vf.timestamp().timestamp();
                     let data = vf.into_data();
                     let is_keyframe = mana_rtsp::h264::contains_idr(&data);
                     return Some(Frame { data, is_keyframe, timestamp });
                 }
                 Ok(Some(Err(e))) => {
-                    log::error!("retina stream: {e}");
+                    let msg = e.to_string();
+                    if msg.contains("wrong ssrc") {
+                        log::error!("rtp ssrc changed — reconnecting: {msg}");
+                        self.reconnect().await;
+                        continue;
+                    }
+                    if self.rtp_window.record(true) {
+                        log::error!("rtp errors exceeded threshold — reconnecting: {msg}");
+                        self.reconnect().await;
+                        continue;
+                    }
+                    log::error!("retina stream: {msg}");
                     continue;
                 }
                 Ok(Some(Ok(_))) => continue,

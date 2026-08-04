@@ -39,7 +39,11 @@ impl SnapshotSaver {
         f.flush()?;
         fs::rename(&tmp_path, &final_path)?;
 
-        let Self { decoder, scaler, dec_width, dec_height, dir, .. } = self;
+        let scaler = &mut self.scaler;
+        let dec_width = &mut self.dec_width;
+        let dec_height = &mut self.dec_height;
+        let dir = &self.dir;
+        let decoder = &mut self.decoder;
 
         match decoder.decode(h264_data, |frame| {
             let w = frame.width();
