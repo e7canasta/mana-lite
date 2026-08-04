@@ -48,7 +48,7 @@ async fn main() -> Result<()> {
     }
 
     let mut log = if let Some(ref dir) = app_config.output.save_dir {
-        Logger::rotating(dir.clone())?
+        Logger::rotating(dir.clone(), &app_config.output.rotate)?
     } else {
         Logger::new()
     };

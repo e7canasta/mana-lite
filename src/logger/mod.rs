@@ -5,6 +5,7 @@ mod serialize;
 pub use event::{DetRecord, Event};
 use serialize::write_event;
 
+use crate::config::Rotate;
 use std::fs;
 use std::io::{self, BufWriter, Write};
 use std::path::PathBuf;
@@ -22,6 +23,7 @@ enum OutputTarget {
         dir: PathBuf,
         writer: BufWriter<fs::File>,
         current_hour: u32,
+        current_day: u32,
     },
 }
 
@@ -34,13 +36,26 @@ impl Logger {
         }
     }
 
-    pub fn rotating(dir: PathBuf) -> io::Result<Self> {
+    pub fn rotating(dir: PathBuf, rotate: &Rotate) -> io::Result<Self> {
         fs::create_dir_all(&dir)?;
-        let (writer, hour) = open_hour_file(&dir)?;
+        let (writer, hour, day) = match rotate {
+            Rotate::Hourly => {
+                let (w, h, _) = open_file(&dir, "%Y%m%dT%H")?;
+                (w, h, 0)
+            }
+            Rotate::Daily => {
+                let (w, _, d) = open_file(&dir, "%Y%m%d")?;
+                (w, 0, d)
+            }
+            Rotate::Never => {
+                let (w, _, _) = open_file(&dir, "all")?;
+                (w, 0, 0)
+            }
+        };
         Ok(Self {
             buffer: Vec::with_capacity(32),
             started_at: Instant::now(),
-            target: OutputTarget::Rotating { dir, writer, current_hour: hour },
+            target: OutputTarget::Rotating { dir, writer, current_hour: hour, current_day: day },
         })
     }
 
@@ -67,13 +82,34 @@ impl Logger {
                 w.write_all(buf)?;
                 w.flush()
             }
-            OutputTarget::Rotating { dir, writer, current_hour } => {
+            OutputTarget::Rotating { dir, writer, current_hour, current_day } => {
                 let now = chrono::Utc::now();
-                let this_hour = now.format("%H").to_string().parse::<u32>().unwrap_or(0);
-                if this_hour != *current_hour {
-                    let (new_writer, new_hour) = open_hour_file(dir)?;
+                let rotate_needed = match *current_hour {
+                    0 if *current_day > 0 => {
+                        // daily mode
+                        let today = now.format("%Y%m%d").to_string().parse::<u32>().unwrap_or(0);
+                        today != *current_day
+                    }
+                    _ => {
+                        // hourly mode or never (current_day == 0)
+                        let this_hour = now.format("%H").to_string().parse::<u32>().unwrap_or(0);
+                        this_hour != *current_hour
+                    }
+                };
+                if rotate_needed {
+                    let (new_writer, h, d) = if *current_hour == 0 && *current_day == 0 {
+                        let (w, _, _) = open_file(dir, "all")?;
+                        (w, 0, 0)
+                    } else if *current_day > 0 {
+                        let (w, _, d) = open_file(dir, "%Y%m%d")?;
+                        (w, 0, d)
+                    } else {
+                        let (w, h, _) = open_file(dir, "%Y%m%dT%H")?;
+                        (w, h, 0)
+                    };
                     *writer = new_writer;
-                    *current_hour = new_hour;
+                    *current_hour = h;
+                    *current_day = d;
                 }
                 writer.write_all(buf)?;
                 writer.flush()
@@ -104,17 +140,18 @@ impl Logger {
     }
 }
 
-fn open_hour_file(dir: &PathBuf) -> io::Result<(BufWriter<fs::File>, u32)> {
+fn open_file(dir: &PathBuf, fmt: &str) -> io::Result<(BufWriter<fs::File>, u32, u32)> {
     let now = chrono::Utc::now();
-    let filename = format!("mana-{}.jsonl", now.format("%Y%m%dT%H"));
+    let filename = format!("mana-{}.jsonl", now.format(fmt));
     let path = dir.join(&filename);
     let hour = now.format("%H").to_string().parse::<u32>().unwrap_or(0);
+    let day = now.format("%Y%m%d").to_string().parse::<u32>().unwrap_or(0);
     let file = fs::OpenOptions::new()
         .create(true)
         .append(true)
         .open(&path)?;
-    log::info!("logger: writing to {}", path.display());
-    Ok((BufWriter::new(file), hour))
+    log::info!("logger: {}", path.display());
+    Ok((BufWriter::new(file), hour, day))
 }
 
 #[cfg(test)]

@@ -52,17 +52,36 @@ fn default_data_stale_ms() -> u64 { 10_000 }
 fn default_max_panics() -> u32 { 3 }
 fn default_report_interval_s() -> u64 { 5 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Deserialize)]
 pub struct OutputConfig {
     #[serde(default = "default_format")]
     pub format: String,
     #[serde(default)]
     pub save_dir: Option<PathBuf>,
-    #[serde(default)]
-    pub rotate: Option<String>,
+    #[serde(default = "default_rotate")]
+    pub rotate: Rotate,
+}
+
+impl Default for OutputConfig {
+    fn default() -> Self {
+        Self {
+            format: default_format(),
+            save_dir: None,
+            rotate: default_rotate(),
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Rotate {
+    Hourly,
+    Daily,
+    Never,
 }
 
 fn default_format() -> String { "jsonl".into() }
+fn default_rotate() -> Rotate { Rotate::Hourly }
 
 #[derive(Debug, Default, Deserialize)]
 pub struct ModelCatalog {

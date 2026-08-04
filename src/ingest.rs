@@ -90,6 +90,10 @@ impl FrameReader for QueuedReader {
 
 pub struct RetinaReader {
     demuxed: retina::client::Demuxed,
+    url: url::Url,
+    username: Option<String>,
+    password: Option<String>,
+    retry_count: u32,
 }
 
 impl RetinaReader {
@@ -100,37 +104,80 @@ impl RetinaReader {
     ) -> Result<Self> {
         let parsed = url::Url::parse(url)
             .map_err(|e| ManaError::Ingest(format!("invalid url: {e}")))?;
-
-        let mut opts = retina::client::SessionOptions::default();
-        if let (Some(u), Some(p)) = (username, password) {
-            opts = opts.creds(Some(retina::client::Credentials {
-                username: u.into(),
-                password: p.into(),
-            }));
-        }
-
-        let session = retina::client::Session::describe(parsed, opts)
-            .await
-            .map_err(|e| ManaError::Ingest(format!("rtsp describe: {e}")))?;
-
-        let mut session = session;
-        session
-            .setup(0, retina::client::SetupOptions::default())
-            .await
-            .map_err(|e| ManaError::Ingest(format!("rtsp setup: {e}")))?;
-
-        let session = session
-            .play(retina::client::PlayOptions::default())
-            .await
-            .map_err(|e| ManaError::Ingest(format!("rtsp play: {e}")))?;
-
-        let demuxed = session
-            .demuxed()
-            .map_err(|e| ManaError::Ingest(format!("rtsp demuxed: {e}")))?;
-
+        let demuxed = open_rtsp(&parsed, username, password).await?;
         log::info!("rtsp connected: {url}");
-        Ok(Self { demuxed })
+        Ok(Self {
+            demuxed,
+            url: parsed,
+            username: username.map(String::from),
+            password: password.map(String::from),
+            retry_count: 0,
+        })
     }
+
+    async fn reconnect(&mut self) {
+        let mut backoff_ms: u64 = 1000;
+        let max_backoff_ms: u64 = 30_000;
+        loop {
+            self.retry_count += 1;
+            log::warn!(
+                "rtsp reconnect attempt {} (backoff {}ms)",
+                self.retry_count, backoff_ms
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(backoff_ms)).await;
+            match open_rtsp(
+                &self.url,
+                self.username.as_deref(),
+                self.password.as_deref(),
+            )
+            .await
+            {
+                Ok(demuxed) => {
+                    self.demuxed = demuxed;
+                    log::info!("rtsp reconnected after {} attempts", self.retry_count);
+                    self.retry_count = 0;
+                    return;
+                }
+                Err(e) => {
+                    log::error!("rtsp reconnect failed: {e}");
+                    backoff_ms = (backoff_ms * 2).min(max_backoff_ms);
+                }
+            }
+        }
+    }
+}
+
+async fn open_rtsp(
+    url: &url::Url,
+    username: Option<&str>,
+    password: Option<&str>,
+) -> Result<retina::client::Demuxed> {
+    let mut opts = retina::client::SessionOptions::default();
+    if let (Some(u), Some(p)) = (username, password) {
+        opts = opts.creds(Some(retina::client::Credentials {
+            username: u.into(),
+            password: p.into(),
+        }));
+    }
+
+    let session = retina::client::Session::describe(url.clone(), opts)
+        .await
+        .map_err(|e| ManaError::Ingest(format!("rtsp describe: {e}")))?;
+
+    let mut session = session;
+    session
+        .setup(0, retina::client::SetupOptions::default())
+        .await
+        .map_err(|e| ManaError::Ingest(format!("rtsp setup: {e}")))?;
+
+    let session = session
+        .play(retina::client::PlayOptions::default())
+        .await
+        .map_err(|e| ManaError::Ingest(format!("rtsp play: {e}")))?;
+
+    session
+        .demuxed()
+        .map_err(|e| ManaError::Ingest(format!("rtsp demuxed: {e}")).into())
 }
 
 impl FrameReader for RetinaReader {
@@ -148,7 +195,10 @@ impl FrameReader for RetinaReader {
                     continue;
                 }
                 Some(Ok(_)) => continue,
-                None => return None,
+                None => {
+                    log::warn!("rtsp stream ended, reconnecting...");
+                    self.reconnect().await;
+                }
             }
         }
     }

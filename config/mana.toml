@@ -14,7 +14,9 @@ fsm_file = "config/fsm.toml"
 [health]
 data_stale_ms = 10_000
 max_consecutive_panics = 3
-heartbeat_every_n_cycles = 100
+report_interval_s = 5
 
 [output]
 format = "jsonl"
+# save_dir = "./logs"
+rotate = "hourly"
