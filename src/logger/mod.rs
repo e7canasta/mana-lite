@@ -1,6 +1,7 @@
 mod event;
 mod serialize;
 
+#[allow(unused_imports)]
 pub use event::{DetRecord, Event};
 use serialize::write_event;
 
@@ -81,6 +82,7 @@ impl Logger {
     }
 
     #[doc(hidden)]
+    #[allow(dead_code)]
     pub fn flush_to_buffer(&mut self, out: &mut Vec<u8>) {
         let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
         let events: Vec<Event> = self.buffer.drain(..).collect();

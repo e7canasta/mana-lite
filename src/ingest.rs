@@ -8,12 +8,16 @@ pub trait FrameReader {
 pub struct Frame {
     pub data: Vec<u8>,
     pub is_keyframe: bool,
+    #[allow(dead_code)]
     pub timestamp: i64,
 }
 
 pub struct DecodedFrame {
+    #[allow(dead_code)]
     pub data: Vec<u8>,
+    #[allow(dead_code)]
     pub width: u32,
+    #[allow(dead_code)]
     pub height: u32,
     pub decode_us: u64,
 }
@@ -65,10 +69,6 @@ impl<R: FrameReader> IngestEngine<R> {
         };
         self.last_keyframe_data = Some(kf.data);
         Some(decoded)
-    }
-
-    pub fn stream_ended(&mut self) -> bool {
-        false
     }
 }
 

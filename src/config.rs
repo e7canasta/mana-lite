@@ -1,3 +1,4 @@
+#![allow(dead_code)] // schema module: all fields are defined API contract
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};

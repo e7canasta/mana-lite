@@ -1,3 +1,4 @@
+#![allow(dead_code)] // error variants are the API contract
 use thiserror::Error;
 
 #[derive(Error, Debug)]

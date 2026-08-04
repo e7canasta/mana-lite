@@ -15,12 +15,14 @@ pub enum Event {
         kf: bool,
         dec_ms: u64,
     },
+    #[allow(dead_code)]
     Detection {
         f: u64,
         m: String,
         inf_ms: u64,
         det: Vec<DetRecord>,
     },
+    #[allow(dead_code)]
     Zone {
         z: String,
         e: String,
@@ -73,6 +75,7 @@ impl Event {
         }
     }
 
+    #[allow(dead_code)]
     pub fn meta_model_load_failed(model: &str, path: &str, err: &str) -> Self {
         Event::Meta {
             event: "model_load_failed".into(),
@@ -108,6 +111,7 @@ impl Event {
         }
     }
 
+    #[allow(dead_code)]
     pub fn health_panic_count(count: u32, max: u32) -> Self {
         Event::Health {
             event: "panic_count".into(),
@@ -125,6 +129,7 @@ impl Event {
         }
     }
 
+    #[allow(dead_code)]
     pub fn detection(frame: u64, model: &str, infer_ms: u64, dets: Vec<DetRecord>) -> Self {
         Event::Detection {
             f: frame,
@@ -134,6 +139,7 @@ impl Event {
         }
     }
 
+    #[allow(dead_code)]
     pub fn zone_occupied(zone: &str, by_class: &str, frame: u64) -> Self {
         Event::Zone {
             z: zone.into(),
@@ -143,6 +149,7 @@ impl Event {
         }
     }
 
+    #[allow(dead_code)]
     pub fn zone_vacated(zone: &str, by_class: &str, frame: u64) -> Self {
         Event::Zone {
             z: zone.into(),

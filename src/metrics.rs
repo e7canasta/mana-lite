@@ -54,6 +54,7 @@ impl MetricsEngine {
         self.current.frames_total += 1;
     }
 
+    #[allow(dead_code)]
     pub fn tick_inference(&mut self, elapsed_us: u64) {
         self.current.inferences += 1;
         self.current.infer_total_us += elapsed_us;
