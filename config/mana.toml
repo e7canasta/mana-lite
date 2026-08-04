@@ -31,3 +31,7 @@ rotate = "hourly"
 snapshot_dir = "./snapshots"
 snapshot_verbose = false
 jsonl_level = "info"
+
+[viz]
+enabled = false
+rerun_addr = "0.0.0.0:9876"

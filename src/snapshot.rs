@@ -23,17 +23,9 @@ impl SnapshotSaver {
         Ok(Self { dir, decoder, verbose })
     }
 
-    pub fn save(&mut self, h264_data: &[u8]) -> std::io::Result<()> {
-        let final_path = self.dir.join("latest_frame.h264");
-        let tmp_path = self.dir.join(".latest_frame.h264.tmp");
-        let mut f = fs::File::create(&tmp_path)?;
-        f.write_all(h264_data)?;
-        f.flush()?;
-        fs::rename(&tmp_path, &final_path)?;
-
-        let dir = &self.dir;
-
-        if let Err(e) = self.decoder.decode(h264_data, |frame| {
+    pub fn decode_rgb(&mut self, h264_data: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
+        let mut result = None;
+        let ok = self.decoder.decode(h264_data, |frame| {
             let w = frame.width();
             let h = frame.height();
             let fmt = frame.format();
@@ -56,21 +48,34 @@ impl SnapshotSaver {
             for row in 0..h as usize {
                 packed.extend_from_slice(&data[row * stride..row * stride + tight]);
             }
-
-            let png_path = dir.join(".latest_frame.png.tmp");
-            let f = fs::File::create(&png_path)?;
-            let encoder = PngEncoder::new_with_quality(f, CompressionType::Fast, FilterType::NoFilter);
-            encoder.write_image(&packed, w, h, ExtendedColorType::Rgb8)
-                .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
-            fs::rename(&png_path, dir.join("latest_frame.png"))?;
-
+            result = Some((w, h, packed));
             Ok(())
-        }) {
+        });
+        if let Err(e) = ok {
             if self.verbose {
                 log::warn!("snapshot decode failed: {e}");
             }
         }
+        result
+    }
 
+    pub fn save_h264(&self, h264_data: &[u8]) -> std::io::Result<()> {
+        let final_path = self.dir.join("latest_frame.h264");
+        let tmp_path = self.dir.join(".latest_frame.h264.tmp");
+        let mut f = fs::File::create(&tmp_path)?;
+        f.write_all(h264_data)?;
+        f.flush()?;
+        fs::rename(&tmp_path, &final_path)?;
+        Ok(())
+    }
+
+    pub fn save_png(&self, rgb_data: &[u8], w: u32, h: u32) -> std::io::Result<()> {
+        let png_path = self.dir.join(".latest_frame.png.tmp");
+        let f = fs::File::create(&png_path)?;
+        let encoder = PngEncoder::new_with_quality(f, CompressionType::Fast, FilterType::NoFilter);
+        encoder.write_image(rgb_data, w, h, ExtendedColorType::Rgb8)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+        fs::rename(&png_path, self.dir.join("latest_frame.png"))?;
         Ok(())
     }
 }
@@ -95,13 +100,13 @@ mod tests {
         let dir = std::env::temp_dir().join("mana_snapshot_test");
         let _ = fs::remove_dir_all(&dir);
 
-        let mut saver = SnapshotSaver::new(dir.clone(), false).unwrap();
+        let saver = SnapshotSaver::new(dir.clone(), false).unwrap();
 
-        saver.save(&[1, 2, 3]).unwrap();
+        saver.save_h264(&[1, 2, 3]).unwrap();
         let data = fs::read(dir.join("latest_frame.h264")).unwrap();
         assert_eq!(data, vec![1, 2, 3]);
 
-        saver.save(&[4, 5, 6, 7]).unwrap();
+        saver.save_h264(&[4, 5, 6, 7]).unwrap();
         let data = fs::read(dir.join("latest_frame.h264")).unwrap();
         assert_eq!(data, vec![4, 5, 6, 7]);
 
@@ -113,8 +118,8 @@ mod tests {
         let dir = std::env::temp_dir().join("mana_snapshot_tmp_test");
         let _ = fs::remove_dir_all(&dir);
 
-        let mut saver = SnapshotSaver::new(dir.clone(), false).unwrap();
-        saver.save(b"hello").unwrap();
+        let saver = SnapshotSaver::new(dir.clone(), false).unwrap();
+        saver.save_h264(b"hello").unwrap();
 
         assert!(!dir.join(".latest_frame.h264.tmp").exists());
         assert!(dir.join("latest_frame.h264").exists());

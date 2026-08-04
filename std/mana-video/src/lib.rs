@@ -41,7 +41,7 @@ pub mod format;
 
 pub use mana_types::PixelFormat;
 
-use mana_types::FrameHeader;
+use mana_types::RawFrameV1;
 use std::fmt;
 use std::io;
 
@@ -121,7 +121,7 @@ impl Clone for FrameDecoderError {
 /// `let DecodedFrame { header, pixels } = frame;`
 #[derive(Debug, Clone)]
 pub struct DecodedFrame {
-    pub header: FrameHeader,
+    pub header: RawFrameV1,
     pub pixels: Vec<u8>,
 }
 

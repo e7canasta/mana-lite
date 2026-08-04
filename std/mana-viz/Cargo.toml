@@ -1,0 +1,11 @@
+[package]
+name = "mana-viz"
+version = "0.1.0"
+edition = "2024"
+description = "Rerun.io visualization bridge for mana-lite"
+
+[dependencies]
+mana-types = { path = "../mana-types" }
+rerun = "0.33"
+anyhow = "1"
+tracing = "0.1"

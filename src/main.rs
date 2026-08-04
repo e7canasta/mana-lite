@@ -4,13 +4,16 @@ mod ingest;
 mod logger;
 mod metrics;
 mod snapshot;
+mod viz;
 
 use config::*;
 use error::*;
 use ingest::*;
 use logger::*;
+use mana_types::RawFrameV1;
 use metrics::*;
 use snapshot::*;
+use viz::*;
 use std::collections::VecDeque;
 use std::path::PathBuf;
 
@@ -92,6 +95,22 @@ async fn main() -> Result<()> {
         SnapshotSaver::new(dir.clone(), app_config.output.snapshot_verbose).expect("create snapshot dir")
     });
 
+    let mut viz = if app_config.viz.enabled {
+        log::info!("viz: connecting to rerun at {}", app_config.viz.rerun_addr);
+        match VizBridge::new(&app_config.viz.rerun_addr) {
+            Ok(v) => {
+                log::info!("viz: connected to {}", app_config.viz.rerun_addr);
+                Some(v)
+            }
+            Err(e) => {
+                log::warn!("viz: connect failed: {e}");
+                None
+            }
+        }
+    } else {
+        None
+    };
+
     loop {
         metrics.tick_cycle();
 
@@ -107,9 +126,25 @@ async fn main() -> Result<()> {
             metrics.tick_decode(decoded.decode_us);
             log.emit(Event::frame_ingest(frame_count, true, decoded.decode_us));
 
+            let rgb = snapshots.as_mut().and_then(|s| s.decode_rgb(&decoded.data));
+
             if let Some(ref mut s) = snapshots {
-                if let Err(e) = s.save(&decoded.data) {
-                    log::warn!("snapshot save failed: {e}");
+                s.save_h264(&decoded.data).ok();
+                if let Some((w, h, ref rgb_data)) = rgb {
+                    s.save_png(rgb_data, w, h).ok();
+                }
+            }
+
+            if let (Some(ref mut v), Some((w, h, rgb_data))) = (viz.as_mut(), &rgb) {
+                let header = RawFrameV1 {
+                    width: *w,
+                    height: *h,
+                    frame_id: frame_count,
+                    timestamp_ns: chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0),
+                    ..Default::default()
+                };
+                if let Err(e) = v.log_frame(&header, rgb_data) {
+                    log::warn!("viz frame log failed: {e}");
                 }
             }
         }
@@ -154,6 +189,10 @@ async fn main() -> Result<()> {
         }
 
         log.flush();
+
+        if let Some(ref mut v) = viz {
+            v.tick();
+        }
 
         if demo_mode {
             if frame_count >= 5 {

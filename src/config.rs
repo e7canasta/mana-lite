@@ -13,6 +13,8 @@ pub struct AppConfig {
     pub health: HealthConfig,
     #[serde(default)]
     pub output: OutputConfig,
+    #[serde(default)]
+    pub viz: VizConfig,
 }
 
 #[derive(Debug, Deserialize)]
@@ -31,6 +33,25 @@ pub struct SourceConfig {
 }
 
 fn default_transport() -> String { "tcp".into() }
+
+#[derive(Debug, Deserialize)]
+pub struct VizConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_rerun_addr")]
+    pub rerun_addr: String,
+}
+
+impl Default for VizConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            rerun_addr: default_rerun_addr(),
+        }
+    }
+}
+
+fn default_rerun_addr() -> String { "0.0.0.0:9876".into() }
 
 #[derive(Debug, Deserialize)]
 pub struct IngestConfig {
@@ -282,6 +303,8 @@ fn apply_env_overrides(cfg: &mut AppConfig) {
     if let Ok(v) = std::env::var("MANA_SAVE_DIR") {
         cfg.output.save_dir = if v.is_empty() { None } else { Some(v.into()) };
     }
+    if let Ok(v) = std::env::var("MANA_VIZ_ENABLED") { cfg.viz.enabled = v == "1" || v == "true"; }
+    if let Ok(v) = std::env::var("MANA_RERUN_ADDR") { cfg.viz.rerun_addr = v; }
     if let Ok(v) = std::env::var("MANA_SNAPSHOT_DIR") {
         cfg.output.snapshot_dir = if v.is_empty() { None } else { Some(v.into()) };
     }
