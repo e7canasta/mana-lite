@@ -11,9 +11,6 @@ use mana_video::decoder::SoftwareDecoder;
 pub struct SnapshotSaver {
     dir: PathBuf,
     decoder: SoftwareDecoder,
-    scaler: Option<ffmpeg_next::software::scaling::Context>,
-    dec_width: u32,
-    dec_height: u32,
 }
 
 impl SnapshotSaver {
@@ -22,13 +19,7 @@ impl SnapshotSaver {
         ffmpeg_next::init().map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
         let decoder = SoftwareDecoder::new(ffmpeg_next::codec::Id::H264)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
-        Ok(Self {
-            dir,
-            decoder,
-            scaler: None,
-            dec_width: 0,
-            dec_height: 0,
-        })
+        Ok(Self { dir, decoder })
     }
 
     pub fn save(&mut self, h264_data: &[u8]) -> std::io::Result<()> {
@@ -39,33 +30,22 @@ impl SnapshotSaver {
         f.flush()?;
         fs::rename(&tmp_path, &final_path)?;
 
-        let scaler = &mut self.scaler;
-        let dec_width = &mut self.dec_width;
-        let dec_height = &mut self.dec_height;
         let dir = &self.dir;
-        let decoder = &mut self.decoder;
 
-        match decoder.decode(h264_data, |frame| {
+        if let Err(e) = self.decoder.decode(h264_data, |frame| {
             let w = frame.width();
             let h = frame.height();
             let fmt = frame.format();
 
-            if scaler.is_none() || *dec_width != w || *dec_height != h {
-                *dec_width = w;
-                *dec_height = h;
-                *scaler = Some(
-                    ffmpeg_next::software::scaling::Context::get(
-                        fmt, w, h,
-                        ffmpeg_next::format::Pixel::RGB24,
-                        w, h,
-                        ffmpeg_next::software::scaling::Flags::BILINEAR,
-                    )
-                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?,
-                );
-            }
+            let mut scaler = ffmpeg_next::software::scaling::Context::get(
+                fmt, w, h,
+                ffmpeg_next::format::Pixel::RGB24,
+                w, h,
+                ffmpeg_next::software::scaling::Flags::BILINEAR,
+            ).map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
 
             let mut rgb = Video::empty();
-            scaler.as_mut().unwrap().run(frame, &mut rgb)
+            scaler.run(frame, &mut rgb)
                 .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
 
             let data = rgb.data(0);
@@ -78,25 +58,14 @@ impl SnapshotSaver {
 
             let png_path = dir.join(".latest_frame.png.tmp");
             let f = fs::File::create(&png_path)?;
-            let encoder = PngEncoder::new_with_quality(
-                f,
-                CompressionType::Fast,
-                FilterType::NoFilter,
-            );
-            encoder
-                .write_image(
-                    &packed, w, h,
-                    ExtendedColorType::Rgb8,
-                )
+            let encoder = PngEncoder::new_with_quality(f, CompressionType::Fast, FilterType::NoFilter);
+            encoder.write_image(&packed, w, h, ExtendedColorType::Rgb8)
                 .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
             fs::rename(&png_path, dir.join("latest_frame.png"))?;
 
             Ok(())
         }) {
-            Ok(()) => {}
-            Err(e) => {
-                log::debug!("snapshot decode failed: {e}");
-            }
+            log::debug!("snapshot decode failed: {e}");
         }
 
         Ok(())
