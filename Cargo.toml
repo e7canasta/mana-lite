@@ -18,6 +18,8 @@ path = "src/main.rs"
 [dependencies]
 retina = "0.4"
 tokio = { version = "1", features = ["macros", "rt", "net", "time"] }
+futures = "0.3"
+url = "2"
 ort = { version = "2.0.0-rc.12", features = ["download-binaries"] }
 serde = { version = "1", features = ["derive"] }
 toml = "0.8"

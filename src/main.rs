@@ -1,16 +1,20 @@
 mod config;
 mod error;
+mod ingest;
 mod logger;
 
 use config::*;
 use error::*;
+use ingest::*;
 use logger::*;
+use std::collections::VecDeque;
 use std::path::PathBuf;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 static VERSION: &str = env!("CARGO_PKG_VERSION");
 
-fn main() -> Result<()> {
+#[tokio::main(flavor = "current_thread")]
+async fn main() -> Result<()> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
     let config_path = parse_args()?;
@@ -68,6 +72,19 @@ fn main() -> Result<()> {
     let panic_count: u32 = 0;
     let mut current_state: Option<String> = fsm.as_ref().map(|f| f.fsm.initial.clone());
 
+    let demo_mode = app_config.source.url.contains("demo") || args_has_flag("--demo");
+    let mut ingest: IngestEngine<AnyReader> = if demo_mode {
+        let frames = demo_frames();
+        IngestEngine::new(AnyReader::Queued(QueuedReader::new(frames)))
+    } else {
+        let reader = RetinaReader::connect(
+            &app_config.source.url,
+            app_config.source.username.as_deref(),
+            app_config.source.password.as_deref(),
+        ).await?;
+        IngestEngine::new(AnyReader::Retina(reader))
+    };
+
     loop {
         let cycle_us = cycle_start.elapsed().as_micros() as u64;
         cycle_start = Instant::now();
@@ -77,14 +94,15 @@ fn main() -> Result<()> {
 
         // PHASE 2: EVALUATE (no-op until inference pipeline)
 
-        // PHASE 3: INGEST (stub)
-        {
+        // PHASE 3: INGEST
+        if let Some(decoded) = ingest.poll_freshest_keyframe().await {
             frame_count += 1;
             last_frame_at = Instant::now();
-            log.emit(Event::frame_ingest(frame_count, true, 0));
+            log.emit(Event::frame_ingest(frame_count, true, decoded.decode_us));
         }
 
         // PHASE 4: INFER (stub)
+        #[allow(clippy::collapsible_if)]
         if frame_count == 1 && current_state.is_some() {
             log.emit(Event::fsm_transition("idle", "watching", "bed_occupied", 0));
             current_state = Some("watching".into());
@@ -110,20 +128,30 @@ fn main() -> Result<()> {
             log.emit(Event::health_heartbeat(frame_count, "publish", cycle_us));
         }
 
-        if frame_count >= 5 && app_config.source.url.contains("demo") {
-            log::info!("demo: exiting after 5 frames");
-            break;
-        }
-
-        // Stub back-pressure — when real RTSP is connected this is unnecessary
-        if app_config.source.url.contains("demo") {
-            std::thread::sleep(Duration::from_millis(100));
+        if demo_mode {
+            if frame_count >= 5 {
+                log::info!("demo: exiting after 5 frames");
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
         }
     }
 
     #[allow(unreachable_code)]
     log.shutdown("loop_exit")?;
     Ok(())
+}
+
+fn demo_frames() -> Vec<Frame> {
+    let mut frames = VecDeque::new();
+    for i in 1u8..=5 {
+        frames.push_back(Frame {
+            data: vec![i; 64],
+            is_keyframe: true,
+            timestamp: i as i64 * 2000,
+        });
+    }
+    frames.into()
 }
 
 fn parse_args() -> Result<PathBuf> {
@@ -146,4 +174,8 @@ fn parse_args() -> Result<PathBuf> {
         field: "args".into(),
         msg: "Usage: mana-lite --config <mana.toml>".into(),
     }))
+}
+
+fn args_has_flag(flag: &str) -> bool {
+    std::env::args().any(|a| a == flag)
 }

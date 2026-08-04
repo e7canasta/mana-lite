@@ -1,5 +1,5 @@
 [source]
-url = "rtsp://192.168.1.100:554/stream1"
+url = "rtsp://192.168.1.10:8554/clip1"
 username = "admin"
 password = ""
 transport = "tcp"
