@@ -7,9 +7,10 @@ Guia paso a paso para configurar el pipeline de vision y manejar la cascada de m
 1. [Arquitectura de archivos](#1-arquitectura-de-archivos)
 2. [Flujo del pipeline](#2-flujo-del-pipeline)
 3. [El cascade: como funciona](#3-el-cascade-como-funciona)
-4. [Escenarios de configuracion](#4-escenarios-de-configuracion)
-5. [Depuracion y metricas](#5-depuracion-y-metricas)
-6. [Checklist de puesta en marcha](#6-checklist-de-puesta-en-marcha)
+4. [ROI — crops por modelo](#4-roi--crops-por-modelo)
+5. [Escenarios de configuracion](#5-escenarios-de-configuracion)
+6. [Depuracion y metricas](#6-depuracion-y-metricas)
+7. [Checklist de puesta en marcha](#7-checklist-de-puesta-en-marcha)
 
 ---
 
@@ -34,7 +35,8 @@ mana-lite/
 │   └── yolo26n-pose.onnx   # pose-standard: keypoints, requiere persona
 ├── docs/
 │   ├── onboarding.md       # este archivo
-│   └── observability.md   # guia completa de metricas + viz + rerun
+│   ├── observability.md   # guia completa de metricas + viz + rerun
+│   └── roi.md             # crops por modelo — static y dinamico
 └── logs/
     └── mana-YYYYMMDDTHH.jsonl
 ```
@@ -173,7 +175,45 @@ El filtro por task es complementario al cascade:
 
 ---
 
-## 4. Escenarios de configuracion
+## 4. ROI — crops por modelo
+
+> **Guia completa:** [docs/roi.md](roi.md) — las dos fuentes (static/dinamico), las tres politicas (`min_region`, `max_region`, `fallback`), recetas practicas, y verificacion.
+
+Cada modelo puede definir un crop en `models.toml` bajo `[models.<name>.crop]`. El modelo recibe solo una region del frame → mas rapido y mas preciso.
+
+**Dos fuentes, tres politicas:**
+
+```toml
+# Static — rectangulo fijo
+[models.detect-fast.crop]
+type = "static"
+region = [80, 150, 560, 430]
+
+# LargestClass — dinamico, desde detecciones del parent
+[models.pose-standard.crop]
+type = "largest_class"
+class = "person"
+margin = 0.15
+min_region = [100, 200, 500, 450]   # nunca mas chico que esto
+max_region = [0, 0, 640, 400]       # nunca mas grande que esto
+fallback = "full"                    # sin persona → frame completo
+```
+
+| Campo | Tipo | Default | Descripcion |
+|---|---|---|---|
+| `type` | `"static"` o `"largest_class"` | — | Fuente del ROI |
+| `class` | string | — | Clase a buscar (solo `largest_class`) |
+| `margin` | float | `0.15` | Expansion relativa al bbox |
+| `region` | `[x1,y1,x2,y2]` | — | Rect fijo (solo `static`) |
+| `min_region` | `[x1,y1,x2,y2]` | — | Piso: nunca mas chico que esto |
+| `max_region` | `[x1,y1,x2,y2]` | — | Techo: nunca mas grande que esto |
+| `fallback` | `"skip"` o `"full"` | `"skip"` | Sin deteccion: saltar o frame completo |
+
+**Regla de oro:** todas las detecciones salen en coordenadas del frame original, sin importar el crop. El tracking, zonas y FSM funcionan igual.
+
+---
+
+## 5. Escenarios de configuracion
 
 ### Escenario A: Minimo — un solo modelo, sin cascade
 
@@ -370,7 +410,7 @@ Los snapshots guardan el H.264 raw y el frame RGB decodificado en `./snapshots/`
 
 ---
 
-## 5. Observabilidad
+## 6. Depuracion y metricas
 
 > **Guia completa:** [docs/observability.md](observability.md) — filosofia de los tres canales, arbol de entidades, escenarios de configuracion, y consultas forenses con jq.
 
@@ -416,7 +456,7 @@ jq -c 'select(.type=="detection") | {f: .frame_id, m: .model, c: [.det[]?.class]
 
 ---
 
-## 6. Checklist de puesta en marcha
+## 7. Checklist de puesta en marcha
 
 - [ ] `models.toml`: solo los modelos que necesitas (comenta el resto)
 - [ ] `cascade.toml`: cada child tiene `requires` y `requires_class` correctos

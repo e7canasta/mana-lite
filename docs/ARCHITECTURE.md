@@ -127,7 +127,7 @@ src/
 | File | Loaded via | Purpose |
 |---|---|---|
 | `config/mana.toml` | `load_app_config()` | Top-level: stream source, pipeline toggles, output paths |
-| `config/models.toml` | `load_model_catalog()` | ONNX model catalog: paths, tasks, imgsz, confidence |
+| `config/models.toml` | `load_model_catalog()` | ONNX model catalog: paths, tasks, imgsz, confidence, per-model crop ROI |
 | `config/cascade.toml` | `load_config::<CascadeConfig>()` | Model dependency graph (requires, requires_class) |
 | `config/fsm.toml` | `load_fsm_catalog()` | Clinical state machine: states, models, transitions |
 | `config/zones.toml` | `load_zone_catalog()` | Spatial ROIs for tracking + FSM zone guards |
