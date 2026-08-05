@@ -30,3 +30,4 @@ fsm_events = true           # {"type":"fsm", from, to, trigger, dwell_ms}
 metrics_event = true        # {"type":"metrics", ...} — periodic window report
 per_model_in_window = true  # include per-model stats inside metrics event
 class_counts_in_window = true # include per-class counts inside per-model stats
+class_per_frame_stats = true  # include per-class counts/conf/area in detection events

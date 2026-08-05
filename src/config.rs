@@ -347,6 +347,10 @@ pub struct VizSendToggles {
     #[serde(default = "default_true")] pub ingest_window: bool,
     #[serde(default = "default_true")] pub infer_window: bool,
     #[serde(default = "default_true")] pub pipeline_window: bool,
+    #[serde(default = "default_true")] pub class_counts_per_frame: bool,
+    #[serde(default = "default_true")] pub class_confidence_per_frame: bool,
+    #[serde(default = "default_true")] pub class_area_per_frame: bool,
+    #[serde(default = "default_true")] pub keyframe_gap: bool,
 }
 
 impl Default for VizSendToggles {
@@ -356,6 +360,8 @@ impl Default for VizSendToggles {
             track_counts: true, health_ms: true, loop_latency: true, frame_id: true,
             model_window_metrics: true, class_counts: true,
             ingest_window: true, infer_window: true, pipeline_window: true,
+            class_counts_per_frame: true, class_confidence_per_frame: true,
+            class_area_per_frame: true, keyframe_gap: true,
         }
     }
 }
@@ -439,6 +445,7 @@ pub struct MetricsJsonlConfig {
     #[serde(default = "default_true")] pub metrics_event: bool,
     #[serde(default = "default_true")] pub per_model_in_window: bool,
     #[serde(default = "default_true")] pub class_counts_in_window: bool,
+    #[serde(default = "default_true")] pub class_per_frame_stats: bool,
 }
 
 impl Default for MetricsJsonlConfig {
@@ -447,6 +454,7 @@ impl Default for MetricsJsonlConfig {
             frame_events: true, detection_events: true, zone_events: true,
             fsm_events: true, metrics_event: true,
             per_model_in_window: true, class_counts_in_window: true,
+            class_per_frame_stats: true,
         }
     }
 }
@@ -513,6 +521,7 @@ pub struct RerunPanel {
     pub kind: String,
     pub name: String,
     #[serde(default)] pub origin: String,
+    #[serde(default)] pub contents: Vec<String>,
 }
 
 use serde::de::DeserializeOwned;

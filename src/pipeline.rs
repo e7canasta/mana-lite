@@ -1,5 +1,6 @@
 use crate::logger::{Event, Logger};
 use crate::metrics::{Health, HealthTransition, MetricsEngine, MetricsReport, PerModelMetrics};
+use std::time::Instant;
 
 #[derive(Debug, Clone, Copy)]
 pub struct DemoConfig {
@@ -28,12 +29,13 @@ pub struct PipelineState {
     frame_count: u64,
     demo: DemoConfig,
     panic_count: u32,
+    last_keyframe_at: Instant,
 }
 
 impl PipelineState {
     pub fn new(demo_mode: bool) -> Self {
         let demo = if demo_mode { DemoConfig::limited(5) } else { DemoConfig::disabled() };
-        Self { frame_count: 0, demo, panic_count: 0 }
+        Self { frame_count: 0, demo, panic_count: 0, last_keyframe_at: Instant::now() }
     }
 
     pub fn frame_number(&self) -> u64 {
@@ -49,8 +51,11 @@ impl PipelineState {
         self.panic_count >= max_consecutive
     }
 
-    pub fn on_keyframe(&mut self, decode_us: u64, metrics: &mut MetricsEngine, health: &mut Health, log: &mut Logger) {
+    pub fn on_keyframe(&mut self, decode_us: u64, metrics: &mut MetricsEngine, health: &mut Health, log: &mut Logger) -> u64 {
         self.frame_count += 1;
+        let now = Instant::now();
+        let dt_ms = now.duration_since(self.last_keyframe_at).as_millis() as u64;
+        self.last_keyframe_at = now;
         health.touch();
         metrics.tick_keyframe();
         metrics.tick_decode(decode_us);
@@ -58,6 +63,7 @@ impl PipelineState {
             log::info!("frame #{} ingested (decode {}us)", self.frame_count, decode_us);
         }
         log.emit(Event::frame_ingest(self.frame_count, true, decode_us));
+        dt_ms
     }
 
     pub fn evaluate_health(&self, health: &mut Health, log: &mut Logger, metrics: &mut MetricsEngine) -> Option<(MetricsReport, Vec<String>)> {

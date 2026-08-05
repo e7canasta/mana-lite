@@ -4,7 +4,7 @@ use mana_types::RawFrameV1;
 use mana_viz::logging;
 
 use crate::infer::Detection;
-use crate::metrics::MetricsReport;
+use crate::metrics::{MetricsReport, PerClassFrameStats};
 use crate::config::{VizSendToggles, RerunRoot};
 
 enum Inner {
@@ -93,37 +93,40 @@ impl VizBridge {
             .with_origin("/world/camera")
             .with_contents(["+ $origin/**"]);
 
-        let signals_view = signals_view_with_overrides("Signals", "/world/signals");
+        let class_counts_view = rerun::blueprint::TimeSeriesView::new("Counts")
+            .with_origin("/infer")
+            .with_contents(["+ /infer/**/per_frame/counts/**"]);
 
-        let ingest_normal = rerun::blueprint::TimeSeriesView::new("Ingest")
-            .with_origin("/ingest/normal")
-            .with_contents(["+ $origin/**"]);
+        let class_conf_view = rerun::blueprint::TimeSeriesView::new("Confidence")
+            .with_origin("/infer")
+            .with_contents(["+ /infer/**/per_frame/conf/**"]);
 
-        let ingest_errors = rerun::blueprint::TimeSeriesView::new("Ingest ❌")
-            .with_origin("/ingest/errors")
-            .with_contents(["+ $origin/**"]);
+        let class_area_view = rerun::blueprint::TimeSeriesView::new("Area")
+            .with_origin("/infer")
+            .with_contents(["+ /infer/**/per_frame/area/**"]);
 
-        let infer_active = rerun::blueprint::TimeSeriesView::new("Infer")
-            .with_origin("/infer/active")
-            .with_contents(["+ $origin/**"]);
-
-        let infer_warnings = rerun::blueprint::TimeSeriesView::new("Infer ❌")
-            .with_origin("/infer/warnings")
-            .with_contents(["+ $origin/**"]);
-
-        let pipeline_view = rerun::blueprint::TimeSeriesView::new("Pipeline")
+        let latency_view = rerun::blueprint::TimeSeriesView::new("Latency")
             .with_origin("/pipeline")
-            .with_contents(["+ $origin/**"]);
+            .with_contents(["+ $origin/infer/**/latency_us", "+ $origin/decode/latency_us"]);
+
+        let signals_view = rerun::blueprint::TimeSeriesView::new("Signals")
+            .with_origin("/ingest/normal")
+            .with_contents(["+ /ingest/normal/gap_ms", "+ /world/signals/frame_id"]);
 
         let blueprint = rerun::blueprint::Blueprint::new(
             rerun::blueprint::Vertical::new([
                 camera_view.into(),
-                signals_view.into(),
-                rerun::blueprint::Horizontal::new([ingest_normal.into(), ingest_errors.into()]).into(),
-                rerun::blueprint::Horizontal::new([infer_active.into(), infer_warnings.into()]).into(),
-                pipeline_view.into(),
+                rerun::blueprint::Horizontal::new([
+                    class_counts_view.into(),
+                    class_conf_view.into(),
+                    class_area_view.into(),
+                ]).into(),
+                rerun::blueprint::Horizontal::new([
+                    latency_view.into(),
+                    signals_view.into(),
+                ]).into(),
             ])
-            .with_row_shares(vec![5.0, 1.0, 1.0, 1.0, 1.0]),
+            .with_row_shares(vec![5.0, 1.0, 1.0]),
         )
         .with_blueprint_panel(rerun::blueprint::BlueprintPanel::new().with_state(PanelState::Expanded))
         .with_selection_panel(rerun::blueprint::SelectionPanel::new().with_state(PanelState::Expanded))
@@ -241,6 +244,43 @@ impl VizBridge {
         }
     }
 
+    pub fn log_keyframe_gap(&self, dt_ms: u64) {
+        if !self.toggles.keyframe_gap { return; }
+        if let Inner::Connected { ref rec, .. } = self.inner {
+            self.log_scalar_inner(rec, "/ingest/normal/gap_ms", dt_ms as f64);
+        }
+    }
+
+    pub fn log_per_frame_class_stats(&self, model: &str, per_class: &PerClassFrameStats) {
+        if !self.toggles.class_counts_per_frame && !self.toggles.class_confidence_per_frame && !self.toggles.class_area_per_frame {
+            return;
+        }
+        let rec = match &self.inner {
+            Inner::Connected { rec, .. } => rec,
+            _ => return,
+        };
+        let model_safe = model.replace('-', "_").replace('.', "_");
+        for (class, stat) in &per_class.stats {
+            let cls_safe = sanitize_entity_name(class);
+            if self.toggles.class_counts_per_frame {
+                let path = format!("/infer/{model_safe}/per_frame/counts/{cls_safe}");
+                self.log_scalar_inner(rec, &path, stat.count as f64);
+            }
+            if self.toggles.class_confidence_per_frame {
+                let path_min = format!("/infer/{model_safe}/per_frame/conf/{cls_safe}/min");
+                let path_max = format!("/infer/{model_safe}/per_frame/conf/{cls_safe}/max");
+                self.log_scalar_inner(rec, &path_min, stat.conf_min as f64);
+                self.log_scalar_inner(rec, &path_max, stat.conf_max as f64);
+            }
+            if self.toggles.class_area_per_frame {
+                let path_min = format!("/infer/{model_safe}/per_frame/area/{cls_safe}/min");
+                let path_max = format!("/infer/{model_safe}/per_frame/area/{cls_safe}/max");
+                self.log_scalar_inner(rec, &path_min, stat.area_min);
+                self.log_scalar_inner(rec, &path_max, stat.area_max);
+            }
+        }
+    }
+
     pub fn log_metrics_report(&self, report: &MetricsReport) {
         let rec = match &self.inner {
             Inner::Connected { rec, .. } => rec,
@@ -335,20 +375,6 @@ impl VizBridge {
             log::warn!("viz scalar {path} failed: {e}");
         }
     }
-}
-
-fn signals_view_with_overrides(name: &str, origin: &str) -> rerun::blueprint::TimeSeriesView {
-    use rerun::components::InterpolationMode;
-
-    let step = rerun::SeriesLines::new().with_interpolation_mode(InterpolationMode::StepAfter);
-
-    let mut view = rerun::blueprint::TimeSeriesView::new(name)
-        .with_origin(origin)
-        .with_contents(["+ $origin/**"]);
-
-    view = view.with_override(format!("{origin}/frame_id"), &step);
-
-    view
 }
 
 fn sanitize_entity_name(name: &str) -> String {

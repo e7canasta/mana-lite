@@ -21,3 +21,9 @@ class_counts = true         # per-class detection count per model
 ingest_window = true        # ingest hz, decode_avg_ms, error counters
 infer_window = true         # global infer hz, avg/min/max, yield
 pipeline_window = true      # cycles, blind cycles
+
+# per-frame per-class scalars (time series)
+class_counts_per_frame = true      # per-class count every keyframe
+class_confidence_per_frame = true  # per-class conf min/max every keyframe
+class_area_per_frame = true        # per-class bbox area min/max every keyframe
+keyframe_gap = true                # ms between consecutive keyframes

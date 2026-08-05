@@ -3,6 +3,52 @@ use std::time::Instant;
 
 use crate::infer::Detection;
 
+// ── Per-frame per-class stats (transient, computed each keyframe) ──
+
+#[derive(Debug, Clone)]
+pub struct ClassFrameStat {
+    pub count: u64,
+    pub conf_min: f32,
+    pub conf_max: f32,
+    pub area_min: f64,
+    pub area_max: f64,
+}
+
+impl Default for ClassFrameStat {
+    fn default() -> Self {
+        Self {
+            count: 0,
+            conf_min: f32::MAX,
+            conf_max: 0.0,
+            area_min: f64::MAX,
+            area_max: 0.0,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct PerClassFrameStats {
+    pub stats: HashMap<String, ClassFrameStat>,
+}
+
+impl PerClassFrameStats {
+    pub fn from_detections(detections: &[Detection]) -> Self {
+        let mut stats: HashMap<String, ClassFrameStat> = HashMap::new();
+        for det in detections {
+            let entry = stats.entry(det.class.clone()).or_default();
+            entry.count += 1;
+            let c = det.confidence;
+            entry.conf_min = entry.conf_min.min(c);
+            entry.conf_max = entry.conf_max.max(c);
+            let area = ((det.bbox[2] - det.bbox[0]) * (det.bbox[3] - det.bbox[1])).max(1.0);
+            let a = area as f64;
+            entry.area_min = entry.area_min.min(a);
+            entry.area_max = entry.area_max.max(a);
+        }
+        Self { stats }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct PerModelMetrics {
     pub inferences: u64,

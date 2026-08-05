@@ -24,7 +24,7 @@ use infer::{Detection, InferEngine};
 use ingest::{AnyReader, Frame, IngestEngine, QueuedReader, RawKeyframe, RetinaReader};
 use logger::{DetRecord, Event, JsonlLevel, Logger};
 use mana_types::RawFrameV1;
-use metrics::{Health, MetricsEngine};
+use metrics::{Health, MetricsEngine, PerClassFrameStats};
 use pipeline::PipelineState;
 use snapshot::{FrameBuffer, FrameDecoder, SnapshotSaver};
 use track::{Tracker, track_event_to_log};
@@ -234,8 +234,9 @@ impl App {
 
     fn process_keyframe(&mut self, kf: RawKeyframe, config: &AppConfig, loop_start: Instant) {
         let (frame_buf, decode_us) = self.decoder.decode_timed(&kf.h264);
-        self.state.on_keyframe(decode_us, &mut self.metrics, &mut self.health, &mut self.log);
+        let dt_ms = self.state.on_keyframe(decode_us, &mut self.metrics, &mut self.health, &mut self.log);
         self.log_decode_latency_to_viz(decode_us);
+        self.viz.log_keyframe_gap(dt_ms);
         self.save_snapshot_if_enabled(&kf.h264, &frame_buf, config);
 
         let Some(ref fb) = frame_buf else { return };
@@ -291,9 +292,11 @@ impl App {
     }
 
     fn record_model_result(&mut self, model_key: &str, infer_ms: u64, detections: &[Detection]) {
+        let per_class = PerClassFrameStats::from_detections(detections);
         self.metrics.tick_inference_model(model_key, infer_ms, detections);
         self.viz.log_infer_latency(model_key, infer_ms);
         self.viz.log_detection_boxes(model_key, detections);
+        self.viz.log_per_frame_class_stats(model_key, &per_class);
         self.log.emit(Event::detection(
             self.state.frame_number(), model_key, infer_ms,
             detections.iter().map(DetRecord::from).collect(),

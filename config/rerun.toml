@@ -1,7 +1,7 @@
 # rerun.toml — Rerun viewer blueprint layout.
-# Each [[rows]] entry is a panel row (top to bottom).
+# Each [[rerun.rows]] entry is a panel row (top to bottom).
 # kind: spatial2d | timeseries | horizontal
-# horizontal rows contain [[rows.panels]] children.
+# horizontal rows contain [[rerun.rows.panels]] children.
 
 [rerun]
 app = "mana-lite"
@@ -16,32 +16,20 @@ origin = "/world/camera"
 share = 5.0
 
 [[rerun.rows]]
-kind = "timeseries"
-name = "Signals"
-origin = "/world/signals"
+kind = "horizontal"
+name = "Per-Frame Classes"
 share = 1.0
-overrides = [
-    { path = "/world/signals/frame_id", interpolation = "StepAfter" }
+panels = [
+    { kind = "timeseries", name = "Counts",     origin = "/infer", contents = ["+ /infer/**/per_frame/counts/**"] },
+    { kind = "timeseries", name = "Confidence", origin = "/infer", contents = ["+ /infer/**/per_frame/conf/**"] },
+    { kind = "timeseries", name = "Area",       origin = "/infer", contents = ["+ /infer/**/per_frame/area/**"] },
 ]
 
 [[rerun.rows]]
 kind = "horizontal"
+name = "Latency & Signals"
 share = 1.0
 panels = [
-    { kind = "timeseries", name = "Ingest",     origin = "/ingest/normal" },
-    { kind = "timeseries", name = "Ingest ❌",  origin = "/ingest/errors" },
+    { kind = "timeseries", name = "Latency", origin = "/pipeline",     contents = ["+ $origin/infer/**/latency_us", "+ $origin/decode/latency_us"] },
+    { kind = "timeseries", name = "Signals", origin = "/ingest/normal", contents = ["+ /ingest/normal/gap_ms", "+ /world/signals/frame_id"] },
 ]
-
-[[rerun.rows]]
-kind = "horizontal"
-share = 1.0
-panels = [
-    { kind = "timeseries", name = "Infer",      origin = "/infer/active" },
-    { kind = "timeseries", name = "Infer ❌",   origin = "/infer/warnings" },
-]
-
-[[rerun.rows]]
-kind = "timeseries"
-name = "Pipeline"
-origin = "/pipeline"
-share = 1.0
