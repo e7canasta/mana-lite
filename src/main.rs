@@ -259,7 +259,10 @@ impl App {
         for model_key in &ordered {
             let crop_rect = self.resolve_crop_rect(model_key, &model_dets, fb);
 
-            if crop_rect.is_none() && !self.infer.force_run(model_key) && !self.cascade.should_run(model_key, &model_dets) {
+            let always_run = self.infer.crop_info(model_key)
+                .map_or(false, |c| c.always_run());
+
+            if crop_rect.is_none() && !always_run && !self.cascade.should_run(model_key, &model_dets) {
                 self.metrics.tick_infer_skip(model_key);
                 continue;
             }
@@ -279,7 +282,7 @@ impl App {
         model_key: &str,
         model_dets: &HashMap<String, Vec<Detection>>,
         fb: &FrameBuffer,
-    ) -> Option<(u32, u32, u32, u32)> {
+    ) -> Option<infer::CropRect> {
         let crop_cfg = self.infer.crop_info(model_key)?;
 
         if crop_cfg.crop_type == CropType::Static {

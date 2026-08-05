@@ -4,9 +4,11 @@ use std::path::Path;
 use image::{DynamicImage, RgbImage};
 use ultralytics_inference::{Device, InferenceConfig, Results, YOLOModel};
 
-use crate::config::{CropConfig, CropType, FallbackMode, ModelCatalog, ModelEntry};
+use crate::config::{CropConfig, CropType, ModelCatalog, ModelEntry};
 use crate::error::Result;
 use crate::logger::DetRecord;
+
+pub type CropRect = (u32, u32, u32, u32);
 
 pub struct InferEngine {
     models: HashMap<String, LoadedModel>,
@@ -77,20 +79,13 @@ impl InferEngine {
         self.models.get(model_key)?.crop_config.as_ref()
     }
 
-    pub fn force_run(&self, model_key: &str) -> bool {
-        match self.crop_info(model_key) {
-            Some(c) => c.min_region.is_some() || c.fallback == FallbackMode::Full,
-            None => false,
-        }
-    }
-
     pub fn run(
         &mut self,
         model_key: &str,
         rgb: &[u8],
         w: u32,
         h: u32,
-        crop_rect: Option<(u32, u32, u32, u32)>,
+        crop_rect: Option<CropRect>,
     ) -> Option<(Vec<Detection>, u64)> {
         let loaded = self.models.get_mut(model_key)?;
 
@@ -199,7 +194,7 @@ pub fn compute_largest_class_roi(
     frame_h: u32,
     min_region: Option<[u32; 4]>,
     max_region: Option<[u32; 4]>,
-) -> Option<(u32, u32, u32, u32)> {
+) -> Option<CropRect> {
     let class_rect = detections
         .iter()
         .filter(|d| d.class == target_class)

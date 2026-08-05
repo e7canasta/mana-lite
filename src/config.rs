@@ -235,6 +235,12 @@ pub struct CropConfig {
     pub fallback: FallbackMode,
 }
 
+impl CropConfig {
+    pub fn always_run(&self) -> bool {
+        self.min_region.is_some() || self.fallback == FallbackMode::Full
+    }
+}
+
 #[derive(Debug, Clone, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum CropType {
