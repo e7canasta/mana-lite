@@ -20,48 +20,48 @@ pub fn write_event(event: &Event, ts: &str, buf: &mut Vec<u8>) {
                 buf.extend_from_slice(b"\"");
             }
         }
-        Event::Health { event, f, cyc_us, msg } => {
+        Event::Health { event, frame_id, cycle_us, message } => {
             buf.extend_from_slice(b"\"type\":\"health\",\"event\":\"");
             write_json_string(event, buf);
             buf.extend_from_slice(b"\"");
-            if let Some(frame) = f {
-                buf.extend_from_slice(b",\"f\":");
-                write_u64(*frame, buf);
+            if let Some(f) = frame_id {
+                buf.extend_from_slice(b",\"frame_id\":");
+                write_u64(*f, buf);
             }
-            if let Some(cyc) = cyc_us {
+            if let Some(cyc) = cycle_us {
                 buf.extend_from_slice(b",\"cyc_us\":");
                 write_u64(*cyc, buf);
             }
-            if let Some(m) = msg {
+            if let Some(msg) = message {
                 buf.extend_from_slice(b",\"msg\":\"");
-                write_json_string(m, buf);
+                write_json_string(msg, buf);
                 buf.extend_from_slice(b"\"");
             }
         }
-        Event::Frame { f, kf, dec_ms } => {
-            buf.extend_from_slice(b"\"type\":\"frame\",\"f\":");
-            write_u64(*f, buf);
-            buf.extend_from_slice(b",\"kf\":");
-            buf.extend_from_slice(if *kf { b"true" } else { b"false" });
-            buf.extend_from_slice(b",\"dec_ms\":");
-            write_u64(*dec_ms, buf);
+        Event::Frame { frame_id, is_keyframe, decode_ms } => {
+            buf.extend_from_slice(b"\"type\":\"frame\",\"frame_id\":");
+            write_u64(*frame_id, buf);
+            buf.extend_from_slice(b",\"is_keyframe\":");
+            buf.extend_from_slice(if *is_keyframe { b"true" } else { b"false" });
+            buf.extend_from_slice(b",\"decode_ms\":");
+            write_u64(*decode_ms, buf);
         }
-        Event::Detection { f, m, inf_ms, det } => {
-            buf.extend_from_slice(b"\"type\":\"detection\",\"f\":");
-            write_u64(*f, buf);
-            buf.extend_from_slice(b",\"m\":\"");
-            write_json_string(m, buf);
-            buf.extend_from_slice(b"\",\"inf_ms\":");
-            write_u64(*inf_ms, buf);
+        Event::Detection { frame_id, model, infer_ms, detections } => {
+            buf.extend_from_slice(b"\"type\":\"detection\",\"frame_id\":");
+            write_u64(*frame_id, buf);
+            buf.extend_from_slice(b",\"model\":\"");
+            write_json_string(model, buf);
+            buf.extend_from_slice(b"\",\"infer_ms\":");
+            write_u64(*infer_ms, buf);
             buf.extend_from_slice(b",\"det\":[");
-            for (i, d) in det.iter().enumerate() {
+            for (i, d) in detections.iter().enumerate() {
                 if i > 0 { buf.push(b','); }
-                buf.extend_from_slice(b"{\"c\":\"");
-                write_json_string(&d.c, buf);
-                buf.extend_from_slice(b"\",\"conf\":");
-                write_f32(d.conf, buf);
-                buf.extend_from_slice(b",\"bb\":[");
-                for (j, v) in d.bb.iter().enumerate() {
+                buf.extend_from_slice(b"{\"class\":\"");
+                write_json_string(&d.class, buf);
+                buf.extend_from_slice(b"\",\"confidence\":");
+                write_f32(d.confidence, buf);
+                buf.extend_from_slice(b",\"bbox\":[");
+                for (j, v) in d.bbox.iter().enumerate() {
                     if j > 0 { buf.push(b','); }
                     write_f32(*v, buf);
                 }
@@ -69,61 +69,107 @@ pub fn write_event(event: &Event, ts: &str, buf: &mut Vec<u8>) {
             }
             buf.extend_from_slice(b"]");
         }
-        Event::Zone { z, e, cls, f } => {
-            buf.extend_from_slice(b"\"type\":\"zone\",\"z\":\"");
-            write_json_string(z, buf);
-            buf.extend_from_slice(b"\",\"e\":\"");
-            write_json_string(e, buf);
-            buf.extend_from_slice(b"\",\"cls\":\"");
-            write_json_string(cls, buf);
-            buf.extend_from_slice(b"\",\"f\":");
-            write_u64(*f, buf);
+        Event::Zone { zone, event, class, label, confidence, frame_id } => {
+            buf.extend_from_slice(b"\"type\":\"zone\",\"zone\":\"");
+            write_json_string(zone, buf);
+            buf.extend_from_slice(b"\",\"event\":\"");
+            write_json_string(event, buf);
+            buf.extend_from_slice(b"\",\"class\":\"");
+            write_json_string(class, buf);
+            buf.extend_from_slice(b"\"");
+            if let Some(l) = label {
+                buf.extend_from_slice(b",\"label\":\"");
+                write_json_string(l, buf);
+                buf.extend_from_slice(b"\"");
+            }
+            if let Some(c) = confidence {
+                buf.extend_from_slice(b",\"confidence\":");
+                write_f32(*c, buf);
+            }
+            buf.extend_from_slice(b",\"frame_id\":");
+            write_u64(*frame_id, buf);
         }
-        Event::Fsm { from, to, tr, dwell } => {
+        Event::Fsm { from, from_label, to, to_label, trigger, dwell_ms } => {
             buf.extend_from_slice(b"\"type\":\"fsm\",\"from\":\"");
             write_json_string(from, buf);
-            buf.extend_from_slice(b"\",\"to\":\"");
+            buf.extend_from_slice(b"\"");
+            if let Some(l) = from_label {
+                buf.extend_from_slice(b",\"from_label\":\"");
+                write_json_string(l, buf);
+                buf.extend_from_slice(b"\"");
+            }
+            buf.extend_from_slice(b",\"to\":\"");
             write_json_string(to, buf);
-            buf.extend_from_slice(b"\",\"tr\":\"");
-            write_json_string(tr, buf);
-            buf.extend_from_slice(b"\",\"dwell\":");
-            write_u64(*dwell, buf);
+            buf.extend_from_slice(b"\"");
+            if let Some(l) = to_label {
+                buf.extend_from_slice(b",\"to_label\":\"");
+                write_json_string(l, buf);
+                buf.extend_from_slice(b"\"");
+            }
+            buf.extend_from_slice(b",\"trigger\":\"");
+            write_json_string(trigger, buf);
+            buf.extend_from_slice(b"\",\"dwell_ms\":");
+            write_u64(*dwell_ms, buf);
         }
-        Event::Metrics { window_s, cycles, frames_total, keyframes,
-            pframes_dropped, inferences, infer_total_ms, decode_total_ms, blind_cycles,
-            timeouts, ssrc_changes, rtp_errors, stream_ends, reconnect_attempts } => {
+        Event::Metrics(r) => {
             buf.extend_from_slice(b"\"type\":\"metrics\"");
-            buf.extend_from_slice(b",\"window_s\":");
-            write_u64(*window_s, buf);
-            buf.extend_from_slice(b",\"cycles\":");
-            write_u64(*cycles, buf);
-            buf.extend_from_slice(b",\"frames_total\":");
-            write_u64(*frames_total, buf);
-            buf.extend_from_slice(b",\"keyframes\":");
-            write_u64(*keyframes, buf);
-            buf.extend_from_slice(b",\"pframes_dropped\":");
-            write_u64(*pframes_dropped, buf);
-            buf.extend_from_slice(b",\"inferences\":");
-            write_u64(*inferences, buf);
-            buf.extend_from_slice(b",\"infer_total_ms\":");
-            write_u64(*infer_total_ms, buf);
-            buf.extend_from_slice(b",\"decode_total_ms\":");
-            write_u64(*decode_total_ms, buf);
-            buf.extend_from_slice(b",\"blind_cycles\":");
-            write_u64(*blind_cycles, buf);
-            buf.extend_from_slice(b",\"timeouts\":");
-            write_u64(*timeouts, buf);
-            buf.extend_from_slice(b",\"ssrc_changes\":");
-            write_u64(*ssrc_changes, buf);
-            buf.extend_from_slice(b",\"rtp_errors\":");
-            write_u64(*rtp_errors, buf);
-            buf.extend_from_slice(b",\"stream_ends\":");
-            write_u64(*stream_ends, buf);
-            buf.extend_from_slice(b",\"reconnect_attempts\":");
-            write_u64(*reconnect_attempts, buf);
+            append_field(buf, "window_s", r.window_s);
+            append_field(buf, "cycles", r.cycles);
+            append_field(buf, "frames_total", r.frames_total);
+            append_field(buf, "keyframes", r.keyframes);
+            append_field(buf, "pframes_dropped", r.pframes_dropped);
+            append_field(buf, "inferences", r.inferences);
+            append_field(buf, "infer_total_ms", r.infer_total_ms);
+            append_field(buf, "infer_min_ms", r.infer_min_ms);
+            append_field(buf, "infer_max_ms", r.infer_max_ms);
+            append_field(buf, "decode_total_ms", r.decode_total_ms);
+            append_field(buf, "blind_cycles", r.blind_cycles);
+            append_field(buf, "timeouts", r.timeouts);
+            append_field(buf, "ssrc_changes", r.ssrc_changes);
+            append_field(buf, "rtp_errors", r.rtp_errors);
+            append_field(buf, "stream_ends", r.stream_ends);
+            append_field(buf, "reconnect_attempts", r.reconnect_attempts);
+            buf.extend_from_slice(b",\"models\":{");
+            let mut first_model = true;
+            for (name, m) in &r.model_metrics {
+                if !first_model { buf.push(b','); }
+                first_model = false;
+                buf.extend_from_slice(b"\"");
+                buf.extend_from_slice(name.as_bytes());
+                buf.extend_from_slice(b"\":{");
+                append_field(buf, "calls", m.inferences);
+                append_field(buf, "total_ms", m.infer_total_us / 1000);
+                append_field(buf, "min_ms", m.infer_min_us / 1000);
+                append_field(buf, "max_ms", m.infer_max_us / 1000);
+                append_field(buf, "dets", m.total_dets);
+                append_field(buf, "skips", m.skips);
+                append_field(buf, "empty", m.empty);
+                if !m.class_counts.is_empty() {
+                    buf.extend_from_slice(b",\"classes\":{");
+                    let mut first_class = true;
+                    for (cls, count) in &m.class_counts {
+                        if !first_class { buf.push(b','); }
+                        first_class = false;
+                        buf.extend_from_slice(b"\"");
+                        buf.extend_from_slice(cls.as_bytes());
+                        buf.extend_from_slice(b"\":");
+                        write_u64(*count, buf);
+                    }
+                    buf.extend_from_slice(b"}");
+                }
+                buf.extend_from_slice(b"}");
+            }
+            buf.extend_from_slice(b"}");
         }
     }
     buf.extend_from_slice(b"}\n");
+}
+
+fn append_field(buf: &mut Vec<u8>, name: &str, value: u64) {
+    buf.extend_from_slice(b",\"");
+    buf.extend_from_slice(name.as_bytes());
+    buf.extend_from_slice(b"\":");
+    write_u64(value, buf);
 }
 
 pub fn write_json_string(s: &str, buf: &mut Vec<u8>) {
@@ -170,18 +216,17 @@ pub fn write_u64(n: u64, buf: &mut Vec<u8>) {
 }
 
 pub fn write_f32(v: f32, buf: &mut Vec<u8>) {
-    if v.is_nan() || v.is_infinite() {
+    if v.is_nan() || v.is_infinite() || v.is_subnormal() {
         buf.extend_from_slice(b"null");
         return;
     }
-    let neg = v < 0.0;
-    let abs = if neg { -v } else { v };
-    let scaled = (abs * 100.0 + 0.5) as u64;
-    let int_part = scaled / 100;
-    let frac_part = scaled % 100;
-    if neg { buf.push(b'-'); }
-    write_u64(int_part, buf);
-    buf.push(b'.');
-    if frac_part < 10 { buf.push(b'0'); }
-    write_u64(frac_part, buf);
+    use std::io::Write;
+    let _ = write!(buf, "{v:.6}");
+    let strip = buf.iter().rev().take_while(|&&b| b == b'0').count();
+    let dot = buf.iter().rposition(|&b| b == b'.').unwrap_or(buf.len());
+    let keep = if strip > 0 && buf.len() - strip > dot { buf.len() - strip } else { buf.len() };
+    buf.truncate(keep);
+    if buf.ends_with(&[b'.']) {
+        buf.truncate(buf.len() - 1);
+    }
 }

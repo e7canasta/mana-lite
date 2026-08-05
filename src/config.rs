@@ -1,4 +1,3 @@
-#![allow(dead_code)] // schema module: all fields are defined API contract
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -15,6 +14,14 @@ pub struct AppConfig {
     pub output: OutputConfig,
     #[serde(default)]
     pub viz: VizConfig,
+    #[serde(default)]
+    pub pipeline: PipelineConfig,
+    #[serde(default)]
+    pub metrics_file: Option<PathBuf>,
+    #[serde(default)]
+    pub viz_file: Option<PathBuf>,
+    #[serde(default)]
+    pub rerun_file: Option<PathBuf>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -54,6 +61,34 @@ impl Default for VizConfig {
 fn default_rerun_addr() -> String { "0.0.0.0:9876".into() }
 
 #[derive(Debug, Deserialize)]
+pub struct PipelineConfig {
+    #[serde(default = "default_true")]
+    pub infer: bool,
+    #[serde(default = "default_true")]
+    pub track: bool,
+    #[serde(default = "default_true")]
+    pub zones: bool,
+    #[serde(default = "default_true")]
+    pub fsm: bool,
+    #[serde(default = "default_true")]
+    pub snapshot: bool,
+}
+
+impl Default for PipelineConfig {
+    fn default() -> Self {
+        Self {
+            infer: true,
+            track: true,
+            zones: true,
+            fsm: true,
+            snapshot: true,
+        }
+    }
+}
+
+fn default_true() -> bool { true }
+
+#[derive(Debug, Deserialize)]
 pub struct IngestConfig {
     #[serde(default = "default_poll_timeout_ms")]
     pub poll_timeout_ms: u64,
@@ -90,9 +125,13 @@ pub struct InferenceConfig {
     pub model_catalog: PathBuf,
     pub default_model: String,
     #[serde(default)]
+    pub cascade_file: Option<PathBuf>,
+    #[serde(default)]
     pub zones_file: Option<PathBuf>,
     #[serde(default)]
     pub fsm_file: Option<PathBuf>,
+    #[serde(default)]
+    pub disabled_tasks: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -201,12 +240,12 @@ pub struct ZoneEntry {
 
 fn default_hysteresis() -> u64 { 500 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 pub struct FsmCatalog {
     pub fsm: FsmRoot,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 pub struct FsmRoot {
     pub initial: String,
     pub states: HashMap<String, FsmState>,
@@ -262,6 +301,220 @@ pub enum FsmGuard {
 
 fn default_guard_confidence() -> f32 { 0.5 }
 
+// ── viz.toml ─────────────────────────────────────────────
+#[allow(dead_code)]
+#[derive(Debug, Deserialize, Clone)]
+pub struct VizDataConfig {
+    pub viz: VizDataInner,
+}
+
+impl Default for VizDataConfig {
+    fn default() -> Self {
+        Self { viz: VizDataInner::default() }
+    }
+}
+
+#[derive(Debug, Deserialize, Clone)]
+#[allow(dead_code)]
+pub struct VizDataInner {
+    #[serde(default)]
+    pub enabled: Option<bool>,
+    #[serde(default)]
+    pub rerun_addr: Option<String>,
+    #[serde(default)]
+    pub send: VizSendToggles,
+}
+
+impl Default for VizDataInner {
+    fn default() -> Self {
+        Self { enabled: None, rerun_addr: None, send: VizSendToggles::default() }
+    }
+}
+
+#[derive(Debug, Deserialize, Clone)]
+#[allow(dead_code)]
+pub struct VizSendToggles {
+    #[serde(default = "default_true")] pub frames: bool,
+    #[serde(default = "default_true")] pub boxes: bool,
+    #[serde(default = "default_true")] pub decode_latency: bool,
+    #[serde(default = "default_true")] pub infer_latency: bool,
+    #[serde(default = "default_true")] pub track_counts: bool,
+    #[serde(default = "default_true")] pub health_ms: bool,
+    #[serde(default = "default_true")] pub loop_latency: bool,
+    #[serde(default = "default_true")] pub frame_id: bool,
+    #[serde(default = "default_true")] pub model_window_metrics: bool,
+    #[serde(default = "default_true")] pub class_counts: bool,
+    #[serde(default = "default_true")] pub ingest_window: bool,
+    #[serde(default = "default_true")] pub infer_window: bool,
+    #[serde(default = "default_true")] pub pipeline_window: bool,
+}
+
+impl Default for VizSendToggles {
+    fn default() -> Self {
+        Self {
+            frames: true, boxes: true, decode_latency: true, infer_latency: true,
+            track_counts: true, health_ms: true, loop_latency: true, frame_id: true,
+            model_window_metrics: true, class_counts: true,
+            ingest_window: true, infer_window: true, pipeline_window: true,
+        }
+    }
+}
+
+// ── metrics.toml ──────────────────────────────────────────
+#[allow(dead_code)]
+#[derive(Debug, Deserialize, Clone)]
+pub struct MetricsLogConfig {
+    pub metrics: MetricsInner,
+}
+
+impl Default for MetricsLogConfig {
+    fn default() -> Self {
+        Self { metrics: MetricsInner::default() }
+    }
+}
+
+#[derive(Debug, Deserialize, Clone)]
+#[allow(dead_code)]
+pub struct MetricsInner {
+    #[serde(default = "default_report_interval_s")]
+    pub report_interval_s: u64,
+    #[serde(default)]
+    pub text: MetricsTextConfig,
+    #[serde(default)]
+    pub jsonl: MetricsJsonlConfig,
+}
+
+impl Default for MetricsInner {
+    fn default() -> Self {
+        Self { report_interval_s: 5, text: MetricsTextConfig::default(), jsonl: MetricsJsonlConfig::default() }
+    }
+}
+
+#[derive(Debug, Deserialize, Clone)]
+#[allow(dead_code)]
+pub struct MetricsTextConfig {
+    #[serde(default = "default_true")] pub ingest_line: bool,
+    #[serde(default = "default_true")] pub infer_summary: bool,
+    #[serde(default = "default_true")] pub per_model_lines: bool,
+    #[serde(default)]
+    pub flags: MetricsTextFlags,
+}
+
+impl Default for MetricsTextConfig {
+    fn default() -> Self {
+        Self { ingest_line: true, infer_summary: true, per_model_lines: true, flags: MetricsTextFlags::default() }
+    }
+}
+
+#[derive(Debug, Deserialize, Clone)]
+#[allow(dead_code)]
+pub struct MetricsTextFlags {
+    #[serde(default = "default_true")] pub ingest_pframes: bool,
+    #[serde(default = "default_true")] pub ingest_dup: bool,
+    #[serde(default = "default_true")] pub ingest_timeouts: bool,
+    #[serde(default = "default_true")] pub ingest_reconnect: bool,
+    #[serde(default = "default_true")] pub ingest_ssrc: bool,
+    #[serde(default = "default_true")] pub ingest_rtp: bool,
+    #[serde(default = "default_true")] pub infer_skips: bool,
+    #[serde(default = "default_true")] pub infer_empty: bool,
+}
+
+impl Default for MetricsTextFlags {
+    fn default() -> Self {
+        Self {
+            ingest_pframes: true, ingest_dup: true, ingest_timeouts: true,
+            ingest_reconnect: true, ingest_ssrc: true, ingest_rtp: true,
+            infer_skips: true, infer_empty: true,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Clone)]
+#[allow(dead_code)]
+pub struct MetricsJsonlConfig {
+    #[serde(default = "default_true")] pub frame_events: bool,
+    #[serde(default = "default_true")] pub detection_events: bool,
+    #[serde(default = "default_true")] pub zone_events: bool,
+    #[serde(default = "default_true")] pub fsm_events: bool,
+    #[serde(default = "default_true")] pub metrics_event: bool,
+    #[serde(default = "default_true")] pub per_model_in_window: bool,
+    #[serde(default = "default_true")] pub class_counts_in_window: bool,
+}
+
+impl Default for MetricsJsonlConfig {
+    fn default() -> Self {
+        Self {
+            frame_events: true, detection_events: true, zone_events: true,
+            fsm_events: true, metrics_event: true,
+            per_model_in_window: true, class_counts_in_window: true,
+        }
+    }
+}
+
+// ── rerun.toml ────────────────────────────────────────────
+#[allow(dead_code)]
+#[derive(Debug, Deserialize, Clone)]
+pub struct RerunBlueprintConfig {
+    pub rerun: RerunRoot,
+}
+
+impl Default for RerunBlueprintConfig {
+    fn default() -> Self {
+        Self { rerun: RerunRoot::default() }
+    }
+}
+
+#[derive(Debug, Deserialize, Clone)]
+#[allow(dead_code)]
+pub struct RerunRoot {
+    #[serde(default = "default_rerun_app")] pub app: String,
+    #[serde(default = "default_max_bytes")] pub max_bytes_in_flight_mb: usize,
+    #[serde(default = "default_true")] pub auto_views: bool,
+    #[serde(default = "default_true")] pub panels_expanded: bool,
+    #[serde(default)] pub rows: Vec<RerunRow>,
+}
+
+fn default_rerun_app() -> String { "mana-lite".into() }
+fn default_max_bytes() -> usize { 32 }
+
+impl Default for RerunRoot {
+    fn default() -> Self {
+        Self {
+            app: default_rerun_app(),
+            max_bytes_in_flight_mb: default_max_bytes(),
+            auto_views: default_true(),
+            panels_expanded: default_true(),
+            rows: Vec::new(),
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Clone)]
+#[allow(dead_code)]
+pub struct RerunRow {
+    pub kind: String,
+    #[serde(default)] pub name: String,
+    #[serde(default)] pub origin: String,
+    #[serde(default)] pub share: f32,
+    #[serde(default)] pub overrides: Vec<RerunOverride>,
+    #[serde(default)] pub panels: Vec<RerunPanel>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+#[allow(dead_code)]
+pub struct RerunOverride {
+    pub path: String,
+    pub interpolation: String,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+#[allow(dead_code)]
+pub struct RerunPanel {
+    pub kind: String,
+    pub name: String,
+    #[serde(default)] pub origin: String,
+}
+
 use serde::de::DeserializeOwned;
 
 fn read_file(path: &Path) -> Result<String> {
@@ -285,41 +538,62 @@ pub fn load_app_config(path: &Path) -> Result<AppConfig> {
     Ok(config)
 }
 
+macro_rules! env_str {
+    ($var:literal => $field:expr) => {
+        if let Ok(v) = std::env::var($var) { $field = v; }
+    };
+}
+macro_rules! env_path {
+    ($var:literal => $field:expr) => {
+        if let Ok(v) = std::env::var($var) { $field = v.into(); }
+    };
+}
+macro_rules! env_bool {
+    ($var:literal => $field:expr) => {
+        if let Ok(v) = std::env::var($var) { $field = v == "1" || v == "true"; }
+    };
+}
+macro_rules! env_parse {
+    ($var:literal => $field:expr) => {
+        if let Ok(v) = std::env::var($var) { if let Ok(n) = v.parse() { $field = n; } }
+    };
+}
+macro_rules! env_opt {
+    ($var:literal => $field:expr) => {
+        if let Ok(v) = std::env::var($var) { $field = if v.is_empty() { None } else { Some(v.into()) }; }
+    };
+}
+
 fn apply_env_overrides(cfg: &mut AppConfig) {
-    if let Ok(v) = std::env::var("MANA_SOURCE_URL") { cfg.source.url = v; }
-    if let Ok(v) = std::env::var("MANA_SOURCE_USERNAME") {
-        cfg.source.username = if v.is_empty() { None } else { Some(v) };
-    }
-    if let Ok(v) = std::env::var("MANA_SOURCE_PASSWORD") {
-        cfg.source.password = if v.is_empty() { None } else { Some(v) };
-    }
-    if let Ok(v) = std::env::var("MANA_TRANSPORT") { cfg.source.transport = v; }
-    if let Ok(v) = std::env::var("MANA_KEYFRAMES_ONLY") { cfg.source.keyframes_only = v.parse().unwrap_or(true); }
-    if let Ok(v) = std::env::var("MANA_DEMO") { cfg.source.demo = v == "1" || v == "true"; }
-    if let Ok(v) = std::env::var("MANA_MODEL_CATALOG") { cfg.inference.model_catalog = v.into(); }
-    if let Ok(v) = std::env::var("MANA_DEFAULT_MODEL") { cfg.inference.default_model = v; }
-    if let Ok(v) = std::env::var("MANA_DATA_STALE_MS") { if let Ok(n) = v.parse() { cfg.health.data_stale_ms = n; } }
-    if let Ok(v) = std::env::var("MANA_REPORT_INTERVAL") { if let Ok(n) = v.parse() { cfg.health.report_interval_s = n; } }
-    if let Ok(v) = std::env::var("MANA_SAVE_DIR") {
-        cfg.output.save_dir = if v.is_empty() { None } else { Some(v.into()) };
-    }
-    if let Ok(v) = std::env::var("MANA_VIZ_ENABLED") { cfg.viz.enabled = v == "1" || v == "true"; }
-    if let Ok(v) = std::env::var("MANA_RERUN_ADDR") { cfg.viz.rerun_addr = v; }
-    if let Ok(v) = std::env::var("MANA_SNAPSHOT_DIR") {
-        cfg.output.snapshot_dir = if v.is_empty() { None } else { Some(v.into()) };
-    }
-    if let Ok(v) = std::env::var("MANA_SNAPSHOT_VERBOSE") { cfg.output.snapshot_verbose = v == "1" || v == "true"; }
-    if let Ok(v) = std::env::var("MANA_JSONL_LEVEL") { cfg.output.jsonl_level = v; }
-    if let Ok(v) = std::env::var("MANA_POLL_TIMEOUT_MS") { if let Ok(n) = v.parse() { cfg.ingest.poll_timeout_ms = n; } }
-    if let Ok(v) = std::env::var("MANA_ERROR_WINDOW_SIZE") { if let Ok(n) = v.parse() { cfg.ingest.error_window_size = n; } }
-    if let Ok(v) = std::env::var("MANA_ERROR_WINDOW_THRESHOLD") { if let Ok(n) = v.parse() { cfg.ingest.error_window_threshold = n; } }
-    if let Ok(v) = std::env::var("MANA_BACKOFF_INITIAL_MS") { if let Ok(n) = v.parse() { cfg.ingest.reconnect_backoff_initial_ms = n; } }
-    if let Ok(v) = std::env::var("MANA_BACKOFF_MAX_MS") { if let Ok(n) = v.parse() { cfg.ingest.reconnect_backoff_max_ms = n; } }
+    env_str!("MANA_SOURCE_URL"       => cfg.source.url);
+    env_opt!("MANA_SOURCE_USERNAME"   => cfg.source.username);
+    env_opt!("MANA_SOURCE_PASSWORD"   => cfg.source.password);
+    env_str!("MANA_TRANSPORT"         => cfg.source.transport);
+    env_bool!("MANA_KEYFRAMES_ONLY"   => cfg.source.keyframes_only);
+    env_bool!("MANA_DEMO"             => cfg.source.demo);
+    env_path!("MANA_MODEL_CATALOG"     => cfg.inference.model_catalog);
+    env_str!("MANA_DEFAULT_MODEL"     => cfg.inference.default_model);
+    env_parse!("MANA_DATA_STALE_MS"   => cfg.health.data_stale_ms);
+    env_parse!("MANA_REPORT_INTERVAL" => cfg.health.report_interval_s);
+    env_opt!("MANA_SAVE_DIR"          => cfg.output.save_dir);
+    env_bool!("MANA_VIZ_ENABLED"      => cfg.viz.enabled);
+    env_str!("MANA_RERUN_ADDR"        => cfg.viz.rerun_addr);
+    env_opt!("MANA_SNAPSHOT_DIR"      => cfg.output.snapshot_dir);
+    env_bool!("MANA_SNAPSHOT_VERBOSE" => cfg.output.snapshot_verbose);
+    env_str!("MANA_JSONL_LEVEL"       => cfg.output.jsonl_level);
+    env_parse!("MANA_POLL_TIMEOUT_MS" => cfg.ingest.poll_timeout_ms);
+    env_parse!("MANA_ERROR_WINDOW_SIZE" => cfg.ingest.error_window_size);
+    env_parse!("MANA_ERROR_WINDOW_THRESHOLD" => cfg.ingest.error_window_threshold);
+    env_parse!("MANA_BACKOFF_INITIAL_MS" => cfg.ingest.reconnect_backoff_initial_ms);
+    env_parse!("MANA_BACKOFF_MAX_MS" => cfg.ingest.reconnect_backoff_max_ms);
 }
 
 pub fn load_model_catalog(path: &Path) -> Result<ModelCatalog> { load_config(path) }
 pub fn load_zone_catalog(path: &Path) -> Result<ZoneCatalog> { load_config(path) }
 pub fn load_fsm_catalog(path: &Path) -> Result<FsmCatalog> { load_config(path) }
+pub fn load_viz_data(path: &Path) -> Result<VizDataConfig> { load_config(path) }
+pub fn load_metrics_log(path: &Path) -> Result<MetricsLogConfig> { load_config(path) }
+pub fn load_rerun_blueprint(path: &Path) -> Result<RerunBlueprintConfig> { load_config(path) }
 
 pub fn validate_fsm(fsm: &FsmCatalog, models: &ModelCatalog, zones: &Option<ZoneCatalog>) -> Vec<String> {
     let mut errors = Vec::new();

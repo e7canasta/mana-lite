@@ -8,51 +8,38 @@ pub enum Event {
     },
     Health {
         event: String,
-        f: Option<u64>,
-        cyc_us: Option<u64>,
-        msg: Option<String>,
+        frame_id: Option<u64>,
+        cycle_us: Option<u64>,
+        message: Option<String>,
     },
     Frame {
-        f: u64,
-        kf: bool,
-        dec_ms: u64,
+        frame_id: u64,
+        is_keyframe: bool,
+        decode_ms: u64,
     },
-    #[allow(dead_code)]
     Detection {
-        f: u64,
-        m: String,
-        inf_ms: u64,
-        det: Vec<DetRecord>,
+        frame_id: u64,
+        model: String,
+        infer_ms: u64,
+        detections: Vec<DetRecord>,
     },
-    #[allow(dead_code)]
     Zone {
-        z: String,
-        e: String,
-        cls: String,
-        f: u64,
+        zone: String,
+        event: String,
+        class: String,
+        label: Option<String>,
+        confidence: Option<f32>,
+        frame_id: u64,
     },
     Fsm {
         from: String,
+        from_label: Option<String>,
         to: String,
-        tr: String,
-        dwell: u64,
+        to_label: Option<String>,
+        trigger: String,
+        dwell_ms: u64,
     },
-    Metrics {
-        window_s: u64,
-        cycles: u64,
-        frames_total: u64,
-        keyframes: u64,
-        pframes_dropped: u64,
-        inferences: u64,
-        infer_total_ms: u64,
-        decode_total_ms: u64,
-        blind_cycles: u64,
-        timeouts: u64,
-        ssrc_changes: u64,
-        rtp_errors: u64,
-        stream_ends: u64,
-        reconnect_attempts: u64,
-    },
+    Metrics(MetricsReport),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -92,9 +79,9 @@ impl Event {
 }
 
 pub struct DetRecord {
-    pub c: String,
-    pub conf: f32,
-    pub bb: [f32; 4],
+    pub class: String,
+    pub confidence: f32,
+    pub bbox: [f32; 4],
 }
 
 impl Event {
@@ -102,7 +89,7 @@ impl Event {
         Event::Meta {
             event: "startup".into(),
             detail: "mana-lite".into(),
-            attrs: vec![("v".into(), version.into()), ("config".into(), config.into())],
+            attrs: vec![("version".into(), version.into()), ("config".into(), config.into())],
         }
     }
 
@@ -118,115 +105,72 @@ impl Event {
         }
     }
 
-    #[allow(dead_code)]
-    pub fn meta_model_load_failed(model: &str, path: &str, err: &str) -> Self {
-        Event::Meta {
-            event: "model_load_failed".into(),
-            detail: model.into(),
-            attrs: vec![("path".into(), path.into()), ("error".into(), err.into())],
-        }
-    }
-
     pub fn health_heartbeat(frame: u64, phase: &str, cycle_us: u64) -> Self {
         Event::Health {
             event: "heartbeat".into(),
-            f: Some(frame),
-            cyc_us: Some(cycle_us),
-            msg: Some(format!("phase={phase}")),
+            frame_id: Some(frame),
+            cycle_us: Some(cycle_us),
+            message: Some(format!("phase={phase}")),
         }
     }
 
     pub fn health_stale(component: &str, ms_since_frame: u64) -> Self {
         Event::Health {
             event: "stale".into(),
-            f: None,
-            cyc_us: None,
-            msg: Some(format!("{component}: {ms_since_frame}ms since last frame")),
+            frame_id: None,
+            cycle_us: None,
+            message: Some(format!("{component}: {ms_since_frame}ms since last frame")),
         }
     }
 
     pub fn health_blind(ms_since_frame: u64) -> Self {
         Event::Health {
             event: "blind".into(),
-            f: None,
-            cyc_us: None,
-            msg: Some(format!("No frame for {ms_since_frame}ms, data plane silent")),
+            frame_id: None,
+            cycle_us: None,
+            message: Some(format!("No frame for {ms_since_frame}ms, data plane silent")),
         }
     }
 
-    #[allow(dead_code)]
-    pub fn health_panic_count(count: u32, max: u32) -> Self {
-        Event::Health {
-            event: "panic_count".into(),
-            f: None,
-            cyc_us: None,
-            msg: Some(format!("{count}/{max} consecutive panics")),
-        }
+    pub fn frame_ingest(frame_id: u64, is_keyframe: bool, decode_ms: u64) -> Self {
+        Event::Frame { frame_id, is_keyframe, decode_ms }
     }
 
-    pub fn frame_ingest(frame: u64, is_keyframe: bool, decode_ms: u64) -> Self {
-        Event::Frame {
-            f: frame,
-            kf: is_keyframe,
-            dec_ms: decode_ms,
-        }
+    pub fn detection(frame_id: u64, model: &str, infer_ms: u64, detections: Vec<DetRecord>) -> Self {
+        Event::Detection { frame_id, model: model.into(), infer_ms, detections }
     }
 
-    #[allow(dead_code)]
-    pub fn detection(frame: u64, model: &str, infer_ms: u64, dets: Vec<DetRecord>) -> Self {
-        Event::Detection {
-            f: frame,
-            m: model.into(),
-            inf_ms: infer_ms,
-            det: dets,
-        }
-    }
-
-    #[allow(dead_code)]
-    pub fn zone_occupied(zone: &str, by_class: &str, frame: u64) -> Self {
+    pub fn zone_occupied(zone: &str, label: &str, by_class: &str, confidence: f32, frame_id: u64) -> Self {
         Event::Zone {
-            z: zone.into(),
-            e: "occupied".into(),
-            cls: by_class.into(),
-            f: frame,
+            zone: zone.into(),
+            event: "occupied".into(),
+            class: by_class.into(),
+            label: if label == zone { None } else { Some(label.into()) },
+            confidence: Some(confidence),
+            frame_id,
         }
     }
 
-    #[allow(dead_code)]
-    pub fn zone_vacated(zone: &str, by_class: &str, frame: u64) -> Self {
+    pub fn zone_vacated(zone: &str, label: &str, by_class: &str, frame_id: u64) -> Self {
         Event::Zone {
-            z: zone.into(),
-            e: "vacated".into(),
-            cls: by_class.into(),
-            f: frame,
+            zone: zone.into(),
+            event: "vacated".into(),
+            class: by_class.into(),
+            label: if label == zone { None } else { Some(label.into()) },
+            confidence: None,
+            frame_id,
         }
     }
 
-    pub fn fsm_transition(from: &str, to: &str, trigger: &str, dwell_ms: u64) -> Self {
+    pub fn fsm_transition(from: &str, from_label: Option<&str>, to: &str, to_label: Option<&str>, trigger: &str, dwell_ms: u64) -> Self {
         Event::Fsm {
-            from: from.into(),
-            to: to.into(),
-            tr: trigger.into(),
-            dwell: dwell_ms,
+            from: from.into(), from_label: from_label.map(str::to_string),
+            to: to.into(), to_label: to_label.map(str::to_string),
+            trigger: trigger.into(), dwell_ms,
         }
     }
 
-    pub fn metrics(report: &MetricsReport) -> Self {
-        Event::Metrics {
-            window_s: report.window_s,
-            cycles: report.cycles,
-            frames_total: report.frames_total,
-            keyframes: report.keyframes,
-            pframes_dropped: report.pframes_dropped,
-            inferences: report.inferences,
-            infer_total_ms: report.infer_total_ms,
-            decode_total_ms: report.decode_total_ms,
-            blind_cycles: report.blind_cycles,
-            timeouts: report.timeouts,
-            ssrc_changes: report.ssrc_changes,
-            rtp_errors: report.rtp_errors,
-            stream_ends: report.stream_ends,
-            reconnect_attempts: report.reconnect_attempts,
-        }
+    pub fn metrics(report: MetricsReport) -> Self {
+        Event::Metrics(report)
     }
 }

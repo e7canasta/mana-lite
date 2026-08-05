@@ -1,6 +1,42 @@
+use std::collections::HashMap;
 use std::time::Instant;
 
-#[derive(Debug, Clone, Default)]
+use crate::infer::Detection;
+
+#[derive(Debug, Clone)]
+pub struct PerModelMetrics {
+    pub inferences: u64,
+    pub infer_total_us: u64,
+    pub infer_min_us: u64,
+    pub infer_max_us: u64,
+    pub total_dets: u64,
+    pub skips: u64,
+    pub empty: u64,
+    pub conf_sum: f64,
+    pub conf_min: f64,
+    pub bbox_area_sum: f64,
+    pub class_counts: HashMap<String, u64>,
+}
+
+impl Default for PerModelMetrics {
+    fn default() -> Self {
+        Self {
+            inferences: 0,
+            infer_total_us: 0,
+            infer_min_us: u64::MAX,
+            infer_max_us: 0,
+            total_dets: 0,
+            skips: 0,
+            empty: 0,
+            conf_sum: 0.0,
+            conf_min: 0.0,
+            bbox_area_sum: 0.0,
+            class_counts: HashMap::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct Metrics {
     pub cycles: u64,
     pub frames_total: u64,
@@ -8,6 +44,8 @@ pub struct Metrics {
     pub pframes_dropped: u64,
     pub inferences: u64,
     pub infer_total_us: u64,
+    pub infer_min_us: u64,
+    pub infer_max_us: u64,
     pub decode_total_us: u64,
     pub blind_cycles: u64,
     pub timeouts: u64,
@@ -15,6 +53,57 @@ pub struct Metrics {
     pub rtp_errors: u64,
     pub stream_ends: u64,
     pub reconnect_attempts: u64,
+    pub ingest_pframes: u64,
+    pub ingest_dup_keyframes: u64,
+    pub infer_skips: u64,
+    pub infer_empty: u64,
+    pub infer_total_dets: u64,
+    pub model_metrics: HashMap<String, PerModelMetrics>,
+}
+
+impl Default for Metrics {
+    fn default() -> Self {
+        Self {
+            cycles: 0, frames_total: 0, keyframes: 0, pframes_dropped: 0,
+            inferences: 0, infer_total_us: 0,
+            infer_min_us: u64::MAX, infer_max_us: 0,
+            decode_total_us: 0, blind_cycles: 0,
+            timeouts: 0, ssrc_changes: 0, rtp_errors: 0,
+            stream_ends: 0, reconnect_attempts: 0,
+            ingest_pframes: 0, ingest_dup_keyframes: 0,
+            infer_skips: 0, infer_empty: 0, infer_total_dets: 0,
+            model_metrics: HashMap::new(),
+        }
+    }
+}
+
+impl Metrics {
+    pub fn into_report(self, window_s: u64) -> MetricsReport {
+        MetricsReport {
+            window_s,
+            cycles: self.cycles,
+            frames_total: self.frames_total,
+            keyframes: self.keyframes,
+            pframes_dropped: self.pframes_dropped,
+            inferences: self.inferences,
+            infer_total_ms: self.infer_total_us / 1000,
+            infer_min_ms: if self.inferences > 0 { self.infer_min_us / 1000 } else { 0 },
+            infer_max_ms: if self.inferences > 0 { self.infer_max_us / 1000 } else { 0 },
+            decode_total_ms: self.decode_total_us / 1000,
+            blind_cycles: self.blind_cycles,
+            timeouts: self.timeouts,
+            ssrc_changes: self.ssrc_changes,
+            rtp_errors: self.rtp_errors,
+            stream_ends: self.stream_ends,
+            reconnect_attempts: self.reconnect_attempts,
+            ingest_pframes: self.ingest_pframes,
+            ingest_dup_keyframes: self.ingest_dup_keyframes,
+            infer_skips: self.infer_skips,
+            infer_empty: self.infer_empty,
+            infer_total_dets: self.infer_total_dets,
+            model_metrics: self.model_metrics,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -26,6 +115,8 @@ pub struct MetricsReport {
     pub pframes_dropped: u64,
     pub inferences: u64,
     pub infer_total_ms: u64,
+    pub infer_min_ms: u64,
+    pub infer_max_ms: u64,
     pub decode_total_ms: u64,
     pub blind_cycles: u64,
     pub timeouts: u64,
@@ -33,31 +124,17 @@ pub struct MetricsReport {
     pub rtp_errors: u64,
     pub stream_ends: u64,
     pub reconnect_attempts: u64,
-}
-
-impl From<&Metrics> for MetricsReport {
-    fn from(m: &Metrics) -> Self {
-        Self {
-            window_s: 0,
-            cycles: m.cycles,
-            frames_total: m.frames_total,
-            keyframes: m.keyframes,
-            pframes_dropped: m.pframes_dropped,
-            inferences: m.inferences,
-            infer_total_ms: m.infer_total_us / 1000,
-            decode_total_ms: m.decode_total_us / 1000,
-            blind_cycles: m.blind_cycles,
-            timeouts: m.timeouts,
-            ssrc_changes: m.ssrc_changes,
-            rtp_errors: m.rtp_errors,
-            stream_ends: m.stream_ends,
-            reconnect_attempts: m.reconnect_attempts,
-        }
-    }
+    pub ingest_pframes: u64,
+    pub ingest_dup_keyframes: u64,
+    pub infer_skips: u64,
+    pub infer_empty: u64,
+    pub infer_total_dets: u64,
+    pub model_metrics: HashMap<String, PerModelMetrics>,
 }
 
 pub struct MetricsEngine {
     current: Metrics,
+    model_order: Vec<String>,
     window_start: Instant,
     report_interval_s: u64,
 }
@@ -66,6 +143,7 @@ impl MetricsEngine {
     pub fn new(report_interval_s: u64) -> Self {
         Self {
             current: Metrics::default(),
+            model_order: Vec::new(),
             window_start: Instant::now(),
             report_interval_s,
         }
@@ -80,16 +158,38 @@ impl MetricsEngine {
         self.current.frames_total += 1;
     }
 
-    #[allow(dead_code)]
-    pub fn tick_pframe_dropped(&mut self) {
-        self.current.pframes_dropped += 1;
-        self.current.frames_total += 1;
-    }
-
-    #[allow(dead_code)]
-    pub fn tick_inference(&mut self, elapsed_us: u64) {
+    pub fn tick_inference_model(&mut self, model_key: &str, elapsed_us: u64, detections: &[Detection]) {
         self.current.inferences += 1;
         self.current.infer_total_us += elapsed_us;
+        self.current.infer_min_us = self.current.infer_min_us.min(elapsed_us);
+        self.current.infer_max_us = self.current.infer_max_us.max(elapsed_us);
+        self.current.infer_total_dets += detections.len() as u64;
+        if detections.is_empty() {
+            self.current.infer_empty += 1;
+        }
+
+        let m = self.current.model_metrics.entry(model_key.to_string()).or_default();
+        m.inferences += 1;
+        m.infer_total_us += elapsed_us;
+        m.infer_min_us = m.infer_min_us.min(elapsed_us);
+        m.infer_max_us = m.infer_max_us.max(elapsed_us);
+        m.total_dets += detections.len() as u64;
+        if detections.is_empty() {
+            m.empty += 1;
+        }
+        for det in detections {
+            m.conf_sum += det.confidence as f64;
+            if m.conf_min == 0.0 || (det.confidence as f64) < m.conf_min {
+                m.conf_min = det.confidence as f64;
+            }
+            let area = ((det.bbox[2] - det.bbox[0]) * (det.bbox[3] - det.bbox[1])).max(1.0);
+            m.bbox_area_sum += area as f64;
+            *m.class_counts.entry(det.class.clone()).or_default() += 1;
+        }
+
+        if !self.model_order.iter().any(|n| n == model_key) {
+            self.model_order.push(model_key.to_string());
+        }
     }
 
     pub fn tick_decode(&mut self, elapsed_us: u64) {
@@ -98,6 +198,20 @@ impl MetricsEngine {
 
     pub fn tick_blind(&mut self) {
         self.current.blind_cycles += 1;
+    }
+
+    pub fn tick_infer_skip(&mut self, model_key: &str) {
+        self.current.infer_skips += 1;
+        let m = self.current.model_metrics.entry(model_key.to_string()).or_default();
+        m.skips += 1;
+        if !self.model_order.iter().any(|n| n == model_key) {
+            self.model_order.push(model_key.to_string());
+        }
+    }
+
+    pub fn tick_ingest(&mut self, pframes: u64, dup_keyframes: u64) {
+        self.current.ingest_pframes += pframes;
+        self.current.ingest_dup_keyframes += dup_keyframes;
     }
 
     pub fn tick_retina_counters(
@@ -111,16 +225,15 @@ impl MetricsEngine {
         self.current.reconnect_attempts = self.current.reconnect_attempts.saturating_add(reconnect_attempts);
     }
 
-    pub fn take_report(&mut self) -> Option<MetricsReport> {
+    pub fn take_report(&mut self) -> Option<(MetricsReport, Vec<String>)> {
         let elapsed = self.window_start.elapsed().as_secs();
         if elapsed < self.report_interval_s {
             return None;
         }
-        let mut report = MetricsReport::from(&self.current);
-        report.window_s = elapsed;
-        self.current = Metrics::default();
+        let order = std::mem::take(&mut self.model_order);
+        let report = std::mem::take(&mut self.current).into_report(elapsed);
         self.window_start = Instant::now();
-        Some(report)
+        Some((report, order))
     }
 }
 
@@ -184,5 +297,9 @@ impl Health {
 
     pub fn is_blind(&self) -> bool {
         self.blind
+    }
+
+    pub fn last_frame_elapsed_ms(&self) -> u64 {
+        self.last_frame_at.elapsed().as_millis() as u64
     }
 }

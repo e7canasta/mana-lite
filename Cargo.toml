@@ -27,7 +27,7 @@ retina = "0.4"
 tokio = { version = "1", features = ["macros", "rt", "net", "time"] }
 futures = "0.3"
 url = "2"
-ort = { version = "2.0.0-rc.12", features = ["download-binaries"] }
+ultralytics-inference = { path = "../inference", default-features = false }
 serde = { version = "1", features = ["derive"] }
 toml = "0.8"
 chrono = "0.4"
@@ -36,7 +36,7 @@ log = "0.4"
 env_logger = "0.11"
 ffmpeg-next = "8"
 image = "0.25"
-rerun = "0.33"
+rerun = "0.35"
 
 [profile.release]
 opt-level = 3

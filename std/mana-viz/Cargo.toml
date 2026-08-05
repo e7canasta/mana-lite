@@ -6,6 +6,6 @@ description = "Rerun.io visualization bridge for mana-lite"
 
 [dependencies]
 mana-types = { path = "../mana-types" }
-rerun = "0.33"
+rerun = "0.35"
 anyhow = "1"
 tracing = "0.1"

@@ -9,6 +9,9 @@ pub enum ManaError {
     #[error("ingest: {0}")]
     Ingest(String),
 
+    #[error("decode: {0}")]
+    Decode(String),
+
     #[error("inference: {0}")]
     Inference(String),
 

@@ -1,0 +1,32 @@
+# metrics.toml — what gets logged to text log and JSONL
+
+[metrics]
+report_interval_s = 5
+
+# Text log lines printed every report_interval_s.
+# Disable to reduce stdout noise in production.
+[metrics.text]
+ingest_line = true          # ingest: Hz, keyframes, decode, cycles, flags
+infer_summary = true        # infer:  Hz, calls, latency, dets, flags
+per_model_lines = true      # per-model detail lines (hz, latency range, dets/fr)
+
+# Flags (counters appended to ingest/infer lines when non-zero).
+[metrics.text.flags]
+ingest_pframes = true
+ingest_dup = true
+ingest_timeouts = true
+ingest_reconnect = true
+ingest_ssrc = true
+ingest_rtp = true
+infer_skips = true
+infer_empty = true
+
+# JSONL events written to stdout or rotating file.
+[metrics.jsonl]
+frame_events = true         # {"type":"frame", frame_id, decode_ms}
+detection_events = true     # {"type":"detection", model, infer_ms, det:[...]}
+zone_events = true          # {"type":"zone", zone, event, class, confidence}
+fsm_events = true           # {"type":"fsm", from, to, trigger, dwell_ms}
+metrics_event = true        # {"type":"metrics", ...} — periodic window report
+per_model_in_window = true  # include per-model stats inside metrics event
+class_counts_in_window = true # include per-class counts inside per-model stats

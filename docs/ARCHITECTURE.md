@@ -1,104 +1,230 @@
 # Mana Lite Architecture
 
+*Última actualización: 2026-08-04 — post-refactor, pre-inference*
+
+---
+
 ## Big Picture
 
-Mana Lite is a **single-binary clinical perception pipeline** that transforms an RTSP video stream into structured clinical events. It operates as a deterministic **PLC-style superloop**: one thread, seven phases, every cycle.
-
 ```
- ┌────────────────────────────────────────────────────────────────────┐
- │                        Mana Lite (1 process)                       │
- │                                                                    │
- │   ┌──────────────────────────────────────────────────────────┐    │
- │   │                    Config Catalog                         │    │
- │   │  mana.toml  models.toml  zones.toml  fsm.toml            │    │
- │   └──────────────────────────────────────────────────────────┘    │
- │                              │                                     │
- │   ┌──────────────────────────▼────────────────────────────────┐   │
- │   │                     SUPERLOOP (7 phases)                   │   │
- │   │                                                            │   │
- │   │  [TIMERS] → [EVALUATE] → [INGEST] → [INFER] →            │   │
- │   │  [ZONES] → [FSM] → [PUBLISH]                              │   │
- │   │                                                            │   │
- │   │  single-thread, deterministic, no alloc in hot path       │   │
- │   └──────────────────────────────────────────────────────────┘   │
- │                              │                                     │
- │                    stdout JSONL (one line per event)               │
- └────────────────────────────────────────────────────────────────────┘
+ ┌──────────────────────────────────────────────────────────────────────┐
+ │                    Mana Lite — Clinical Perception Pipeline          │
+ │                                                                       │
+ │  ┌────────┐  ┌────────┐  ┌────────┐  ┌────────┐  ┌────────┐        │
+ │  │INGEST  │─▶│DECODE  │─▶│INFER   │─▶│TRACK   │─▶│ZONES   │        │
+ │  │ ✅ 1.0 │  │ ✅ 1.0 │  │ 🏗️ S2  │  │ 🏗️ S3  │  │ 🏗️ S4  │        │
+ │  └────────┘  └────────┘  └────────┘  └────────┘  └────┬───┘        │
+ │                                                        │             │
+ │                        ┌────────┐  ┌────────┐  ┌──────▼───┐        │
+ │                        │PUBLISH │◀─│  FSM   │◀─│ CASCADE  │        │
+ │                        │ ✅ 1.0 │  │ 🏗️ S4  │  │ 🏗️ S5   │        │
+ │                        └────┬───┘  └────────┘  └──────────┘        │
+ │                             │                                        │
+ │                        stdout JSONL                                   │
+ │                             │                                        │
+ │              ┌──────────────┼──────────────┐                         │
+ │              ▼              ▼              ▼                          │
+ │         clinical      dashboard      alerting                        │
+ │         consumer      (Rerun)        system                          │
+ └──────────────────────────────────────────────────────────────────────┘
 ```
 
 ## Design Principles
 
-1. **Delete > Replace > Add.** The inference codebase already has 80% of what we need. Mana Lite strips it down and wraps it.
+1. **Single binary, single thread, PLC superloop.** Un proceso, un hilo, siete fases secuenciales. Sin channels, sin spawn, sin IPC. [ADR-001](adrs/001-single-binary.md), [ADR-003](adrs/003-plc-superloop.md)
 
-2. **Mechanism ≠ Policy ≠ State (ADR-005).** Keeping these separate:
-   - **Mechanism:** retina RTSP client, ORT inference, iou/nms math
-   - **Policy:** `models.toml` thresholds, `zones.toml` regions, `fsm.toml` guards
-   - **State:** current FSM state, last detections, dwell counters — runtime only
+2. **Mechanism ≠ Policy ≠ State.** Retina RTSP, ORT inference, y NMS math son *mechanism*. `models.toml`, `zones.toml`, `fsm.toml` son *policy*. `PipelineState`, `TrackState`, `FsmEngine.current_state` son *state*. [ADR-002](adrs/002-toml-catalog-pattern.md)
 
-3. **Superloop, not async.** No tokio spawns, no channels, no callbacks. The main loop reads one frame, processes it completely, publishes, repeats. WCET is predictable.
+3. **Catalog over CLI.** Comportamiento definido en TOML, no en flags. `mana-lite --config mana.toml` es el único argumento requerido. [ADR-002](adrs/002-toml-catalog-pattern.md)
 
-4. **Catalog over CLI.** Runtime behavior is defined in TOML files, not command-line flags. `mana-lite --config mana.toml` is the only required argument.
+4. **Arena allocation per cycle.** `CycleContext` aloja todos los datos intermedios una vez por ciclo. Cada fase toma `&mut CycleContext`, llena su slot, retorna. Al final: `clear()`, sin dealloc. [ADR-009](adrs/009-pipeline-design.md)
 
-5. **Zero-copy where it matters.** Preprocessed tensors are fed directly to ORT without intermediate allocations. Detections flow by reference until serialization.
+5. **Generics for testability.** Cada engine es genérico sobre su dependencia externa (`FrameReader`, `ModelRunner`). Tests usan stubs. Producción usa implementaciones reales. Static dispatch — sin vtable. [ADR-009](adrs/009-pipeline-design.md)
 
-## Data Flow
+6. **Two-layer logging.** `log::info!` para operadores (stderr). `Logger::emit()` para sistemas downstream (stdout JSONL). Nunca mezclar. [ADR-009](adrs/009-pipeline-design.md)
+
+## Data Flow (Completo — v0.2.0 target)
 
 ```
- Camera (RTSP)
+ Camera (RTSP)                                    ┌─────────────────────┐
+      │                                            │  CONFIG CATALOG     │
+      ▼                                            │  models.toml        │
+ RetinaReader                                     │  zones.toml         │
+      │  H.264 Annex-B (encoded)                   │  fsm.toml           │
+      ▼                                            └─────────────────────┘
+ RetinaReader.next_frame()
+      │  keyframe_only + dedup                        ┌──────────────┐
+      ▼                                               │ HEALTH        │
+ FrameDecoder (ffmpeg)                                │ blind/stale/  │
+      │  YUV → RGB24 packed                           │ recovered     │
+      ▼                                               └──────────────┘
+ FrameBuffer { w, h, rgb }
+      │
+      ├─▶ PreprocessCache  ──▶ imgsz=320 tensor  ──▶ detect-fast
+      │   (cache por imgsz)  ──▶ imgsz=640 tensor  ──▶ pose-standard
+      │                                                   face-v12
       │
       ▼
- retina::Session
-      │  H.264 access units (encoded)
+ InferEngine (ORT session pool)
+      │  Vec<ort::Value> (tensores crudos)
       ▼
- ffmpeg h264 decode
-      │  RGB pixel buffer
-      ▼
- i-frame gate ──── non-keyframe → skip (emit ghost if configured)
+ Postprocessor (NMS + escala + keypoints)
+      │  Vec<Detection> { class, conf, bbox, keypoints, mask }
+      │
+      ├─▶ CascadeScheduler ──▶ decide qué modelos correr próximo ciclo
       │
       ▼
- ONNX Runtime
-      │  raw tensors (float32)
+ TrackingEngine (SORT: Kalman 7D + Hungarian)
+      │  HashMap<u64, TrackState>
+      │  TrackEvent { Created, Updated, Lost, Deleted }
+      │
       ▼
- postprocess (decode + NMS)
-      │  Vec<Detection>
+ ZoneEngine (intersección + histéresis)
+      │  ZoneEvent { Occupied, Vacated }
+      │
       ▼
- ZoneEngine
-      │  Vec<ZoneChange>
+ FsmEngine (guards + dwell timers)
+      │  FsmTransition { from, to, trigger, dwell_ms }
+      │
       ▼
- FsmEngine
-      │  Option<FsmTransition>
+ ┌─────────────────────────────────────────────┐
+ │              Logger (JSONL stdout)           │
+ │  Event::Frame, Detection, Track, Zone, FSM, │
+ │  Health, Metrics, Meta                       │
+ └─────────────────────────────────────────────┘
+      │
       ▼
- Logger::flush()
-      │  stdout (JSONL)
+ VizBridge (Rerun gRPC)
 ```
 
-## Module Map
+## Module Map (v0.2.0 target)
 
 ```
 src/
-├── main.rs          Entry point, config loading, superloop orchestration
-├── config.rs        Parsing for all four TOML schemas
-├── ingest.rs        Retina RTSP client + ffmpeg decode + keyframe detection
-├── infer.rs         ONNX Runtime wrapper (per-model session management)
-├── cascade.rs       Multi-model execution scheduling with timers
-├── zones.rs         Detection-to-zone spatial evaluation
-├── fsm.rs           Hierarchical state machine engine
-├── logger.rs        Buffered JSONL event emitter
-└── error.rs         Error types and Result alias
+├── main.rs               Entry point, superloop orchestration ✅
+├── config.rs             Parsing for all four TOML schemas ✅
+├── ingest.rs             Retina RTSP + keyframe drain + reconnect ✅
+├── snapshot.rs           H.264 decode + RGB buffer + PNG saver ✅
+├── preprocess.rs         Letterbox resize + tensor cache          🏗️ S2
+├── infer.rs              ORT session pool + warmup + dispatch     🏗️ S2
+├── postprocess.rs        NMS + unified Detection type             🏗️ S2
+├── track.rs              SORT tracker (Kalman + Hungarian)        🏗️ S3
+├── zones.rs              Spatial zone evaluation + hysteresis     🏗️ S4
+├── fsm.rs                Clinical FSM engine + guard evaluation   🏗️ S4
+├── cascade.rs            Lazy model scheduler                     🏗️ S5
+├── pipeline.rs           PipelineState runtime                    ✅
+├── metrics.rs            MetricsEngine + Health monitor           ✅
+├── viz.rs                Rerun visualization bridge               ✅
+├── logger/
+│   ├── mod.rs            Buffered JSONL emitter + file rotation   ✅
+│   ├── event.rs          Event type definitions                   ✅
+│   └── serialize.rs      Manual JSON serializer                   ✅
+└── error.rs              Typed error enums                        ✅
 ```
 
 ## Dependency Graph
 
 ```
 main.rs
- ├── config.rs (serde, toml)
- ├── ingest.rs (retina + ffmpeg-next)
- ├── infer.rs  (ort)
- ├── cascade.rs (depends on infer.rs, config.rs)
- ├── zones.rs  (pure math, no deps)
- ├── fsm.rs    (depends on zones.rs, config.rs)
- ├── logger.rs (serde_json)
- └── error.rs  (thiserror)
+ ├── config.rs ────────────── serde, toml
+ ├── ingest.rs ────────────── retina, mana-rtsp, url
+ │    └── RetinaReader (async RTSP + reconnect)
+ ├── snapshot.rs ──────────── ffmpeg-next, image, mana-video
+ │    └── FrameDecoder, SnapshotSaver
+ ├── preprocess.rs ────────── image (resize), ort::Tensor      🏗️
+ │    └── PreprocessCache
+ ├── infer.rs ─────────────── ort (ONNX Runtime)                🏗️
+ │    └── InferEngine (session pool)
+ ├── postprocess.rs ────────── (pure math: NMS, scale, IoU)     🏗️
+ │    └── DetectPostprocessor, PosePostprocessor, ...
+ ├── track.rs ─────────────── nalgebra (Kalman), (Hungarian)    🏗️
+ │    └── TrackingEngine
+ ├── zones.rs ──────────────── (pure math: AABB intersection)   🏗️
+ │    └── ZoneEngine
+ ├── fsm.rs ────────────────── config::FsmCatalog               🏗️
+ │    └── FsmEngine
+ ├── cascade.rs ────────────── config::ModelCatalog             🏗️
+ │    └── CascadeScheduler
+ ├── pipeline.rs ──────────── logger, metrics, health            ✅
+ │    └── PipelineState
+ ├── metrics.rs ────────────── (pure Rust: counters + timers)    ✅
+ │    └── MetricsEngine, Health, MetricsReport
+ ├── viz.rs ────────────────── rerun, mana-viz, mana-types       ✅
+ │    └── VizBridge
+ ├── logger/ ───────────────── chrono, std::io, std::fs          ✅
+ │    └── Logger, Event, serialize
+ └── error.rs ──────────────── thiserror                          ✅
+     └── ManaError, ConfigError, Result<T>
+```
+
+## Cycle Lifecycle (Superloop)
+
+```
+┌──────────────────────────────────────────────────────┐
+│                    SUPERLOOP CYCLE                    │
+│                                                       │
+│  ctx.clear();  // reset arena, keep allocations       │
+│                                                       │
+│  ┌─ PHASE 0: TIMERS ──────────────────────────┐      │
+│  │ cascade.advance(); health.tick();           │      │
+│  │ < 1µs                                       │      │
+│  └──────────────────────────────────────────────┘      │
+│                         │                              │
+│  ┌─ PHASE 1: INGEST ──────────────────────────┐      │
+│  │ kf = ingest.poll_freshest_keyframe().await; │      │
+│  │ fb = decoder.decode_timed(&kf.h264);        │      │
+│  │ ctx.frame = fb;  // arena slot              │      │
+│  │ < 5ms (decode)                              │      │
+│  └──────────────────────────────────────────────┘      │
+│                         │                              │
+│                    ┌────▼──── no frame? skip INFER     │
+│                    │                                   │
+│  ┌─ PHASE 2: INFER ──────────────────────────┐       │
+│  │ models = cascade.schedule(fsm.active());   │       │
+│  │ for m in models:                           │       │
+│  │   tensor = preprocess.get(m.imgsz, fb);    │       │
+│  │   outputs = infer.run(m, tensor);          │       │
+│  │   detections = postprocess.(outputs, fb);  │       │
+│  │ ctx.detections.extend(detections);         │       │
+│  │ < 200ms (3 modelos CPU)                     │       │
+│  └──────────────────────────────────────────────┘       │
+│                         │                              │
+│  ┌─ PHASE 3: TRACK ───────────────────────────┐      │
+│  │ events = tracker.update(&ctx.detections);   │      │
+│  │ ctx.tracks = tracker.active();              │      │
+│  │ log.emit_all(events);                       │      │
+│  │ < 1ms (20 tracks)                           │      │
+│  └──────────────────────────────────────────────┘      │
+│                         │                              │
+│  ┌─ PHASE 4: ZONES ───────────────────────────┐      │
+│  │ events = zones.evaluate(&ctx.tracks);       │      │
+│  │ log.emit_all(events);                       │      │
+│  │ < 0.1ms                                     │      │
+│  └──────────────────────────────────────────────┘      │
+│                         │                              │
+│  ┌─ PHASE 5: FSM ─────────────────────────────┐      │
+│  │ transition = fsm.evaluate(events, tracks);  │      │
+│  │ if let Some(t) = transition {               │      │
+│  │     state.transition_to(t.to);              │      │
+│  │     log.emit(t);                            │      │
+│  │ }                                           │      │
+│  │ < 0.1ms                                     │      │
+│  └──────────────────────────────────────────────┘      │
+│                         │                              │
+│  ┌─ PHASE 6: PUBLISH ─────────────────────────┐      │
+│  │ log.flush();  // JSONL stdout + file rotate │      │
+│  │ viz.tick();   // Rerun flush                │      │
+│  │ snapshots.save(ctx.frame);  // PNG + H.264  │      │
+│  │ < 1ms (buffer flush)                        │      │
+│  └──────────────────────────────────────────────┘      │
+│                                                       │
+│  ┌─ PHASE 7: HEALTH ──────────────────────────┐      │
+│  │ state.evaluate_health(&mut health, log, m); │      │
+│  │ < 1µs                                       │      │
+│  └──────────────────────────────────────────────┘      │
+│                                                       │
+│  if state.should_exit() { break; }                     │
+└──────────────────────────────────────────────────────┘
 ```
 
 ## Comparison: Mana Lite vs Full Mana OS
@@ -106,12 +232,13 @@ main.rs
 | Dimension | Full Mana OS | Mana Lite |
 |---|---|---|
 | Processes | 8+ (iceoryx2 SHM) | 1 |
-| IPC | iceoryx2 pub/sub | in-memory |
+| IPC | iceoryx2 pub/sub | in-memory references |
 | Control plane | Zenoh | stdout JSONL |
-| Launch | Topological DAG (Kahn's algorithm) | `cargo run` |
-| Tracking | Kalman (mana-track) | Per-frame only |
-| World model | Retained state (mana-world) | Transient |
+| Launch | Topological DAG | `cargo run -- --config mana.toml` |
+| Tracking | Kalman (mana-track) | SORT (embedded) |
+| World model | Retained state (mana-world) | Transient per-cycle |
 | Clinical reasoning | BrainService FSM | Embedded FSM |
 | Deployment | System-wide daemons | systemd unit |
 | Config | Rust structs + CLI | TOML files |
-| Code size | 50K+ LOC across 15+ crates | < 3K LOC |
+| Code size | 50K+ LOC across 15+ crates | ~5K LOC (v0.2.0 target) |
+| GPU | Required (CUDA/ROCm) | Optional (CPU-first) |

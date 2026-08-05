@@ -1,0 +1,47 @@
+# rerun.toml — Rerun viewer blueprint layout.
+# Each [[rows]] entry is a panel row (top to bottom).
+# kind: spatial2d | timeseries | horizontal
+# horizontal rows contain [[rows.panels]] children.
+
+[rerun]
+app = "mana-lite"
+max_bytes_in_flight_mb = 32
+auto_views = false
+panels_expanded = true            # Blueprint, Selection, Time panels
+
+[[rerun.rows]]
+kind = "spatial2d"
+name = "Camera"
+origin = "/world/camera"
+share = 5.0
+
+[[rerun.rows]]
+kind = "timeseries"
+name = "Signals"
+origin = "/world/signals"
+share = 1.0
+overrides = [
+    { path = "/world/signals/frame_id", interpolation = "StepAfter" }
+]
+
+[[rerun.rows]]
+kind = "horizontal"
+share = 1.0
+panels = [
+    { kind = "timeseries", name = "Ingest",     origin = "/ingest/normal" },
+    { kind = "timeseries", name = "Ingest ❌",  origin = "/ingest/errors" },
+]
+
+[[rerun.rows]]
+kind = "horizontal"
+share = 1.0
+panels = [
+    { kind = "timeseries", name = "Infer",      origin = "/infer/active" },
+    { kind = "timeseries", name = "Infer ❌",   origin = "/infer/warnings" },
+]
+
+[[rerun.rows]]
+kind = "timeseries"
+name = "Pipeline"
+origin = "/pipeline"
+share = 1.0

@@ -77,7 +77,9 @@ impl Logger {
         let mut buf = Vec::with_capacity(512);
         for event in &events {
             write_event(event, &now, &mut buf);
-            let _ = self.write_buf(&buf);
+            if let Err(e) = self.write_buf(&buf) {
+                log::warn!("logger flush write failed: {e}");
+            }
         }
     }
 
@@ -180,30 +182,30 @@ mod tests {
         let out = collect(&mut log);
         assert!(out.contains("\"type\":\"meta\""));
         assert!(out.contains("\"event\":\"startup\""));
-        assert!(out.contains("\"v\":\"0.1.0\""));
+        assert!(out.contains("\"version\":\"0.1.0\""));
     }
 
     #[test]
     fn detection_emits_class_and_bbox() {
-        let det = vec![DetRecord { c: "person".into(), conf: 0.87, bb: [100.0, 200.0, 300.0, 500.0] }];
+        let det = vec![DetRecord { class: "person".into(), confidence: 0.87, bbox: [100.0, 200.0, 300.0, 500.0] }];
         let mut log = test_logger();
         log.emit(Event::detection(1, "detect-fast", 52, det));
         let out = collect(&mut log);
         assert!(out.contains("\"type\":\"detection\""));
-        assert!(out.contains("\"c\":\"person\""));
-        assert!(out.contains("\"conf\":0.87"));
-        assert!(out.contains("\"bb\":[100.00,200.00,300.00,500.00]"));
+        assert!(out.contains("\"class\":\"person\""));
+        assert!(out.contains("\"confidence\":0.87"));
+        assert!(out.contains("\"bbox\":[100,200,300,500]"));
     }
 
     #[test]
     fn fsm_transition_has_from_to_trigger() {
         let mut log = test_logger();
-        log.emit(Event::fsm_transition("idle", "monitoring", "bed_occupied", 0));
+        log.emit(Event::fsm_transition("idle", None, "monitoring", None, "bed_occupied", 0));
         let out = collect(&mut log);
         assert!(out.contains("\"type\":\"fsm\""));
         assert!(out.contains("\"from\":\"idle\""));
         assert!(out.contains("\"to\":\"monitoring\""));
-        assert!(out.contains("\"tr\":\"bed_occupied\""));
+        assert!(out.contains("\"trigger\":\"bed_occupied\""));
     }
 
     #[test]
@@ -243,10 +245,10 @@ mod tests {
 
     #[test]
     fn negative_float_is_valid_json() {
-        let det = vec![DetRecord { c: "x".into(), conf: 0.5, bb: [-10.5, 0.0, 100.0, 200.3] }];
+        let det = vec![DetRecord { class: "x".into(), confidence: 0.5, bbox: [-10.5, 0.0, 100.0, 200.25] }];
         let mut log = test_logger();
         log.emit(Event::detection(1, "m", 10, det));
         let out = collect(&mut log);
-        assert!(out.contains("\"bb\":[-10.50,0.00,100.00,200.30]"));
+        assert!(out.contains("\"bbox\":[-10.5,0,100,200.25]"));
     }
 }

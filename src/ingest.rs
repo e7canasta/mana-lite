@@ -6,11 +6,11 @@ pub trait FrameReader {
     async fn next_frame(&mut self) -> Option<Frame>;
 }
 
+/// Raw frame as delivered by the RTSP demuxer (Annex-B H.264).
+/// Not yet decoded to pixels — see `FrameDecoder` in `snapshot.rs`.
 pub struct Frame {
-    pub data: Vec<u8>,
+    pub h264: Vec<u8>,
     pub is_keyframe: bool,
-    #[allow(dead_code)]
-    pub timestamp: i64,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -22,63 +22,62 @@ pub struct RetinaCounters {
     pub timeouts: u64,
 }
 
-pub struct DecodedFrame {
-    #[allow(dead_code)]
-    pub data: Vec<u8>,
-    #[allow(dead_code)]
-    pub width: u32,
-    #[allow(dead_code)]
-    pub height: u32,
-    pub decode_us: u64,
+/// A deduplicated IDR keyframe ready for downstream decode.
+pub struct RawKeyframe {
+    pub h264: Vec<u8>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct IngestCounters {
+    pub pframes_dropped: u64,
+    pub keyframes_dup: u64,
+    pub retina: Option<RetinaCounters>,
 }
 
 pub struct IngestEngine<R: FrameReader> {
     reader: R,
-    last_keyframe_data: Option<Vec<u8>>,
-    pub target_width: u32,
-    pub target_height: u32,
+    last_h264: Option<Vec<u8>>,
+    pframes_dropped: u64,
+    keyframes_dup: u64,
 }
 
 impl<R: FrameReader> IngestEngine<R> {
     pub fn new(reader: R) -> Self {
-        Self {
-            reader,
-            last_keyframe_data: None,
-            target_width: 640,
-            target_height: 480,
-        }
+        Self { reader, last_h264: None, pframes_dropped: 0, keyframes_dup: 0 }
     }
 
-    pub async fn poll_freshest_keyframe(&mut self) -> Option<DecodedFrame> {
+    /// Drain all buffered frames and return the freshest IDR keyframe, or
+    /// `None` if no new keyframe arrived before the reader timed out.
+    /// Duplicate consecutive keyframes (same bytes) are suppressed.
+    pub async fn poll_freshest_keyframe(&mut self) -> Option<RawKeyframe> {
         let mut latest: Option<Frame> = None;
+        let mut pframes: u64 = 0;
 
         loop {
             match self.reader.next_frame().await {
                 Some(frame) => {
                     if frame.is_keyframe {
                         latest = Some(frame);
+                    } else {
+                        pframes += 1;
                     }
                 }
                 None => break,
             }
         }
 
+        self.pframes_dropped += pframes;
+
         let kf = latest?;
 
-        let is_new = self.last_keyframe_data.as_ref() != Some(&kf.data);
-        if !is_new {
+        if self.last_h264.as_ref().is_some_and(|last| last == &kf.h264) {
+            self.keyframes_dup += 1;
             return None;
         }
 
-        let decode_start = std::time::Instant::now();
-        let decoded = DecodedFrame {
-            data: kf.data.clone(),
-            width: self.target_width,
-            height: self.target_height,
-            decode_us: decode_start.elapsed().as_micros() as u64,
-        };
-        self.last_keyframe_data = Some(kf.data);
-        Some(decoded)
+        let h264 = kf.h264;
+        self.last_h264 = Some(h264.clone());
+        Some(RawKeyframe { h264 })
     }
 }
 
@@ -92,6 +91,18 @@ impl IngestEngine<AnyReader> {
             }
             _ => None,
         }
+    }
+
+    pub fn drain_ingest_counters(&mut self) -> IngestCounters {
+        let retina = self.drain_retina_counters();
+        let c = IngestCounters {
+            pframes_dropped: self.pframes_dropped,
+            keyframes_dup: self.keyframes_dup,
+            retina,
+        };
+        self.pframes_dropped = 0;
+        self.keyframes_dup = 0;
+        c
     }
 }
 
@@ -245,16 +256,21 @@ async fn open_rtsp(
         _ => retina::client::Transport::Udp(retina::client::UdpTransportOptions::default()),
     };
 
+    let stream_count = session.streams().len();
     let mut session = session;
-    session
-        .setup(
-            0,
-            retina::client::SetupOptions::default()
-                .transport(rtsp_transport)
-                .frame_format(retina::codec::FrameFormat::SIMPLE),
-        )
-        .await
-        .map_err(|e| ManaError::Ingest(format!("rtsp setup: {e}")))?;
+    for i in 0..stream_count {
+        if session.streams()[i].media() == "video" {
+            session
+                .setup(
+                    i,
+                    retina::client::SetupOptions::default()
+                        .transport(rtsp_transport.clone())
+                        .frame_format(retina::codec::FrameFormat::SIMPLE),
+                )
+                .await
+                .map_err(|e| ManaError::Ingest(format!("rtsp setup stream {i}: {e}")))?;
+        }
+    }
 
     let session = session
         .play(retina::client::PlayOptions::default())
@@ -278,10 +294,9 @@ impl FrameReader for RetinaReader {
             match poll {
                 Ok(Some(Ok(retina::codec::CodecItem::VideoFrame(vf)))) => {
                     self.rtp_window.record(false);
-                    let timestamp = vf.timestamp().timestamp();
-                    let data = vf.into_data();
-                    let is_keyframe = mana_rtsp::h264::contains_idr(&data);
-                    return Some(Frame { data, is_keyframe, timestamp });
+                    let h264 = vf.into_data();
+                    let is_keyframe = mana_rtsp::h264::contains_idr(&h264);
+                    return Some(Frame { h264, is_keyframe });
                 }
                 Ok(Some(Err(e))) => {
                     let msg = e.to_string();
@@ -334,19 +349,11 @@ mod tests {
     use super::*;
 
     fn make_keyframe(id: u8) -> Frame {
-        Frame {
-            data: vec![id; 64],
-            is_keyframe: true,
-            timestamp: id as i64 * 1000,
-        }
+        Frame { h264: vec![id; 64], is_keyframe: true }
     }
 
     fn make_pframe(id: u8) -> Frame {
-        Frame {
-            data: vec![id; 32],
-            is_keyframe: false,
-            timestamp: id as i64 * 500,
-        }
+        Frame { h264: vec![id; 32], is_keyframe: false }
     }
 
     fn make_reader(frames: Vec<Frame>) -> IngestEngine<QueuedReader> {
@@ -361,55 +368,43 @@ mod tests {
 
     #[tokio::test]
     async fn drops_all_pframes() {
-        let mut engine = make_reader(vec![
-            make_pframe(1),
-            make_pframe(2),
-            make_pframe(3),
-        ]);
+        let mut engine = make_reader(vec![make_pframe(1), make_pframe(2), make_pframe(3)]);
         assert!(engine.poll_freshest_keyframe().await.is_none());
     }
 
     #[tokio::test]
     async fn returns_keyframe_when_present() {
         let mut engine = make_reader(vec![make_keyframe(42)]);
-        let decoded = engine.poll_freshest_keyframe().await.unwrap();
-        assert_eq!(decoded.data, vec![42u8; 64]);
+        let kf = engine.poll_freshest_keyframe().await.unwrap();
+        assert_eq!(kf.h264, vec![42u8; 64]);
     }
 
     #[tokio::test]
     async fn returns_freshest_keyframe_drops_stale() {
-        let mut engine = make_reader(vec![
-            make_keyframe(1),
-            make_keyframe(2),
-            make_keyframe(3),
-        ]);
-        let decoded = engine.poll_freshest_keyframe().await.unwrap();
-        assert_eq!(decoded.data, vec![3u8; 64]);
+        let mut engine = make_reader(vec![make_keyframe(1), make_keyframe(2), make_keyframe(3)]);
+        let kf = engine.poll_freshest_keyframe().await.unwrap();
+        assert_eq!(kf.h264, vec![3u8; 64]);
     }
 
     #[tokio::test]
-    async fn pframees_between_keyframes_are_dropped() {
+    async fn pframes_between_keyframes_are_dropped() {
         let mut engine = make_reader(vec![
-            make_pframe(1),
-            make_pframe(2),
+            make_pframe(1), make_pframe(2),
             make_keyframe(10),
-            make_pframe(3),
-            make_pframe(4),
+            make_pframe(3), make_pframe(4),
             make_keyframe(20),
         ]);
-        let decoded = engine.poll_freshest_keyframe().await.unwrap();
-        assert_eq!(decoded.data, vec![20u8; 64]);
+        let kf = engine.poll_freshest_keyframe().await.unwrap();
+        assert_eq!(kf.h264, vec![20u8; 64]);
     }
 
     #[tokio::test]
     async fn same_frame_returns_none_on_second_poll() {
         let mut engine = make_reader(vec![make_keyframe(7)]);
-        let first = engine.poll_freshest_keyframe().await;
-        assert!(first.is_some());
+        assert!(engine.poll_freshest_keyframe().await.is_some());
 
         engine.reader.frames.push_back(make_keyframe(7));
-        let second = engine.poll_freshest_keyframe().await;
-        assert!(second.is_none());
+        assert!(engine.poll_freshest_keyframe().await.is_none());
     }
 
     #[tokio::test]
@@ -418,19 +413,8 @@ mod tests {
         assert!(engine.poll_freshest_keyframe().await.is_some());
 
         engine.reader.frames.push_back(make_keyframe(8));
-        let second = engine.poll_freshest_keyframe().await;
-        assert!(second.is_some());
-        assert_eq!(second.unwrap().data, vec![8u8; 64]);
-    }
-
-    #[tokio::test]
-    async fn decoded_frame_has_configured_dimensions() {
-        let mut engine = make_reader(vec![make_keyframe(1)]);
-        engine.target_width = 1920;
-        engine.target_height = 1080;
-        let decoded = engine.poll_freshest_keyframe().await.unwrap();
-        assert_eq!(decoded.width, 1920);
-        assert_eq!(decoded.height, 1080);
+        let kf = engine.poll_freshest_keyframe().await.unwrap();
+        assert_eq!(kf.h264, vec![8u8; 64]);
     }
 
     #[tokio::test]
@@ -440,7 +424,7 @@ mod tests {
 
         engine.reader.frames.push_back(make_keyframe(2));
         engine.reader.frames.push_back(make_keyframe(3));
-        let decoded = engine.poll_freshest_keyframe().await.unwrap();
-        assert_eq!(decoded.data, vec![3u8; 64]);
+        let kf = engine.poll_freshest_keyframe().await.unwrap();
+        assert_eq!(kf.h264, vec![3u8; 64]);
     }
 }
