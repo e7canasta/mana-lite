@@ -23,7 +23,10 @@ mana-lite/
 │   ├── models.toml      # catalogo de modelos (path, task, parametros)
 │   ├── cascade.toml     # reglas de cascada: que modelo depende de cual
 │   ├── fsm.toml         # maquina de estados (opcional — restringe modelos por estado)
-│   └── zones.toml       # zonas de interes (opcional — ROIs para FSM/tracking)
+│   ├── zones.toml       # zonas de interes (opcional — ROIs para FSM/tracking)
+│   ├── metrics.toml     # metricas: que se loguea en texto y JSONL
+│   ├── viz.toml         # visualizacion: que se envia a Rerun
+│   └── rerun.toml       # blueprint: layout del dashboard en Rerun
 ├── models/
 │   ├── yolo26n.onnx        # detect-fast: rapido, buena confianza
 │   ├── yolo26s.onnx        # detect-v2: balance velocidad/precision
@@ -31,6 +34,7 @@ mana-lite/
 │   └── yolo26n-pose.onnx   # pose-standard: keypoints, requiere persona
 ├── docs/
 │   ├── onboarding.md       # este archivo
+│   ├── observability.md   # guia completa de metricas + viz + rerun
 │   └── metrics/
 │       ├── ingest-metrics.md
 │       └── infer-metrics.md
@@ -47,6 +51,9 @@ Cada archivo TOML tiene una responsabilidad unica:
 | `cascade.toml` | Orden y dependencias entre modelos | No (usa default) |
 | `fsm.toml` | Que modelos correr en cada estado operacional | No |
 | `zones.toml` | Regiones de interes para el tracker y FSM | No |
+| `metrics.toml` | Que se loguea (texto + JSONL) y cada cuanto | No (usa defaults) |
+| `viz.toml` | Que datos se envian a Rerun | No (usa defaults) |
+| `rerun.toml` | Layout del blueprint en Rerun | No (usa default) |
 
 ---
 
@@ -367,6 +374,8 @@ Los snapshots guardan el H.264 raw y el frame RGB decodificado en `./snapshots/`
 ---
 
 ## 5. Depuracion y metricas
+
+> **Guia completa:** [docs/observability.md](observability.md) — cubre los tres archivos de configuracion (`metrics.toml`, `viz.toml`, `rerun.toml`), el arbol de entidades Rerun, diagnostico, y escenarios de uso.
 
 ### Que mirar en los logs cada 5s
 

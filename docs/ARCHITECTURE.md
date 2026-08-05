@@ -102,7 +102,7 @@
 ```
 src/
 ├── main.rs               Entry point, superloop orchestration ✅
-├── config.rs             Parsing for all four TOML schemas ✅
+├── config.rs             Parsing for all seven TOML schemas ✅
 ├── ingest.rs             Retina RTSP + keyframe drain + reconnect ✅
 ├── snapshot.rs           H.264 decode + RGB buffer + PNG saver ✅
 ├── preprocess.rs         Letterbox resize + tensor cache          🏗️ S2
@@ -113,14 +113,27 @@ src/
 ├── fsm.rs                Clinical FSM engine + guard evaluation   🏗️ S4
 ├── cascade.rs            Lazy model scheduler                     🏗️ S5
 ├── pipeline.rs           PipelineState runtime                    ✅
-├── metrics.rs            MetricsEngine + Health monitor           ✅
-├── viz.rs                Rerun visualization bridge               ✅
+├── metrics.rs            MetricsEngine + Health + PerClassFrameStats ✅
+├── viz.rs                VizBridge + Rerun blueprint              ✅
 ├── logger/
 │   ├── mod.rs            Buffered JSONL emitter + file rotation   ✅
 │   ├── event.rs          Event type definitions                   ✅
 │   └── serialize.rs      Manual JSON serializer                   ✅
 └── error.rs              Typed error enums                        ✅
 ```
+
+### Config TOML files (all seven)
+
+| File | Loaded via | Purpose |
+|---|---|---|
+| `config/mana.toml` | `load_app_config()` | Top-level: stream source, pipeline toggles, output paths |
+| `config/models.toml` | `load_model_catalog()` | ONNX model catalog: paths, tasks, imgsz, confidence |
+| `config/cascade.toml` | `load_config::<CascadeConfig>()` | Model dependency graph (requires, requires_class) |
+| `config/fsm.toml` | `load_fsm_catalog()` | Clinical state machine: states, models, transitions |
+| `config/zones.toml` | `load_zone_catalog()` | Spatial ROIs for tracking + FSM zone guards |
+| `config/metrics.toml` | `load_metrics_log()` | Text log verbosity + JSONL event toggles |
+| `config/viz.toml` | `load_viz_data()` | Rerun send toggles (per-frame + per-window channels) |
+| `config/rerun.toml` | `load_rerun_blueprint()` | Rerun viewer blueprint layout (declarative reference) |
 
 ## Dependency Graph
 
@@ -147,8 +160,8 @@ main.rs
  │    └── CascadeScheduler
  ├── pipeline.rs ──────────── logger, metrics, health            ✅
  │    └── PipelineState
- ├── metrics.rs ────────────── (pure Rust: counters + timers)    ✅
- │    └── MetricsEngine, Health, MetricsReport
+  ├── metrics.rs ────────────── (pure Rust: counters + timers + per-frame class stats)    ✅
+  │    └── MetricsEngine, Health, MetricsReport, PerClassFrameStats
  ├── viz.rs ────────────────── rerun, mana-viz, mana-types       ✅
  │    └── VizBridge
  ├── logger/ ───────────────── chrono, std::io, std::fs          ✅

@@ -11,27 +11,60 @@ Ademas, los bounding boxes de cada deteccion se renderizan como overlays en la v
 ├── active/
 │   ├── hz              ─ inferencias/segundo de este modelo
 │   ├── avg_ms          ─ latencia promedio de inferencia
+│   ├── min_ms          ─ latencia minima de la ventana
+│   ├── max_ms          ─ latencia maxima de la ventana
 │   └── yield_avg       ─ detecciones promedio por inferencia
 ├── warnings/
 │   ├── skips           ─ veces que el cascade salteo este modelo
 │   └── empty           ─ inferencias con cero detecciones
-└── detections/
-    ├── conf_avg        ─ confianza promedio de las detecciones
-    ├── conf_min        ─ confianza minima (peor deteccion de la ventana)
-    └── area_avg        ─ area promedio de los bounding boxes
+├── detections/
+│   ├── conf_avg        ─ confianza promedio de las detecciones
+│   ├── conf_min        ─ confianza minima (peor deteccion de la ventana)
+│   └── area_avg        ─ area promedio de los bounding boxes
+├── classes/{class}     ─ conteo acumulado por clase en la ventana
+└── per_frame/          ★ datos per-frame (no promediados)
+    ├── counts/{class}  ─ cuantas detecciones de esta clase en este frame
+    ├── conf/{class}/
+    │   ├── min         ─ confianza minima de esta clase en este frame
+    │   └── max         ─ confianza maxima de esta clase en este frame
+    └── area/{class}/
+        ├── min         ─ area minima de bbox de esta clase en este frame
+        └── max         ─ area maxima de bbox de esta clase en este frame
 
-/world/camera/detections/{model}/{clase}/{i}/
-└── Boxes2D con label "{clase} {confianza}" ─ overlay en Spatial2DView
+/world/camera/detections/{model}/{class}/{i}/
+└── Boxes2D con label "{class} {confidence}" ─ overlay en Spatial2DView
 ```
 
 ### Periodo de emision
 
 | Metrica | Frecuencia | Path |
 |---------|-----------|------|
-| Per-frame (latency per model, bboxes) | Cada keyframe | `/pipeline/infer/{model}/latency_us`, `/world/camera/detections/**` |
-| Per-window (active, warnings, detections quality) | Cada `report_interval_s` (default 5s) | `/infer/{model}/**` |
+| Per-frame (latency per model) | Cada keyframe | `/pipeline/infer/{model}/latency_us` |
+| Per-frame (bboxes) | Cada keyframe | `/world/camera/detections/**` |
+| Per-frame (class counts, conf, area) | Cada keyframe | `/infer/{model}/per_frame/**` |
+| Per-window (active, warnings, detections quality) | Cada `report_interval_s` (default 5s) | `/infer/{model}/active/**`, `warnings/**`, `detections/**` |
+| Per-window (class counts acumulados) | Cada `report_interval_s` | `/infer/{model}/classes/{class}` |
 
 Los bboxes se limpian por modelo en cada frame — cada modelo tiene su propio sub-arbol, asi que los boxes de `detect-fast` y `pose-standard` coexisten.
+
+### Per-frame class stats — uso practico
+
+Los datos per-frame bajo `/infer/{model}/per_frame/` te permiten ver la variabilidad frame a frame, no promediada:
+
+- **`counts/{class}`**: picos o silencios de deteccion. Si `person` pasa de 3 a 0 de golpe, la camara se tapo o el modelo perdio la clase.
+- **`conf/{class}/min` y `max`**: estabilidad de la confianza del modelo. Si min y max divergen mucho en un mismo frame, hay detecciones de la misma clase con confianza muy variable → escena ruidosa.
+- **`area/{class}/min` y `max`**: consistencia del tamano de bbox. Si el area de `person` crece > 3x entre frames, la persona se acerco mucho a la camara — posible evento clinico.
+
+### Diagnostico con per-frame stats
+
+**El conteo de personas oscila entre 0 y 2 cada pocos frames:**
+→ El modelo esta inseguro. Mira `conf/{person}/min` — si baja de 0.3, subi el threshold de confianza en `models.toml`.
+
+**Hay 5 detecciones de person en un frame y 0 en el siguiente:**
+→ Falso positivo masivo o el modelo vio patrones en ruido. El `area_max` de ese frame probablemente sea muy chico (detecciones diminutas = ruido).
+
+**El area de bed es constante pero person varia 10x:**
+→ La cama es estatica (bueno). La persona se mueve hacia/desde la camara (esperado).
 
 ### Interpretacion
 

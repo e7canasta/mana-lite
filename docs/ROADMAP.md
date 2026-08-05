@@ -1,6 +1,6 @@
 # Mana Lite Roadmap
 
-*Última actualización: 2026-08-04 — post-refactor v0.1.1*
+*Última actualización: 2026-08-05 — observability TOML-driven + per-frame class stats*
 
 ---
 
@@ -40,20 +40,36 @@
 
 ---
 
-## Estado Actual (v0.1.1 — completado)
+## Estado Actual (v0.1.2 — completado)
 
 **Lo que funciona hoy:**
 
 | Fase | Módulo | Líneas | Tests | Estado |
 |------|--------|--------|-------|--------|
-| CLI + Config | `main.rs`, `config.rs` | 620 | 5 | ✅ Done |
+| CLI + Config | `main.rs`, `config.rs` | 670 | 5 | ✅ Done |
 | Ingesta RTSP | `ingest.rs` (RetinaReader + reconnect) | 406 | 8 | ✅ Done |
 | Decode H.264 | `snapshot.rs` (ffmpeg + PNG saver) | 230 | 5 | ✅ Done |
+| Cascade | `cascade.rs` (model dependency scheduler) | 130 | 8 | ✅ Done |
+| Tracking | `track.rs` (SORT: Kalman + Hungarian) | 180 | 6 | ✅ Done |
+| Zones | `zones.rs` (ROI evaluation + hysteresis) | 140 | 6 | ✅ Done |
+| FSM | `fsm.rs` (clinical state machine) | 320 | 12 | ✅ Done |
+| Inferencia | `infer.rs` (ORT session + ultralytics) | 110 | — | ✅ Done |
 | Logger JSONL | `logger/` (event, serialize, rotate) | 620 | 8 | ✅ Done |
-| Métricas + Health | `metrics.rs` (blind/stale/recovered) | 188 | — | ✅ Done |
-| Visualización | `viz.rs` (Rerun bridge) | 119 | — | ✅ Done |
-| Pipeline State | `pipeline.rs` (superloop orchestrator) | 64 | — | ✅ Done |
-| **Total** | **11 módulos** | **~2,250** | **26** | |
+| Métricas + Health | `metrics.rs` (per-frame class stats + window reports) | 350 | — | ✅ Done |
+| Visualización | `viz.rs` (Rerun bridge + blueprint + exponential backoff) | 390 | — | ✅ Done |
+| Pipeline State | `pipeline.rs` (superloop orchestrator + frame gap) | 190 | — | ✅ Done |
+| **Total** | **12 módulos** | **~3,700** | **58** | |
+
+**Observability features (nuevo en v0.1.2):**
+
+- `config/metrics.toml` — text log verbosity + JSONL event toggles
+- `config/viz.toml` — 17 Rerun send toggles (per-frame + per-window)
+- `config/rerun.toml` — declarative blueprint layout reference
+- Per-frame per-class stats: count, conf min/max, area min/max → Rerun time series
+- Keyframe gap tracking (`/ingest/normal/gap_ms`) for stream continuity
+- Infer latency min-max in text log (not misleading averages)
+- Exponential backoff reconnection to Rerun (1s → 30s)
+- Hardware device selection (`InferenceConfig::with_device`)
 
 **Lo que está diseñado pero no implementado:**
 
