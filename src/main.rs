@@ -20,7 +20,7 @@ use config::{
 };
 use error::{ConfigError, ManaError, Result};
 use fsm::FsmEngine;
-use infer::{Detection, InferEngine};
+use infer::{Detection, InferEngine, compute_largest_class_roi};
 use ingest::{AnyReader, Frame, IngestEngine, QueuedReader, RawKeyframe, RetinaReader};
 use logger::{DetRecord, Event, JsonlLevel, Logger};
 use mana_types::RawFrameV1;
@@ -261,7 +261,10 @@ impl App {
                 self.metrics.tick_infer_skip(model_key);
                 continue;
             }
-            if let Some((detections, infer_ms)) = self.infer.run(model_key, &fb.rgb, fb.w, fb.h) {
+
+            let crop_rect = self.resolve_crop_rect(model_key, &model_dets, fb);
+
+            if let Some((detections, infer_ms)) = self.infer.run(model_key, &fb.rgb, fb.w, fb.h, crop_rect) {
                 self.record_model_result(model_key, infer_ms, &detections);
                 if config.pipeline.track {
                     self.run_tracking(&detections);
@@ -269,6 +272,19 @@ impl App {
                 model_dets.insert(model_key.clone(), detections);
             }
         }
+    }
+
+    fn resolve_crop_rect(
+        &self,
+        model_key: &str,
+        model_dets: &HashMap<String, Vec<Detection>>,
+        fb: &FrameBuffer,
+    ) -> Option<(u32, u32, u32, u32)> {
+        let crop_cfg = self.infer.crop_info(model_key)?;
+        let parent_key = self.cascade.parent_of(model_key)?;
+        let parent_dets = model_dets.get(parent_key)?;
+        let class = crop_cfg.class.as_ref()?;
+        compute_largest_class_roi(parent_dets, class, crop_cfg.margin, fb.w, fb.h)
     }
 
     fn resolve_models(&self, config: &AppConfig) -> Vec<String> {

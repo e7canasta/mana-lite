@@ -59,6 +59,10 @@ impl CascadeScheduler {
         roots
     }
 
+    pub fn parent_of(&self, model: &str) -> Option<&str> {
+        self.entries.get(model)?.requires.as_deref()
+    }
+
     pub fn should_run(
         &mut self,
         model: &str,

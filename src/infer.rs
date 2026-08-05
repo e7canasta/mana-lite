@@ -4,7 +4,7 @@ use std::path::Path;
 use image::{DynamicImage, RgbImage};
 use ultralytics_inference::{Device, InferenceConfig, Results, YOLOModel};
 
-use crate::config::{ModelCatalog, ModelEntry};
+use crate::config::{CropConfig, CropType, ModelCatalog, ModelEntry};
 use crate::error::Result;
 use crate::logger::DetRecord;
 
@@ -15,6 +15,7 @@ pub struct InferEngine {
 struct LoadedModel {
     model: YOLOModel,
     run_count: u64,
+    crop_config: Option<CropConfig>,
 }
 
 pub struct Detection {
@@ -42,7 +43,16 @@ impl InferEngine {
                 continue;
             }
 
-            let conf = build_config(entry);
+            let mut conf = build_config(entry);
+
+            if let Some(ref crop) = entry.crop {
+                if crop.crop_type == CropType::Static {
+                    if let Some([x1, y1, x2, y2]) = crop.region {
+                        conf = conf.with_roi(x1, y1, x2, y2);
+                        log::info!("model {key}: static ROI [{x1},{y1} {x2},{y2}]");
+                    }
+                }
+            }
 
             match YOLOModel::load_with_config(&entry.path, conf) {
                 Ok(model) => {
@@ -50,6 +60,9 @@ impl InferEngine {
                     models.insert(key.clone(), LoadedModel {
                         model,
                         run_count: 0,
+                        crop_config: entry.crop.as_ref()
+                            .filter(|c| c.crop_type == CropType::LargestClass)
+                            .cloned(),
                     });
                 }
                 Err(e) => {
@@ -60,18 +73,40 @@ impl InferEngine {
         Ok(Self { models })
     }
 
+    pub fn crop_info(&self, model_key: &str) -> Option<&CropConfig> {
+        self.models.get(model_key)?.crop_config.as_ref()
+    }
+
     pub fn run(
         &mut self,
         model_key: &str,
         rgb: &[u8],
         w: u32,
         h: u32,
+        crop_rect: Option<(u32, u32, u32, u32)>,
     ) -> Option<(Vec<Detection>, u64)> {
         let loaded = self.models.get_mut(model_key)?;
 
-        // Clone: DynamicImage toma ownership del Vec<u8>.
-        // El FrameBuffer original sigue disponible para snapshots + viz.
-        let img = DynamicImage::ImageRgb8(RgbImage::from_raw(w, h, rgb.to_vec())?);
+        let (img, offset_x, offset_y) = if let Some((x1, y1, x2, y2)) = crop_rect {
+            let crop_w = x2 - x1;
+            let crop_h = y2 - y1;
+            if crop_w == 0 || crop_h == 0 {
+                return None;
+            }
+            let mut cropped = vec![0u8; (crop_w * crop_h * 3) as usize];
+            for row in y1..y2 {
+                let src_off = (row * w + x1) as usize * 3;
+                let dst_off = ((row - y1) * crop_w) as usize * 3;
+                cropped[dst_off..dst_off + (crop_w as usize * 3)]
+                    .copy_from_slice(&rgb[src_off..src_off + (crop_w as usize * 3)]);
+            }
+            let img = DynamicImage::ImageRgb8(RgbImage::from_raw(crop_w, crop_h, cropped)?);
+            (img, x1 as f32, y1 as f32)
+        } else {
+            let img = DynamicImage::ImageRgb8(RgbImage::from_raw(w, h, rgb.to_vec())?);
+            (img, 0.0, 0.0)
+        };
+
         let results = loaded.model.predict_image(&img, String::new()).ok()?;
 
         let infer_ms = results
@@ -80,7 +115,13 @@ impl InferEngine {
             .map(|ms| (ms * 1000.0) as u64)
             .unwrap_or(0);
 
-        let detections = collect_detections(&results);
+        let mut detections = collect_detections(&results);
+        for d in &mut detections {
+            d.bbox[0] += offset_x;
+            d.bbox[1] += offset_y;
+            d.bbox[2] += offset_x;
+            d.bbox[3] += offset_y;
+        }
         loaded.run_count += 1;
 
         Some((detections, infer_ms))
@@ -141,4 +182,37 @@ fn collect_detections(results: &[Results]) -> Vec<Detection> {
     }
 
     dets
+}
+
+pub fn compute_largest_class_roi(
+    detections: &[Detection],
+    target_class: &str,
+    margin: f32,
+    frame_w: u32,
+    frame_h: u32,
+) -> Option<(u32, u32, u32, u32)> {
+    let best = detections
+        .iter()
+        .filter(|d| d.class == target_class)
+        .max_by(|a, b| {
+            let area_a = (a.bbox[2] - a.bbox[0]) * (a.bbox[3] - a.bbox[1]);
+            let area_b = (b.bbox[2] - b.bbox[0]) * (b.bbox[3] - b.bbox[1]);
+            area_a.partial_cmp(&area_b).unwrap_or(std::cmp::Ordering::Equal)
+        })?;
+
+    let [bx1, by1, bx2, by2] = best.bbox;
+    let bw = bx2 - bx1;
+    let bh = by2 - by1;
+    let expand_w = bw * margin;
+    let expand_h = bh * margin;
+
+    let x1 = (bx1 - expand_w).max(0.0) as u32;
+    let y1 = (by1 - expand_h).max(0.0) as u32;
+    let x2 = ((bx2 + expand_w) as u32).min(frame_w);
+    let y2 = ((by2 + expand_h) as u32).min(frame_h);
+
+    if x2 <= x1 || y2 <= y1 {
+        return None;
+    }
+    Some((x1, y1, x2, y2))
 }

@@ -3,6 +3,10 @@ path = "models/yolo26n.onnx"
 task = "detect"
 confidence = 0.5
 imgsz = 640
+# Optional: static ROI — only look at part of the frame
+# [models.detect-fast.crop]
+# type = "static"
+# region = [100, 50, 500, 400]
 
 [models.detect-large]
 path = "models/yolo26x.onnx"
@@ -21,6 +25,11 @@ path = "models/yolo26n-pose.onnx"
 task = "pose"
 confidence = 0.3
 imgsz = 640
+# Optional: dynamic ROI — crop to largest "person" bbox from parent model
+# [models.pose-standard.crop]
+# type = "largest_class"
+# class = "person"
+# margin = 0.15
 
 # --- disabled for now ---
 # [models.face-v11]

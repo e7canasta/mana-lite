@@ -213,7 +213,30 @@ pub struct ModelEntry {
     pub half: bool,
     #[serde(default = "default_rect")]
     pub rect: bool,
+    #[serde(default)]
+    pub crop: Option<CropConfig>,
 }
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct CropConfig {
+    #[serde(rename = "type")]
+    pub crop_type: CropType,
+    #[serde(default)]
+    pub class: Option<String>,
+    #[serde(default = "default_crop_margin")]
+    pub margin: f32,
+    #[serde(default)]
+    pub region: Option<[u32; 4]>,
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum CropType {
+    Static,
+    LargestClass,
+}
+
+fn default_crop_margin() -> f32 { 0.15 }
 
 fn default_confidence() -> f32 { 0.25 }
 fn default_iou() -> f32 { 0.7 }
