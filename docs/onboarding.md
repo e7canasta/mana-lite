@@ -34,10 +34,7 @@ mana-lite/
 │   └── yolo26n-pose.onnx   # pose-standard: keypoints, requiere persona
 ├── docs/
 │   ├── onboarding.md       # este archivo
-│   ├── observability.md   # guia completa de metricas + viz + rerun
-│   └── metrics/
-│       ├── ingest-metrics.md
-│       └── infer-metrics.md
+│   └── observability.md   # guia completa de metricas + viz + rerun
 └── logs/
     └── mana-YYYYMMDDTHH.jsonl
 ```
@@ -375,17 +372,9 @@ Los snapshots guardan el H.264 raw y el frame RGB decodificado en `./snapshots/`
 
 ## 5. Observabilidad
 
-> **Guia completa:** [docs/observability.md](observability.md) — los tres canales (text log, JSONL, Rerun), filosofia per-frame vs per-window, diagnostico forense, y escenarios de configuracion.
+> **Guia completa:** [docs/observability.md](observability.md) — filosofia de los tres canales, arbol de entidades, escenarios de configuracion, y consultas forenses con jq.
 
-### Los tres archivos
-
-| Archivo | Controla | Modo |
-|---------|---------|------|
-| `metrics.toml` | Text log + JSONL | Produccion y forense |
-| `viz.toml` | Rerun gRPC | Tuneo en vivo |
-| `rerun.toml` | Layout del dashboard | Referencia |
-
-### Que mirar en el text log cada 5s
+### Text log cada 5s
 
 ```
 ingest: 1.0 Hz — 5 keyframes in 5s | decode 15ms avg | cycles 80 | pframes:120, timeouts:80
@@ -393,37 +382,36 @@ infer:  2.0 Hz — 10 calls in 5s | 38ms avg | 2-145ms | 12 dets | skips:2, empt
   detect-fast:  0.4 Hz | 2 calls | 15ms avg | 10-22ms | 6/5fr
 ```
 
-| Metrica | Significado | Alerta |
-|---------|------------|--------|
-| `ingest: X.X Hz` | Keyframes por segundo | < 0.3 → stream lento |
-| `decode Xms avg` | Tiempo de decode | > 100ms → CPU saturada |
-| `infer: Xms avg` | Latencia promedio | > 100ms → modelo muy pesado |
-| `X-Xms` | Rango min-max de latencia | mucha dispersion → inestabilidad |
-| `N/Mfr` | Detecciones / frames | 0 persistente → modelo ciego |
-| `skips:N` | Modelos saltados por cascade | > 0 consistente → el parent no detecta |
-| `empty:N` | Inferencias sin detecciones | > 30% → threshold muy alto |
-| `timeouts:N` | Polls RTSP sin respuesta | >> ciclos → red saturada |
+| Metrica | Ok | Alerta |
+|---------|----|--------|
+| `ingest Hz` | > 0.3 | Stream lento |
+| `decode avg` | < 30ms | > 100ms → CPU |
+| `infer avg` | < 50ms | > 100ms → modelo pesado |
+| `X-Xms` rango | Estrecho | Mucha dispersion → inestabilidad |
+| `N/Mfr` dets | > 0 | 0 persistente → modelo ciego |
+| `skips` | 0 | Cascade no funciona |
+| `empty` | < 30% | Threshold muy alto |
 
-### Que mirar en Rerun durante tuneo
+### Rerun — 6 paneles
 
-1. **Camera**: las cajas coloreadas son detecciones en vivo. Si no ves cajas, `boxes = false` o el modelo no detecta.
-2. **Counts**: per-class count por frame. Si flickerea 0→1→0→2→0, el threshold de confianza esta muy alto.
-3. **Confidence**: min/max por clase. Si max-min > 0.4 en un mismo frame, el modelo duda de algunas instancias.
-4. **Area**: min/max por clase. Si crece consistentemente, el objeto se acerca a la camara.
-5. **Latency**: si tiene picos periodicos, posible thermal throttling.
-6. **Stream**: gap estable = stream sano. Picos esporadicos = perdida de paquetes.
+1. **Camera** — imagen + cajas con clase y confianza
+2. **Counts** — per-class detecciones por frame (flickereo = threshold mal)
+3. **Confidence** — min/max por clase (max-min > 0.4 = modelo duda)
+4. **Area** — min/max por clase (crece = objeto se acerca)
+5. **Latency** — inferencia + decode per frame (picos = thermal throttling)
+6. **Stream** — gap entre keyframes (picos = paquetes perdidos)
 
-### JSONL para analisis post-hoc
+### JSONL — consultas rapidas
 
 ```bash
-# Frames donde la confianza de persona bajo de 0.5
-jq 'select(.type=="detection" and .per_class.person.conf_min < 0.5)' mana-*.jsonl
-
-# Gaps de stream > 5 segundos
+# Gaps de stream > 5s
 jq 'select(.type=="frame" and .gap_ms > 5000)' mana-*.jsonl
 
-# Timeline de detecciones por frame
-jq -c 'select(.type=="detection") | {f: .frame_id, m: .model, det: [.det[]? | {c: .class, cf: .confidence}]}' mana-*.jsonl
+# Confianza baja por clase
+jq 'select(.type=="detection" and .per_class.person.conf_min < 0.5)' mana-*.jsonl
+
+# Timeline detecciones
+jq -c 'select(.type=="detection") | {f: .frame_id, m: .model, c: [.det[]?.class]}' mana-*.jsonl
 ```
 
 ---

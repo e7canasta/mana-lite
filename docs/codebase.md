@@ -42,9 +42,7 @@ Now I have a thorough picture of the entire codebase. Here is the complete detai
 │   │   ├── 014-zone-engine.md
 │   │   ├── 015-fsm-engine.md
 │   │   └── 016-cascade-scheduler.md
-│   ├── metrics/
-│   │   ├── infer-metrics.md
-│   │   └── ingest-metrics.md
+│   ├── observability.md            ← guia de metricas, viz, JSONL
 │   └── rerun/bbox.md
 ├── models/                        ← ONNX model files (large, not committed to git)
 │   ├── yolo26n.onnx               (detect-fast default)
