@@ -4,7 +4,7 @@ use mana_types::RawFrameV1;
 use mana_viz::logging;
 
 use crate::infer::Detection;
-use crate::metrics::{MetricsReport, PerClassFrameStats};
+use crate::metrics::PerClassFrameStats;
 use crate::config::{VizSendToggles, RerunRoot};
 
 enum Inner {
@@ -23,8 +23,6 @@ enum Inner {
 pub struct VizBridge {
     inner: Inner,
     addr: String,
-    frame_w: u32,
-    frame_h: u32,
     toggles: VizSendToggles,
     #[allow(dead_code)]
     blueprint: Option<RerunRoot>,
@@ -42,8 +40,6 @@ impl VizBridge {
                 last_warn: Instant::now(),
             },
             addr: rerun_addr.to_string(),
-            frame_w: 0,
-            frame_h: 0,
             toggles: toggles.clone(),
             blueprint: Some(blueprint.clone()),
         }
@@ -53,8 +49,6 @@ impl VizBridge {
         Self {
             inner: Inner::Disabled,
             addr: String::new(),
-            frame_w: 0,
-            frame_h: 0,
             toggles: VizSendToggles::default(),
             blueprint: None,
         }
@@ -169,21 +163,11 @@ impl VizBridge {
         }
     }
 
-    pub fn log_frame(&mut self, header: &RawFrameV1, rgb: &[u8], loop_latency_us: u64) {
-        self.frame_w = header.width;
-        self.frame_h = header.height;
+    pub fn log_frame(&self, header: &RawFrameV1, rgb: &[u8]) {
+        if !self.toggles.frames { return; }
         if let Inner::Connected { ref rec, .. } = self.inner {
-            if self.toggles.frames {
-                if let Err(e) = logging::frame::log_frame_rgb24(rec, "/world/camera/bgr", header, rgb) {
-                    log::warn!("viz frame log failed: {e}");
-                }
-            }
-            if self.toggles.frame_id {
-                self.log_scalar_inner(rec, "/world/signals/frame_id", header.frame_id as f64);
-            }
-            if self.toggles.loop_latency {
-                self.log_scalar_inner(rec, "/world/signals/latency/viewer_loop_s", loop_latency_us as f64 / 1_000_000.0);
-                self.log_scalar_inner(rec, "/pipeline/loop_latency_us", loop_latency_us as f64);
+            if let Err(e) = logging::frame::log_frame_rgb24(rec, "/world/camera/bgr", header, rgb) {
+                log::warn!("viz frame log failed: {e}");
             }
         }
     }
@@ -238,19 +222,6 @@ impl VizBridge {
         }
     }
 
-    pub fn log_track_counts(&self, total: usize, active: usize) {
-        if let Inner::Connected { ref rec, .. } = self.inner {
-            self.log_scalar_inner(rec, "/pipeline/track/total", total as f64);
-            self.log_scalar_inner(rec, "/pipeline/track/active", active as f64);
-        }
-    }
-
-    pub fn log_health_ms_since_frame(&self, ms: u64) {
-        if let Inner::Connected { ref rec, .. } = self.inner {
-            self.log_scalar_inner(rec, "/pipeline/health/ms_since_frame", ms as f64);
-        }
-    }
-
     pub fn log_keyframe_gap(&self, dt_ms: u64) {
         if !self.toggles.keyframe_gap { return; }
         if let Inner::Connected { ref rec, .. } = self.inner {
@@ -284,95 +255,6 @@ impl VizBridge {
                 let path_max = format!("/infer/{model_safe}/per_frame/area/{cls_safe}/max");
                 self.log_scalar_inner(rec, &path_min, stat.area_min);
                 self.log_scalar_inner(rec, &path_max, stat.area_max);
-            }
-        }
-    }
-
-    pub fn log_metrics_report(&self, report: &MetricsReport) {
-        let rec = match &self.inner {
-            Inner::Connected { rec, .. } => rec,
-            _ => return,
-        };
-        let ts = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
-        rec.set_time_sequence("frame_ns", ts);
-        self.log_ingest_window(rec, report);
-        self.log_infer_global_window(rec, report);
-        self.log_infer_model_window(rec, report);
-        self.log_scalar_inner(rec, "/pipeline/cycles_window", report.cycles as f64);
-        self.log_scalar_inner(rec, "/pipeline/health/blind_cycles", report.blind_cycles as f64);
-    }
-
-    fn log_ingest_window(&self, rec: &rerun::RecordingStream, report: &MetricsReport) {
-        let hz = if report.window_s > 0 {
-            report.keyframes as f64 / report.window_s as f64
-        } else { 0.0 };
-        let avg_decode_ms = if report.keyframes > 0 {
-            report.decode_total_ms / report.keyframes
-        } else { 0 };
-
-        self.log_scalar_inner(rec, "/ingest/normal/hz", hz);
-        self.log_scalar_inner(rec, "/ingest/normal/keyframes", report.keyframes as f64);
-        self.log_scalar_inner(rec, "/ingest/normal/decode_avg_ms", avg_decode_ms as f64);
-        self.log_scalar_inner(rec, "/ingest/normal/pframes_dropped", report.ingest_pframes as f64);
-        self.log_scalar_inner(rec, "/ingest/errors/timeouts", report.timeouts as f64);
-        self.log_scalar_inner(rec, "/ingest/errors/ssrc_changes", report.ssrc_changes as f64);
-        self.log_scalar_inner(rec, "/ingest/errors/rtp_errors", report.rtp_errors as f64);
-        self.log_scalar_inner(rec, "/ingest/errors/reconnect_attempts", report.reconnect_attempts as f64);
-        self.log_scalar_inner(rec, "/ingest/errors/dup_keyframes", report.ingest_dup_keyframes as f64);
-    }
-
-    fn log_infer_global_window(&self, rec: &rerun::RecordingStream, report: &MetricsReport) {
-        let infer_hz = if report.window_s > 0 {
-            report.inferences as f64 / report.window_s as f64
-        } else { 0.0 };
-        let infer_avg_ms = if report.inferences > 0 {
-            report.infer_total_ms / report.inferences
-        } else { 0 };
-        let yield_avg = if report.inferences > 0 {
-            report.infer_total_dets as f64 / report.inferences as f64
-        } else { 0.0 };
-
-        self.log_scalar_inner(rec, "/infer/active/hz", infer_hz);
-        self.log_scalar_inner(rec, "/infer/active/avg_ms", infer_avg_ms as f64);
-        self.log_scalar_inner(rec, "/infer/active/min_ms", report.infer_min_ms as f64);
-        self.log_scalar_inner(rec, "/infer/active/max_ms", report.infer_max_ms as f64);
-        self.log_scalar_inner(rec, "/infer/active/yield_avg", yield_avg);
-        self.log_scalar_inner(rec, "/infer/warnings/skips", report.infer_skips as f64);
-        self.log_scalar_inner(rec, "/infer/warnings/empty", report.infer_empty as f64);
-    }
-
-    fn log_infer_model_window(&self, rec: &rerun::RecordingStream, report: &MetricsReport) {
-        for (model, m) in &report.model_metrics {
-            let m_hz = if report.window_s > 0 {
-                m.inferences as f64 / report.window_s as f64
-            } else { 0.0 };
-            let m_avg_ms = if m.inferences > 0 {
-                m.infer_total_us / 1000 / m.inferences
-            } else { 0 };
-            let m_yield = if m.inferences > 0 {
-                m.total_dets as f64 / m.inferences as f64
-            } else { 0.0 };
-            let m_conf_avg = if m.total_dets > 0 {
-                m.conf_sum / m.total_dets as f64
-            } else { 0.0 };
-            let m_area_avg = if m.total_dets > 0 {
-                m.bbox_area_sum / m.total_dets as f64
-            } else { 0.0 };
-
-            let model_safe = model.replace('-', "_").replace('.', "_");
-            self.log_scalar_inner(rec, &format!("/infer/{model_safe}/active/hz"), m_hz);
-            self.log_scalar_inner(rec, &format!("/infer/{model_safe}/active/avg_ms"), m_avg_ms as f64);
-            self.log_scalar_inner(rec, &format!("/infer/{model_safe}/active/min_ms"), (m.infer_min_us / 1000) as f64);
-            self.log_scalar_inner(rec, &format!("/infer/{model_safe}/active/max_ms"), (m.infer_max_us / 1000) as f64);
-            self.log_scalar_inner(rec, &format!("/infer/{model_safe}/active/yield_avg"), m_yield);
-            self.log_scalar_inner(rec, &format!("/infer/{model_safe}/warnings/skips"), m.skips as f64);
-            self.log_scalar_inner(rec, &format!("/infer/{model_safe}/warnings/empty"), m.empty as f64);
-            self.log_scalar_inner(rec, &format!("/infer/{model_safe}/detections/conf_avg"), m_conf_avg);
-            self.log_scalar_inner(rec, &format!("/infer/{model_safe}/detections/conf_min"), m.conf_min);
-            self.log_scalar_inner(rec, &format!("/infer/{model_safe}/detections/area_avg"), m_area_avg);
-            for (cls, count) in &m.class_counts {
-                let cls_safe = cls.replace(' ', "_");
-                self.log_scalar_inner(rec, &format!("/infer/{model_safe}/classes/{cls_safe}"), *count as f64);
             }
         }
     }

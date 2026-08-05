@@ -338,15 +338,6 @@ pub struct VizSendToggles {
     #[serde(default = "default_true")] pub boxes: bool,
     #[serde(default = "default_true")] pub decode_latency: bool,
     #[serde(default = "default_true")] pub infer_latency: bool,
-    #[serde(default = "default_true")] pub track_counts: bool,
-    #[serde(default = "default_true")] pub health_ms: bool,
-    #[serde(default = "default_true")] pub loop_latency: bool,
-    #[serde(default = "default_true")] pub frame_id: bool,
-    #[serde(default = "default_true")] pub model_window_metrics: bool,
-    #[serde(default = "default_true")] pub class_counts: bool,
-    #[serde(default = "default_true")] pub ingest_window: bool,
-    #[serde(default = "default_true")] pub infer_window: bool,
-    #[serde(default = "default_true")] pub pipeline_window: bool,
     #[serde(default = "default_true")] pub class_counts_per_frame: bool,
     #[serde(default = "default_true")] pub class_confidence_per_frame: bool,
     #[serde(default = "default_true")] pub class_area_per_frame: bool,
@@ -356,10 +347,8 @@ pub struct VizSendToggles {
 impl Default for VizSendToggles {
     fn default() -> Self {
         Self {
-            frames: true, boxes: true, decode_latency: true, infer_latency: true,
-            track_counts: true, health_ms: true, loop_latency: true, frame_id: true,
-            model_window_metrics: true, class_counts: true,
-            ingest_window: true, infer_window: true, pipeline_window: true,
+            frames: true, boxes: true,
+            decode_latency: true, infer_latency: true,
             class_counts_per_frame: true, class_confidence_per_frame: true,
             class_area_per_frame: true, keyframe_gap: true,
         }

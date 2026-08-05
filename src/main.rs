@@ -33,7 +33,6 @@ use zones::{ZoneEngine, zone_event_to_log};
 use std::collections::HashMap;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::PathBuf;
-use std::time::Instant;
 
 static VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -184,13 +183,12 @@ impl App {
 
     async fn run(&mut self, config: &AppConfig) -> Result<()> {
         loop {
-            let loop_start = Instant::now();
             self.metrics.tick_cycle();
 
             if let Some(kf) = self.ingest.poll_freshest_keyframe().await {
                 let max_panics = config.health.max_consecutive_panics;
                 let result = catch_unwind(AssertUnwindSafe(|| {
-                    self.process_keyframe(kf, config, loop_start);
+                    self.process_keyframe(kf, config);
                 }));
                 match result {
                     Ok(()) => self.state.on_ok(),
@@ -211,9 +209,7 @@ impl App {
             self.drain_ingest_counters();
             self.evaluate_fsm_wildcard(config);
             let result = self.state.evaluate_health(&mut self.health, &mut self.log, &mut self.metrics);
-            if let Some((r, _)) = result.as_ref() {
-                self.viz.log_metrics_report(r);
-            }
+            if let Some((_, _)) = result.as_ref() {}
             self.log.flush();
 
             self.viz.tick();
@@ -232,7 +228,7 @@ impl App {
         Ok(())
     }
 
-    fn process_keyframe(&mut self, kf: RawKeyframe, config: &AppConfig, loop_start: Instant) {
+    fn process_keyframe(&mut self, kf: RawKeyframe, config: &AppConfig) {
         self.viz.set_frame_time();
 
         let (frame_buf, decode_us) = self.decoder.decode_timed(&kf.h264);
@@ -247,7 +243,7 @@ impl App {
             self.run_inference(fb, config);
         }
         self.evaluate_scene(config);
-        self.flush_viz_metrics(&frame_buf, loop_start);
+        self.flush_viz_metrics(&frame_buf);
     }
 
     fn log_decode_latency_to_viz(&self, decode_us: u64) {
@@ -356,14 +352,11 @@ impl App {
         }
     }
 
-    fn flush_viz_metrics(&mut self, frame_buf: &Option<FrameBuffer>, loop_start: Instant) {
-        self.viz.log_track_counts(self.tracker.track_count(), self.tracker.active_tracks().len());
-        self.viz.log_health_ms_since_frame(self.health.last_frame_elapsed_ms());
+    fn flush_viz_metrics(&mut self, frame_buf: &Option<FrameBuffer>) {
         if let Some(fb) = frame_buf.as_ref() {
             self.viz.log_frame(
                 &raw_frame_header(fb, self.state.frame_number()),
                 &fb.rgb,
-                loop_start.elapsed().as_micros() as u64,
             );
         }
     }

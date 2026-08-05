@@ -344,8 +344,4 @@ impl Health {
     pub fn is_blind(&self) -> bool {
         self.blind
     }
-
-    pub fn last_frame_elapsed_ms(&self) -> u64 {
-        self.last_frame_at.elapsed().as_millis() as u64
-    }
 }

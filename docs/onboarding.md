@@ -373,54 +373,57 @@ Los snapshots guardan el H.264 raw y el frame RGB decodificado en `./snapshots/`
 
 ---
 
-## 5. Depuracion y metricas
+## 5. Observabilidad
 
-> **Guia completa:** [docs/observability.md](observability.md) — cubre los tres archivos de configuracion (`metrics.toml`, `viz.toml`, `rerun.toml`), el arbol de entidades Rerun, diagnostico, y escenarios de uso.
+> **Guia completa:** [docs/observability.md](observability.md) — los tres canales (text log, JSONL, Rerun), filosofia per-frame vs per-window, diagnostico forense, y escenarios de configuracion.
 
-### Que mirar en los logs cada 5s
+### Los tres archivos
+
+| Archivo | Controla | Modo |
+|---------|---------|------|
+| `metrics.toml` | Text log + JSONL | Produccion y forense |
+| `viz.toml` | Rerun gRPC | Tuneo en vivo |
+| `rerun.toml` | Layout del dashboard | Referencia |
+
+### Que mirar en el text log cada 5s
 
 ```
-ingest: 1.0 Hz — 5 keyframes in 5s | decode 15ms avg | cycles 80 | pframes:25 timeouts:80
-infer:  2.0 Hz — 10 calls in 5s | 52ms avg | 4 dets | skips:2 empty:1
+ingest: 1.0 Hz — 5 keyframes in 5s | decode 15ms avg | cycles 80 | pframes:120, timeouts:80
+infer:  2.0 Hz — 10 calls in 5s | 38ms avg | 2-145ms | 12 dets | skips:2, empty:1
+  detect-fast:  0.4 Hz | 2 calls | 15ms avg | 10-22ms | 6/5fr
 ```
 
 | Metrica | Significado | Alerta |
 |---------|------------|--------|
-| `ingest: X.X Hz` | Keyframes por segundo | < 0.3 → stream lento, revisar GOP |
+| `ingest: X.X Hz` | Keyframes por segundo | < 0.3 → stream lento |
 | `decode Xms avg` | Tiempo de decode | > 100ms → CPU saturada |
-| `infer: X.X Hz` | Inferencias por segundo | << ingest_hz → cuello de botella GPU |
-| `Xms avg` | Latencia promedio inferencia | > 100ms → modelo muy pesado |
-| `dets` | Total detecciones en la ventana | 0 persistente → camara apuntando a nada |
-| `skips:N` | Modelos saltados por cascade | > 0 consistente → el parent no detecta la clase |
-| `empty:N` | Inferencias con 0 detecciones | > 30% → confianza muy alta o escena vacia |
-| `pframes:N` | P-frames descartados | > 100 → normal (solo procesas keyframes) |
+| `infer: Xms avg` | Latencia promedio | > 100ms → modelo muy pesado |
+| `X-Xms` | Rango min-max de latencia | mucha dispersion → inestabilidad |
+| `N/Mfr` | Detecciones / frames | 0 persistente → modelo ciego |
+| `skips:N` | Modelos saltados por cascade | > 0 consistente → el parent no detecta |
+| `empty:N` | Inferencias sin detecciones | > 30% → threshold muy alto |
 | `timeouts:N` | Polls RTSP sin respuesta | >> ciclos → red saturada |
-| `rtp:N` | Errores de paquete RTP | > 10 → probar TCP en vez de UDP |
 
-### Rerun: arbol de metricas
+### Que mirar en Rerun durante tuneo
 
-Ver `docs/metrics/infer-metrics.md` para el arbol completo per-model.
+1. **Camera**: las cajas coloreadas son detecciones en vivo. Si no ves cajas, `boxes = false` o el modelo no detecta.
+2. **Counts**: per-class count por frame. Si flickerea 0→1→0→2→0, el threshold de confianza esta muy alto.
+3. **Confidence**: min/max por clase. Si max-min > 0.4 en un mismo frame, el modelo duda de algunas instancias.
+4. **Area**: min/max por clase. Si crece consistentemente, el objeto se acerca a la camara.
+5. **Latency**: si tiene picos periodicos, posible thermal throttling.
+6. **Stream**: gap estable = stream sano. Picos esporadicos = perdida de paquetes.
 
-**Diagnostico rapido en Rerun:**
-
-1. Abri el panel `Infer` → mira `hz` y `avg_ms` global
-2. Abri `Infer ❌` → si `skips` > 0, el cascade no esta funcionando
-3. Expande `/infer/{model}/` → cada modelo tiene sus propias 3 ramas
-4. Panel `Camera` → las cajas coloreadas son detecciones en vivo
-5. Panel `Pipeline` → `loop_latency_us` te dice si el sistema esta saturado
-
-### Log JSONL para analisis post-hoc
+### JSONL para analisis post-hoc
 
 ```bash
-# Ver detecciones del modelo pose-standard
-cat logs/mana-*.jsonl | jq 'select(.model == "pose-standard")'
+# Frames donde la confianza de persona bajo de 0.5
+jq 'select(.type=="detection" and .per_class.person.conf_min < 0.5)' mana-*.jsonl
 
-# Contar detecciones por clase en la ultima hora
-cat logs/mana-*.jsonl | jq -r '.det[]?.class' | sort | uniq -c | sort -rn
+# Gaps de stream > 5 segundos
+jq 'select(.type=="frame" and .gap_ms > 5000)' mana-*.jsonl
 
-# Latencia promedio de inferencia
-cat logs/mana-*.jsonl | jq 'select(.type == "detection") | .infer_ms' | \
-  awk '{sum+=$1; n++} END {print sum/n "ms avg"}'
+# Timeline de detecciones por frame
+jq -c 'select(.type=="detection") | {f: .frame_id, m: .model, det: [.det[]? | {c: .class, cf: .confidence}]}' mana-*.jsonl
 ```
 
 ---

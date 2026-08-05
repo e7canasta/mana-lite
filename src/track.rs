@@ -180,6 +180,7 @@ impl Tracker {
         self.tracks.values().filter(|t| t.is_confirmed).collect()
     }
 
+    #[allow(dead_code)]
     pub fn track_count(&self) -> usize {
         self.tracks.len()
     }

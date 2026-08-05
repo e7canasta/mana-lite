@@ -1,116 +1,80 @@
 # Observability: Metrics, Viz & Rerun Blueprint
 
-Guia completa para configurar que se mide, como se visualiza y como se estructura el dashboard en Rerun.
+Guia de los tres canales de salida: que va a cada uno y por que.
 
 ---
 
 ## Indice
 
-1. [Los tres archivos TOML](#1-los-tres-archivos-toml)
-2. [Conceptos: per-frame vs per-window](#2-conceptos-per-frame-vs-per-window)
-3. [Text log: metricas operativas cada N segundos](#3-text-log-metricas-operativas-cada-n-segundos)
-4. [JSONL: registro forense por frame](#4-jsonl-registro-forense-por-frame)
-5. [Rerun: visualizacion en tiempo real](#5-rerun-visualizacion-en-tiempo-real)
-6. [Arbol de entidades Rerun](#6-arbol-de-entidades-rerun)
-7. [Blueprint: layout del dashboard](#7-blueprint-layout-del-dashboard)
-8. [Escenarios de configuracion](#8-escenarios-de-configuracion)
-9. [Diagnostico y troubleshooting](#9-diagnostico-y-troubleshooting)
-10. [Referencia rapida de toggles](#10-referencia-rapida-de-toggles)
+1. [Filosofia: tres canales, tres momentos](#1-filosofia-tres-canales-tres-momentos)
+2. [Text log: salud operativa](#2-text-log-salud-operativa)
+3. [JSONL: registro forense](#3-jsonl-registro-forense)
+4. [Rerun: tuneo en vivo](#4-rerun-tuneo-en-vivo)
+5. [Arbol de entidades Rerun](#5-arbol-de-entidades-rerun)
+6. [Blueprint: layout del dashboard](#6-blueprint-layout-del-dashboard)
+7. [Escenarios de configuracion](#7-escenarios-de-configuracion)
+8. [Referencia rapida de toggles](#8-referencia-rapida-de-toggles)
 
 ---
 
-## 1. Los tres archivos TOML
+## 1. Filosofia: tres canales, tres momentos
 
-```
-config/
-├── metrics.toml     ─ que se escribe en el log de texto y JSONL
-├── viz.toml         ─ que se envia a Rerun por gRPC
-└── rerun.toml       ─ como se organizan los paneles en el viewer
-```
+Hay dos momentos distintos en la vida de este sistema:
 
-Cada archivo controla un **canal de salida** distinto. Se referencian desde `mana.toml`:
+### Momento A: Tuneando modelos (Rerun abierto)
 
-```toml
-# mana.toml
-metrics_file = "config/metrics.toml"    # opcional: usa defaults si no existe
-viz_file = "config/viz.toml"            # opcional: usa defaults si no existe
-rerun_file = "config/rerun.toml"        # opcional: blueprint de referencia
-```
+Estas iterando. Abris Rerun, miras el dashboard. Preguntas que queres contestar:
 
-### Separacion de responsabilidades
+- El modelo ve lo que espero? (boxes correctos, sin falsos positivos)
+- Las detecciones son estables o flickerean? (persona 0→1→0→2 entre frames)
+- La confianza es pareja o el modelo duda de algunas instancias? (conf_max - conf_min grande en un mismo frame)
+- La latencia de inferencia es estable o tiene picos?
+- El stream entrega frames regulares o hay gaps?
 
-| Archivo | Controla | Destino | Frecuencia |
-|---------|---------|---------|------------|
-| `metrics.toml` > `text` | Lineas de log informativas | stderr / journald | Cada `report_interval_s` (default 5s) |
-| `metrics.toml` > `jsonl` | Eventos estructurados por frame | stdout (JSONL rotativo) | Cada keyframe |
-| `viz.toml` > `send` | Escalares, imagenes, cajas | Rerun viewer (gRPC) | Cada keyframe + cada ventana |
-| `rerun.toml` > `rows` | Layout de paneles del viewer | Rerun blueprint | Al conectar |
+**Para esto necesitas datos per-frame, no promedios.** Un promedio de 5s te oculta que a los 2s hubo un spike de latencia o que una deteccion tenia confianza 0.3.
 
-**Regla de oro**: el text log es para operadores (salud del sistema). El JSONL es para analisis post-hoc (forense). Rerun es para debug en vivo. No mezclar promedios engañosos en el text log.
+### Momento B: 24/7, algo fallo a las 3am
 
----
+No tenes Rerun. Tenes el text log (journald) para triaje rapido y el JSONL para analisis forense. Preguntas:
 
-## 2. Conceptos: per-frame vs per-window
+- A que hora empezo el problema? → `jq 'select(.type=="frame")'` para ver gaps
+- Que vio el modelo justo antes? → `jq 'select(.type=="detection" and .frame_id > 5000)'`
+- Fue un problema de camara o de modelo? → timeouts vs empty detections
+- El FSM transiciono correctamente? → `jq 'select(.type=="fsm")'`
 
-Mana-Lite emite dos tipos de datos:
+### Que va a cada canal
 
-### Per-frame (cada keyframe)
+| Canal | Frecuencia | Para que | NO para que |
+|---|---|---|---|
+| **Text log** (stderr) | Cada 5s | Salud operativa: Hz, latencia, flags de error | Datos per-frame (ruido) |
+| **JSONL** (stdout) | Cada frame | Forense: todo lo que paso, estructurado | Monitoreo en vivo |
+| **Rerun** (gRPC) | Cada frame | Tuneo: per-frame timeseries + imagen | Promedios de ventana, contadores de error |
 
-Datos crudos, sin promediar, una muestra por frame procesado.
-
-| Que se emite | Donde |
-|---|---|
-| Latencia de inferencia por modelo (us) | `/pipeline/infer/{model}/latency_us` |
-| Latencia de decode (us) | `/pipeline/decode/latency_us` |
-| Conteo de detecciones por clase | `/infer/{model}/per_frame/counts/{class}` |
-| Confianza min/max por clase | `/infer/{model}/per_frame/conf/{class}/{min,max}` |
-| Area min/max de bbox por clase | `/infer/{model}/per_frame/area/{class}/{min,max}` |
-| Gap entre keyframes (ms) | `/ingest/normal/gap_ms` |
-| Imagen RGB + bounding boxes | `/world/camera/**` |
-
-### Per-window (cada `report_interval_s`, default 5s)
-
-Agregados, promedios y contadores acumulados en la ventana.
-
-| Que se emite | Donde |
-|---|---|
-| Hz de ingesta e inferencia | `/ingest/normal/hz`, `/infer/active/hz` |
-| Latencia promedio, min, max (ms) | `/infer/active/{avg_ms,min_ms,max_ms}` |
-| Conteo de detecciones acumulado por clase | `/infer/{model}/classes/{class}` |
-| Confianza y area promedio (ventana) | `/infer/{model}/detections/{conf_avg,conf_min,area_avg}` |
-| Skips, empties, errores de red | `/infer/{model}/warnings/*`, `/ingest/errors/*` |
-
-### Por que dos frecuencias
-
-- **Per-frame** → ves estabilidad del tiempo de inferencia, cambios bruscos en confianza, gaps de continuidad, spikes/silencios de detecciones.
-- **Per-window** → ves throughput sostenido (Hz), tendencias de calidad, salud de la red.
-
-Si solo miras promedios cada 5s, perdes la variabilidad frame a frame. Los per-frame scalars te dan la granularidad para detectar oscilaciones.
+**Regla:** si es un promedio o un contador acumulado, va en text log y JSONL. Si es un dato crudo por frame, va en Rerun y JSONL. Rerun no recibe nada que no sea per-frame.
 
 ---
 
-## 3. Text log: metricas operativas cada N segundos
+## 2. Text log: salud operativa
 
 Controlado por `config/metrics.toml` seccion `[metrics.text]`.
 
 ```toml
 [metrics]
-report_interval_s = 5            # cada cuanto se imprime el reporte
+report_interval_s = 5
 
 [metrics.text]
-ingest_line = true               # linea resumen de ingesta
-infer_summary = true             # linea resumen de inferencia
-per_model_lines = true           # una linea por modelo
+ingest_line = true
+infer_summary = true
+per_model_lines = true
 
 [metrics.text.flags]
-ingest_pframes = true            # mostrar contador de p-frames descartados
-ingest_dup = true                # mostrar contador de keyframes duplicados
-ingest_timeouts = true           # mostrar timeouts de poll
-ingest_reconnect = true          # mostrar intentos de reconexion
-ingest_ssrc = true               # mostrar cambios de SSRC
-ingest_rtp = true                # mostrar errores de paquete RTP
-infer_skips = true               # mostrar modelos saltados por cascade
-infer_empty = true               # mostrar inferencias con 0 detecciones
+ingest_pframes = true
+ingest_timeouts = true
+ingest_reconnect = true
+ingest_ssrc = true
+ingest_rtp = true
+infer_skips = true
+infer_empty = true
 ```
 
 ### Salida tipica
@@ -118,12 +82,11 @@ infer_empty = true               # mostrar inferencias con 0 detecciones
 ```
 ingest: 1.0 Hz — 5 keyframes in 5s | decode 15ms avg | cycles 80 | pframes:120, timeouts:80
 infer:  2.0 Hz — 10 calls in 5s | 38ms avg | 2-145ms | 12 dets | skips:2, empty:1
-  detect-fast:  0.4 Hz | 2 calls | 15ms avg | 10-22ms | 6/5fr | empty:1
+  detect-fast:  0.4 Hz | 2 calls | 15ms avg | 10-22ms | 6/5fr
   detect-large: 0.2 Hz | 1 calls | 65ms avg | 58-145ms | 4/5fr
-  pose-standard: 0.0 Hz | 0 calls | ---ms | --- | 0/5fr | skip:empty
 ```
 
-### Que significan las columnas
+### Columnas del text log
 
 | Columna | Significado |
 |---|---|
@@ -134,334 +97,180 @@ infer:  2.0 Hz — 10 calls in 5s | 38ms avg | 2-145ms | 12 dets | skips:2, empt
 | `N/Mfr` | N detecciones totales / M frames en la ventana |
 | `skip,empty` | Flags: saltos del cascade, inferencias vacias |
 
-### Cuando desactivar lineas
-
-```toml
-# Produccion silenciosa — solo errores
-[metrics.text]
-ingest_line = false
-infer_summary = false
-per_model_lines = false
-```
-
-El texto es para operadores humanos. En produccion automatizada, el JSONL es suficiente.
-
 ---
 
-## 4. JSONL: registro forense por frame
+## 3. JSONL: registro forense
 
-Controlado por `config/metrics.toml` seccion `[metrics.jsonl]`. Cada tipo de evento se emite (o no) por frame.
+Controlado por `config/metrics.toml` seccion `[metrics.jsonl]`.
 
 ```toml
 [metrics.jsonl]
-frame_events = true              # {"type":"frame", frame_id, decode_ms}
-detection_events = true          # {"type":"detection", model, infer_ms, det:[...]}
+frame_events = true              # {"type":"frame", frame_id, decode_ms, gap_ms}
+detection_events = true          # {"type":"detection", model, infer_ms, det, per_class}
 zone_events = true               # {"type":"zone", zone, event, class, confidence}
 fsm_events = true                # {"type":"fsm", from, to, trigger, dwell_ms}
-metrics_event = true             # {"type":"metrics", ...}  — reporte de ventana
-per_model_in_window = true       # incluir stats por modelo en el metrics event
-class_counts_in_window = true    # incluir conteo por clase en el per-model stats
-class_per_frame_stats = true     # incluir stats por clase en el detection event
+metrics_event = true             # {"type":"metrics", ...} — reporte de ventana
+per_model_in_window = true       # stats por modelo en el metrics event
+class_counts_in_window = true    # conteo por clase en per-model stats
+class_per_frame_stats = true     # stats por clase en cada detection event
 ```
 
-### Estructura de un evento "detection" con class_per_frame_stats
+### Estructura de eventos
 
+**Frame event** — uno por keyframe procesado:
 ```json
-{
-  "type": "detection",
-  "frame_id": 42,
-  "model": "detect-fast",
-  "infer_ms": 38,
-  "det": [
-    {"class": "person", "confidence": 0.87, "bbox": [0.2, 0.3, 0.5, 0.8]}
-  ],
-  "per_class": {
-    "person": {"count": 1, "conf_min": 0.87, "conf_max": 0.87, "area_min": 86400.0, "area_max": 86400.0}
-  }
-}
+{"type":"frame","frame_id":10,"is_keyframe":true,"decode_ms":14,"gap_ms":6123}
+```
+`gap_ms` es el tiempo real entre este keyframe y el anterior. Si es > 2x el GOP esperado, el stream tuvo un gap.
+
+**Detection event** — uno por modelo por frame, con per_class inline:
+```json
+{"type":"detection","frame_id":10,"model":"detect-fast","infer_ms":37,
+ "det":[{"class":"person","confidence":0.73,"bbox":[875,149,1187,726]}],
+ "per_class":{"person":{"count":1,"conf_min":0.73,"conf_max":0.73,
+                        "area_min":228096.0,"area_max":228096.0}}}
 ```
 
-### Cuando desactivar eventos
-
-```toml
-# Solo eventos de FSM y zonas (caso clinico: tracking de transiciones)
-[metrics.jsonl]
-frame_events = false
-detection_events = false
-zone_events = true
-fsm_events = true
-metrics_event = false
-```
-
-### Analisis post-hoc con jq
+### Consultas forenses con jq
 
 ```bash
-# Ver la serie temporal de confianza por modelo
-cat mana-*.jsonl | jq -c 'select(.type == "detection") | {frame: .frame_id, model, conf: [.det[].confidence]}'
+# Frames donde la confianza de persona bajo de 0.5
+jq 'select(.type=="detection" and .per_class.person.conf_min < 0.5)' mana-*.jsonl
 
-# Extraer conteo por clase por frame
-cat mana-*.jsonl | jq -c 'select(.type == "detection") | {frame: .frame_id, model, counts: .per_class}'
+# Gaps de stream > 5 segundos
+jq 'select(.type=="frame" and .gap_ms > 5000)' mana-*.jsonl
 
-# Buscar gaps de > 500ms entre keyframes (si incluimos gap en frame event)
-cat mana-*.jsonl | jq 'select(.type == "frame") | .frame_id' | awk 'NR>1{print $1-prev} {prev=$1}'
+# Timeline de detecciones: frame, modelo, clase, confianza
+jq -c 'select(.type=="detection") | {f: .frame_id, m: .model, det: [.det[]? | {c: .class, cf: .confidence}]}' mana-*.jsonl
+
+# Conteo de detecciones por clase en toda la sesion
+jq -r 'select(.type=="metrics") | .models[].classes // {} | to_entries[] | "\(.key): \(.value)"' mana-*.jsonl | awk -F: '{a[$1]+=$2} END {for(k in a) print k, a[k]}' | sort -rnk2
 ```
 
 ---
 
-## 5. Rerun: visualizacion en tiempo real
+## 4. Rerun: tuneo en vivo
 
-Controlado por `config/viz.toml` seccion `[viz.send]`. Cada toggle habilita o corta un canal de datos hacia el viewer Rerun.
+Controlado por `config/viz.toml`. Solo datos per-frame — nada de promedios de ventana.
 
 ```toml
 [viz]
-enabled = true                           # encendido/apagado global
-rerun_addr = "127.0.0.1:9876"            # donde esta corriendo rerun
+enabled = true
+rerun_addr = "127.0.0.1:9876"
 
 [viz.send]
-# ── Per-frame (un scalar por keyframe) ──
-frames = true                            # RGB image (pesado ~2-6 MB/frame)
-boxes = true                             # bounding boxes con labels y colores
-decode_latency = true                    # tiempo de decode H.264 → RGB
-infer_latency = true                     # latencia de inferencia por modelo
-class_counts_per_frame = true            # conteo de detecciones por clase, por frame
-class_confidence_per_frame = true        # confianza min/max por clase, por frame
-class_area_per_frame = true              # area min/max de bbox por clase, por frame
-keyframe_gap = true                      # ms entre keyframes consecutivos
-
-# ── Per-frame auxiliares ──
-frame_id = true                          # contador de frame (escalonado)
-loop_latency = true                      # wall-clock del superloop
-track_counts = true                      # tracks totales + activos
-health_ms = true                         # ms desde el ultimo frame
-
-# ── Per-window (un scalar por report_interval_s) ──
-model_window_metrics = true              # hz, avg/min/max ms, yield por modelo
-class_counts = true                      # conteo por clase acumulado en la ventana
-ingest_window = true                     # hz de ingesta, decode_avg, errores
-infer_window = true                      # hz de inferencia global, avg/min/max
-pipeline_window = true                   # ciclos, blind cycles
+frames = true                       # RGB image per keyframe
+boxes = true                        # bounding boxes
+infer_latency = true                # per-model inference time per frame
+decode_latency = true               # H.264 decode time per frame
+class_counts_per_frame = true       # per-class count every keyframe
+class_confidence_per_frame = true   # per-class conf min/max every keyframe
+class_area_per_frame = true         # per-class bbox area min/max every keyframe
+keyframe_gap = true                 # ms between consecutive keyframes
 ```
 
-### Que desactivar segun el uso
+### Que ves en cada panel del blueprint
 
-**Debug de inferencia** (minimo para ver latencia y gaps):
-```toml
-frames = false          # sin imagen → banda minima
-boxes = false           # sin cajas
-decode_latency = false
-infer_latency = true    # solo latencia de inferencia
-class_counts_per_frame = true
-class_confidence_per_frame = true
-class_area_per_frame = false
-keyframe_gap = true     # continuidad del stream
-frame_id = true
-loop_latency = false
-model_window_metrics = true
-ingest_window = false
-infer_window = false
-pipeline_window = false
-```
+**Camera** — la imagen + los bounding boxes. Si `frames=true` y `boxes=true`. Cada clase tiene un color distinto (hash del nombre). El label muestra `"person 0.87"`.
 
-**Debug visual** (maximo para ver la escena):
-```toml
-frames = true           # imagen + cajas
-boxes = true
-decode_latency = false
-infer_latency = false
-class_counts_per_frame = true    # para ver si el modelo "ve" lo esperado
-keyframe_gap = false
-frame_id = false
-model_window_metrics = false
-```
+**Counts** — cuantas detecciones de cada clase por frame. Si ves `person: 0→1→0→2→0`, el modelo esta flickereando — probablemente el threshold de confianza esta muy alto.
 
-**Produccion** (solo lo esencial para monitoreo):
-```toml
-frames = false
-boxes = false
-decode_latency = false
-infer_latency = false
-class_counts_per_frame = true   # anomalias de deteccion
-keyframe_gap = true             # gaps de stream
-frame_id = false
-model_window_metrics = true     # throughput sostenido
-class_counts = true             # acumulado por clase
-ingest_window = true            # salud del ingest
-infer_window = true
-pipeline_window = false
-```
+**Confidence** — para cada clase, `conf_min` y `conf_max` por frame. Con una deteccion, min == max. Con multiples detecciones de la misma clase, ves la dispersion: si `person/max = 0.9` y `person/min = 0.3`, el modelo esta muy seguro de una persona pero duda de otra (posible oclusion o persona parcial).
+
+**Area** — para cada clase, `area_min` y `area_max` por frame. Si `person/area_max` crece consistentemente, la persona se esta acercando a la camara. Si todas las areas cambian simultaneamente, la camara se movio.
+
+**Latency** — tiempo de inferencia por modelo + tiempo de decode. Si la latencia tiene picos periodicos (ej. cada 30s), puede ser thermal throttling de GPU.
+
+**Stream** — gap en ms entre keyframes. Si es estable (ej. ~3000ms para GOP=10 a 3fps), el stream esta sano. Picos esporadicos = perdida de paquetes.
 
 ---
 
-## 6. Arbol de entidades Rerun
+## 5. Arbol de entidades Rerun
 
-Las entidades se organizan en jerarquias con prefijos funcionales. Rerun las muestra automaticamente en el panel Streams agrupadas por prefijo.
-
-### Jerarquia completa
+Solo las entidades que Rerun recibe actualmente:
 
 ```
 /world/
   camera/
-    bgr                          ─ imagen RGB (archetype Image)
-    detections/{model}/{class}/{i} ─ Boxes2D con label "{class} {conf}"
+    bgr                              ─ imagen RGB (Image archetype)
+    detections/{model}/{class}/{i}    ─ Boxes2D con label "{class} {conf}"
 
 /ingest/
   normal/
-    hz                           ─ keyframes/segundo (ventana)
-    keyframes                    ─ total en ventana
-    decode_avg_ms                ─ decode promedio en ventana
-    pframes_dropped              ─ p-frames descartados en ventana
-    gap_ms                       ─ ms entre keyframes (per-frame)
-    instant_hz                   ─ Hz instantaneo (1/dt) si se emite
-  errors/
-    timeouts                     ─ polls sin respuesta
-    ssrc_changes                 ─ cambios de fuente RTP
-    rtp_errors                   ─ paquetes corruptos
-    reconnect_attempts           ─ reconexiones
-    dup_keyframes                ─ keyframes duplicados
+    gap_ms                           ─ ms entre keyframes
+
+/pipeline/
+  infer/{model}/latency_us           ─ tiempo de inferencia
+  decode/latency_us                  ─ tiempo de decode
 
 /infer/
   {model}/
-    active/
-      hz                         ─ inferencias/segundo (ventana)
-      avg_ms                     ─ latencia promedio (ventana)
-      min_ms                     ─ latencia minima (ventana)
-      max_ms                     ─ latencia maxima (ventana)
-      yield_avg                  ─ detecciones por inferencia (ventana)
-    warnings/
-      skips                      ─ saltos del cascade (ventana)
-      empty                      ─ inferencias sin detecciones (ventana)
-    detections/
-      conf_avg                   ─ confianza promedio (ventana)
-      conf_min                   ─ confianza minima (ventana)
-      area_avg                   ─ area promedio (ventana)
-    classes/{class}              ─ conteo acumulado por clase (ventana)
-    per_frame/                   ★ NUEVO: per-frame, no promediado
-      counts/{class}             ─ cuantas detecciones esta clase en este frame
-      conf/{class}/min           ─ confianza minima de esta clase en este frame
-      conf/{class}/max           ─ confianza maxima de esta clase en este frame
-      area/{class}/min           ─ area minima de esta clase en este frame
-      area/{class}/max           ─ area maxima de esta clase en este frame
-
-/pipeline/
-  infer/{model}/latency_us       ─ latencia de inferencia (per-frame)
-  decode/latency_us              ─ latencia de decode (per-frame)
-  loop_latency_us                ─ superloop wall-clock (per-frame)
-  track/total                    ─ total de tracks
-  track/active                   ─ tracks activos
-  cycles_window                  ─ ciclos del superloop (ventana)
-  health/
-    ms_since_frame               ─ ms desde ultimo frame
-    blind_cycles                 ─ ciclos sin frame (ventana)
-```
-
-### Convenciones de nombres de entidad
-
-- Los nombres de modelo usan `_` como separador: `detect-fast` → `detect_fast`
-- Las clases usan `_` para espacios y caracteres especiales: `"dining table"` → `dining_table`
-- Los paths nunca tienen caracteres fuera de `[a-zA-Z0-9_/-]`
-- Las clases aparecen dinamicamente — no hay que pre-registrarlas
-
----
-
-## 7. Blueprint: layout del dashboard
-
-El blueprint define como Rerun organiza los paneles al conectar. Hay dos vias:
-
-### Via A: Blueprint enviado por codigo (actual)
-
-`VizBridge::send_default_blueprint()` envia un layout predefinido al conectar:
-
-```
-┌─────────────────────────────────┐
-│ Camera (spatial2d)     share 5  │  ← imagen + bounding boxes
-├──────────┬──────────┬───────────┤
-│ Counts   │Confidence│ Area      │  ← per-frame per-class (timeseries)
-├──────────┴──────────┴───────────┤
-│ Latency           │ Signals     │  ← infer/decode latencies + gap + frame_id
-├──────────┴──────────┴───────────┤
-│              Timeline            │
-└──────────────────────────────────┘
-```
-
-- **Camera**: `/world/camera/**` — muestra la imagen y los bboxes superpuestos
-- **Counts**: `/infer/**/per_frame/counts/**` — conteo por clase, cada frame
-- **Confidence**: `/infer/**/per_frame/conf/**` — conf min/max por clase
-- **Area**: `/infer/**/per_frame/area/**` — area min/max por clase
-- **Latency**: `/pipeline/infer/**/latency_us` + `/pipeline/decode/latency_us`
-- **Signals**: `/ingest/normal/gap_ms` + `/world/signals/frame_id`
-
-### Via B: Blueprint declarativo (config/rerun.toml)
-
-Estructura de referencia que refleja la Via A. El viewer puede cargarlo manualmente (File > Import Blueprint) o se puede implementar un builder automatico en el futuro.
-
-```toml
-[rerun]
-app = "mana-lite"
-auto_views = false                  # no generar vistas automaticas
-panels_expanded = true              # paneles de navegacion abiertos
-
-[[rerun.rows]]
-kind = "spatial2d"
-name = "Camera"
-origin = "/world/camera"
-share = 5.0                         # 5 partes de altura
-
-[[rerun.rows]]
-kind = "horizontal"
-name = "Per-Frame Classes"
-share = 1.0
-panels = [
-    { kind = "timeseries", name = "Counts",     origin = "/infer", contents = ["+ /infer/**/per_frame/counts/**"] },
-    { kind = "timeseries", name = "Confidence", origin = "/infer", contents = ["+ /infer/**/per_frame/conf/**"] },
-    { kind = "timeseries", name = "Area",       origin = "/infer", contents = ["+ /infer/**/per_frame/area/**"] },
-]
-
-[[rerun.rows]]
-kind = "horizontal"
-name = "Latency & Signals"
-share = 1.0
-panels = [
-    { kind = "timeseries", name = "Latency", origin = "/pipeline",     contents = ["+ $origin/infer/**/latency_us", "+ $origin/decode/latency_us"] },
-    { kind = "timeseries", name = "Signals", origin = "/ingest/normal", contents = ["+ /ingest/normal/gap_ms", "+ /world/signals/frame_id"] },
-]
-```
-
-### Personalizar el blueprint
-
-Agrega o quita paneles editando `send_default_blueprint()` en `src/viz.rs`. Cada panel Rerun se construye con:
-
-```rust
-rerun::blueprint::TimeSeriesView::new("Nombre")
-    .with_origin("/prefijo")
-    .with_contents(["+ /prefijo/**"])   // filtro de entidades
+    per_frame/
+      counts/{class}                 ─ cuantas detecciones de esta clase este frame
+      conf/{class}/min               ─ confianza minima de esta clase este frame
+      conf/{class}/max               ─ confianza maxima de esta clase este frame
+      area/{class}/min               ─ area minima de esta clase este frame
+      area/{class}/max               ─ area maxima de esta clase este frame
 ```
 
 ---
 
-## 8. Escenarios de configuracion
+## 6. Blueprint: layout del dashboard
 
-### Escenario A: Desarrollo — maxima visibilidad
+Tres filas. Nada mas.
 
-Queres ver todo. Rerun abierto, log verboso, JSONL completo.
+```
+┌─────────────────────────────────────────────┐
+│ Camera (spatial2d)              share 5     │
+├──────────┬──────────┬───────────────────────┤
+│ Counts   │Confidence│ Area                  │  share 1
+├──────────┴──────────┴───────────────────────┤
+│ Latency              │ Stream               │  share 1
+└──────────────────────┴──────────────────────┘
+```
+
+El blueprint se envia por codigo al conectar (`send_default_blueprint`). `config/rerun.toml` es una referencia declarativa del mismo layout para importacion manual.
+
+---
+
+## 7. Escenarios de configuracion
+
+### Tuneo de modelo (Rerun abierto)
 
 ```toml
-# metrics.toml
-[metrics]
-report_interval_s = 5
+# viz.toml — todo encendido
+[viz.send]
+frames = true
+boxes = true
+infer_latency = true
+decode_latency = true
+class_counts_per_frame = true
+class_confidence_per_frame = true
+class_area_per_frame = true
+keyframe_gap = true
+```
 
+```toml
+# metrics.toml — JSONL con per_class para consultas post-hoc
+[metrics.jsonl]
+detection_events = true
+class_per_frame_stats = true
+```
+
+### Produccion 24/7 (sin Rerun)
+
+```toml
+# viz.toml
+[viz]
+enabled = false
+```
+
+```toml
+# metrics.toml — text log minimal, JSONL completo para forense
 [metrics.text]
 ingest_line = true
 infer_summary = true
-per_model_lines = true
-[metrics.text.flags]
-ingest_pframes = true
-ingest_dup = true
-ingest_timeouts = true
-ingest_reconnect = true
-ingest_ssrc = true
-ingest_rtp = true
-infer_skips = true
-infer_empty = true
+per_model_lines = false
 
 [metrics.jsonl]
 frame_events = true
@@ -469,89 +278,15 @@ detection_events = true
 zone_events = true
 fsm_events = true
 metrics_event = true
-per_model_in_window = true
-class_counts_in_window = true
 class_per_frame_stats = true
-
-# viz.toml — todo encendido
-[viz.send]
-frames = true
-boxes = true
-# ... todos true
-
-# rerun.toml — tres filas: camara, clases, latencias
 ```
 
-### Escenario B: Produccion — solo anomalias
-
-Queres saber si algo falla. Minimo ancho de banda a Rerun.
-
-```toml
-# metrics.toml
-[metrics]
-report_interval_s = 30
-
-[metrics.text]
-ingest_line = true          # solo linea de ingesta
-infer_summary = false
-per_model_lines = false
-[metrics.text.flags]
-# solo flags que indican problemas
-ingest_timeouts = true
-ingest_reconnect = true
-infer_skips = true
-infer_empty = true
-# el resto false
-
-[metrics.jsonl]
-frame_events = false
-detection_events = true     # forense: guardar detecciones
-zone_events = true          # forense: guardar cambios de zona
-fsm_events = true           # forense: guardar transiciones
-metrics_event = false
-class_per_frame_stats = false   # no necesario en produccion
-
-# viz.toml — minimal
-[viz.send]
-frames = false
-boxes = false
-class_counts_per_frame = true   # solo conteo para detectar anomalias
-keyframe_gap = true             # gaps de stream
-model_window_metrics = true     # throughput
-ingest_window = true
-infer_window = true
-# el resto false
-```
-
-### Escenario C: Laboratorio — tuning de modelo
-
-Queres calibrar confianza y ver precision del modelo.
-
-```toml
-# viz.toml — enfoque en calidad de deteccion
-[viz.send]
-frames = true                          # ver la imagen
-boxes = true                           # ver las cajas
-infer_latency = true                   # estabilidad del modelo
-class_counts_per_frame = true          # cuantas detecciones por clase
-class_confidence_per_frame = true      # confianza min/max por clase ← clave
-class_area_per_frame = true            # tamanio de bbox por clase
-keyframe_gap = false
-model_window_metrics = true            # promedios de ventana
-class_counts = true
-# resto false
-
-[metrics.jsonl]
-detection_events = true
-class_per_frame_stats = true           # guardar per_class en JSONL
-```
-
-### Escenario D: Edge/Jetson — minimo overhead
+### Edge / bajo recurso
 
 ```toml
 # viz.toml
 [viz]
-enabled = false                        # sin Rerun
+enabled = false
 
 # metrics.toml
 [metrics]
@@ -563,72 +298,26 @@ infer_summary = false
 per_model_lines = false
 
 [metrics.jsonl]
-detection_events = true                # solo lo esencial
-class_per_frame_stats = false
+detection_events = true
+# el resto false
 ```
 
 ---
 
-## 9. Diagnostico y troubleshooting
+## 8. Referencia rapida de toggles
 
-### No veo datos en el panel "Counts" de Rerun
+### viz.toml (8 toggles)
 
-1. Verifica que `class_counts_per_frame = true` en `viz.toml`
-2. Confirma que el modelo esta produciendo detecciones (mira `infer_summary` en el log)
-3. Las entidades de clase aparecen dinamicamente — necesitas al menos un frame con detecciones
-4. Revisa el panel Streams de Rerun: busca `/infer/{model}/per_frame/counts/`
-
-### Las graficas de confianza min/max son lineas rectas
-
-Si conf_min == conf_max para una clase, es porque solo hay una deteccion de esa clase por frame. Normal en escenas con pocos objetos. Cuando hay multiples instancias de la misma clase (ej. 3 personas), veras separacion entre min y max.
-
-### El gap entre keyframes es irregular
-
-- `gap_ms` > 1000ms consistente → la camara tiene GOP grande o hay perdida de paquetes
-- Picos esporadicos de > 2000ms → reconexion RTSP o saturacion de red
-- `gap_ms` = 0 intermitente → keyframes duplicados (revisa `ingest_dup_keyframes`)
-
-### Los bounding boxes no coinciden con la imagen
-
-- El modelo usa coordenadas normalizadas [0,1] que se convierten a pixeles con el tamano del frame decodificado
-- Si la imagen se ve estirada en Rerun, es un bug de aspecto — Rerun deberia respetar el aspect ratio nativo
-
-### Rerun no se conecta
-
-Mana-Lite usa backoff exponencial (1s → 2s → 4s → ... → 30s max). Abri el viewer primero, luego lanza mana-lite. El log mostrara:
-
-```
-viz: will connect to rerun at 127.0.0.1:9876 when viewer opens
-viz: connected to 127.0.0.1:9876
-```
-
-Si ves `connect failed`, el viewer no esta escuchando en ese puerto.
-
----
-
-## 10. Referencia rapida de toggles
-
-### viz.toml
-
-| Toggle | Default | Tipo | Que emite |
-|---|---|---|---|
-| `frames` | true | per-frame | Imagen RGB |
-| `boxes` | true | per-frame | Bounding boxes |
-| `decode_latency` | true | per-frame | `/pipeline/decode/latency_us` |
-| `infer_latency` | true | per-frame | `/pipeline/infer/{model}/latency_us` |
-| `class_counts_per_frame` | true | per-frame | `/infer/{model}/per_frame/counts/{class}` |
-| `class_confidence_per_frame` | true | per-frame | `/infer/{model}/per_frame/conf/{class}/{min,max}` |
-| `class_area_per_frame` | true | per-frame | `/infer/{model}/per_frame/area/{class}/{min,max}` |
-| `keyframe_gap` | true | per-frame | `/ingest/normal/gap_ms` |
-| `frame_id` | true | per-frame | `/world/signals/frame_id` |
-| `loop_latency` | true | per-frame | `/pipeline/loop_latency_us` |
-| `track_counts` | true | per-frame | `/pipeline/track/{total,active}` |
-| `health_ms` | true | per-frame | `/pipeline/health/ms_since_frame` |
-| `model_window_metrics` | true | per-window | `/infer/{model}/active/{hz,avg_ms,...}` |
-| `class_counts` | true | per-window | `/infer/{model}/classes/{class}` |
-| `ingest_window` | true | per-window | `/ingest/normal/{hz,keyframes,...}` |
-| `infer_window` | true | per-window | `/infer/active/{hz,avg_ms,...}` |
-| `pipeline_window` | true | per-window | `/pipeline/{cycles_window,blind_cycles}` |
+| Toggle | Default | Rerun entity |
+|---|---|---|
+| `frames` | true | `/world/camera/bgr` |
+| `boxes` | true | `/world/camera/detections/{model}/{class}/{i}` |
+| `infer_latency` | true | `/pipeline/infer/{model}/latency_us` |
+| `decode_latency` | true | `/pipeline/decode/latency_us` |
+| `class_counts_per_frame` | true | `/infer/{model}/per_frame/counts/{class}` |
+| `class_confidence_per_frame` | true | `/infer/{model}/per_frame/conf/{class}/{min,max}` |
+| `class_area_per_frame` | true | `/infer/{model}/per_frame/area/{class}/{min,max}` |
+| `keyframe_gap` | true | `/ingest/normal/gap_ms` |
 
 ### metrics.toml — text
 
@@ -637,24 +326,16 @@ Si ves `connect failed`, el viewer no esta escuchando en ese puerto.
 | `ingest_line` | true | `ingest: X.X Hz — N keyframes in Ns...` |
 | `infer_summary` | true | `infer:  X.X Hz — N calls in Ns...` |
 | `per_model_lines` | true | `  detect-fast: X.X Hz \| N calls \| Xms...` |
-| `flags.ingest_pframes` | true | `\| pframes:N` |
-| `flags.ingest_dup` | true | `\| dup:N` |
-| `flags.ingest_timeouts` | true | `\| timeouts:N` |
-| `flags.ingest_reconnect` | true | `\| reconnect:N` |
-| `flags.ingest_ssrc` | true | `\| ssrc:N` |
-| `flags.ingest_rtp` | true | `\| rtp:N` |
-| `flags.infer_skips` | true | `\| skips:N` |
-| `flags.infer_empty` | true | `\| empty:N` |
 
 ### metrics.toml — jsonl
 
-| Toggle | Default | Evento JSONL |
+| Toggle | Default | Evento |
 |---|---|---|
-| `frame_events` | true | `{"type":"frame", frame_id, decode_ms}` |
-| `detection_events` | true | `{"type":"detection", model, infer_ms, det, per_class}` |
-| `zone_events` | true | `{"type":"zone", zone, event, class, confidence}` |
-| `fsm_events` | true | `{"type":"fsm", from, to, trigger, dwell_ms}` |
-| `metrics_event` | true | `{"type":"metrics", window_s, ...}` |
-| `per_model_in_window` | true | `model_metrics` dentro de metrics_event |
-| `class_counts_in_window` | true | `class_counts` dentro de per-model stats |
-| `class_per_frame_stats` | true | `per_class` dentro de detection_events |
+| `frame_events` | true | frame_id, decode_ms, **gap_ms** |
+| `detection_events` | true | model, infer_ms, det[], **per_class{}** |
+| `zone_events` | true | zone, event, class, confidence |
+| `fsm_events` | true | from, to, trigger, dwell_ms |
+| `metrics_event` | true | window aggregates (5s) |
+| `per_model_in_window` | true | per-model stats dentro de metrics_event |
+| `class_counts_in_window` | true | class_counts dentro de per-model |
+| `class_per_frame_stats` | true | per_class dentro de detection_event |
