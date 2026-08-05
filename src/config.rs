@@ -229,6 +229,10 @@ pub struct CropConfig {
     pub region: Option<[u32; 4]>,
     #[serde(default)]
     pub min_region: Option<[u32; 4]>,
+    #[serde(default)]
+    pub max_region: Option<[u32; 4]>,
+    #[serde(default)]
+    pub fallback: FallbackMode,
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq)]
@@ -236,6 +240,14 @@ pub struct CropConfig {
 pub enum CropType {
     Static,
     LargestClass,
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum FallbackMode {
+    #[default]
+    Skip,
+    Full,
 }
 
 fn default_crop_margin() -> f32 { 0.15 }

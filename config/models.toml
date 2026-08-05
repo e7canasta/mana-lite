@@ -31,14 +31,14 @@ imgsz = 640
 # class = "person"
 # margin = 0.15
 #
-# Optional: minimum region to always include (union with dynamic crop)
-# Useful for: bed model that should never look at less than the bed area,
-#   even when a person walks across a corner of it.
+# Full ROI example with all options:
 # [models.bed-detector.crop]
 # type = "largest_class"
 # class = "person"
-# margin = 0.15
-# min_region = [100, 200, 500, 450]  # bed area — always covered
+# margin = 0.15                       # expand bbox by 15% in each direction
+# min_region = [100, 200, 500, 450]   # never smaller than this (bed area)
+# max_region = [0, 0, 640, 400]       # never exceed this (exclude door at bottom)
+# fallback = "full"                   # if no person, run on full frame (default: "skip")
 
 # --- disabled for now ---
 # [models.face-v11]

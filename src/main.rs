@@ -259,7 +259,7 @@ impl App {
         for model_key in &ordered {
             let crop_rect = self.resolve_crop_rect(model_key, &model_dets, fb);
 
-            if crop_rect.is_none() && !self.cascade.should_run(model_key, &model_dets) {
+            if crop_rect.is_none() && !self.infer.force_run(model_key) && !self.cascade.should_run(model_key, &model_dets) {
                 self.metrics.tick_infer_skip(model_key);
                 continue;
             }
@@ -291,7 +291,7 @@ impl App {
             .and_then(|pk| model_dets.get(pk));
 
         let dets_slice = parent_dets.map(|v| v.as_slice()).unwrap_or(&[]);
-        compute_largest_class_roi(dets_slice, class, crop_cfg.margin, fb.w, fb.h, crop_cfg.min_region)
+        compute_largest_class_roi(dets_slice, class, crop_cfg.margin, fb.w, fb.h, crop_cfg.min_region, crop_cfg.max_region)
     }
 
     fn resolve_models(&self, config: &AppConfig) -> Vec<String> {
