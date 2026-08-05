@@ -189,7 +189,7 @@ mod tests {
     fn detection_emits_class_and_bbox() {
         let det = vec![DetRecord { class: "person".into(), confidence: 0.87, bbox: [100.0, 200.0, 300.0, 500.0] }];
         let mut log = test_logger();
-        log.emit(Event::detection(1, "detect-fast", 52, det));
+        log.emit(Event::detection(1, "detect-fast", 52, det, None));
         let out = collect(&mut log);
         assert!(out.contains("\"type\":\"detection\""));
         assert!(out.contains("\"class\":\"person\""));
@@ -247,7 +247,7 @@ mod tests {
     fn negative_float_is_valid_json() {
         let det = vec![DetRecord { class: "x".into(), confidence: 0.5, bbox: [-10.5, 0.0, 100.0, 200.25] }];
         let mut log = test_logger();
-        log.emit(Event::detection(1, "m", 10, det));
+        log.emit(Event::detection(1, "m", 10, det, None));
         let out = collect(&mut log);
         assert!(out.contains("\"bbox\":[-10.5,0,100,200.25]"));
     }

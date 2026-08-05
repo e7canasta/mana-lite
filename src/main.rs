@@ -233,6 +233,8 @@ impl App {
     }
 
     fn process_keyframe(&mut self, kf: RawKeyframe, config: &AppConfig, loop_start: Instant) {
+        self.viz.set_frame_time();
+
         let (frame_buf, decode_us) = self.decoder.decode_timed(&kf.h264);
         let dt_ms = self.state.on_keyframe(decode_us, &mut self.metrics, &mut self.health, &mut self.log);
         self.log_decode_latency_to_viz(decode_us);
@@ -300,6 +302,7 @@ impl App {
         self.log.emit(Event::detection(
             self.state.frame_number(), model_key, infer_ms,
             detections.iter().map(DetRecord::from).collect(),
+            Some(per_class),
         ));
     }
 

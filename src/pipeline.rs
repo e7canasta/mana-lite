@@ -62,7 +62,7 @@ impl PipelineState {
         if self.frame_count % 5 == 1 {
             log::info!("frame #{} ingested (decode {}us)", self.frame_count, decode_us);
         }
-        log.emit(Event::frame_ingest(self.frame_count, true, decode_us));
+        log.emit(Event::frame_ingest(self.frame_count, true, decode_us, dt_ms));
         dt_ms
     }
 

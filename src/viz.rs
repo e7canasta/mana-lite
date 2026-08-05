@@ -107,11 +107,11 @@ impl VizBridge {
 
         let latency_view = rerun::blueprint::TimeSeriesView::new("Latency")
             .with_origin("/pipeline")
-            .with_contents(["+ $origin/infer/**/latency_us", "+ $origin/decode/latency_us"]);
+            .with_contents(["+ /pipeline/infer/**/latency_us", "+ /pipeline/decode/latency_us"]);
 
-        let signals_view = rerun::blueprint::TimeSeriesView::new("Signals")
+        let gap_view = rerun::blueprint::TimeSeriesView::new("Stream")
             .with_origin("/ingest/normal")
-            .with_contents(["+ /ingest/normal/gap_ms", "+ /world/signals/frame_id"]);
+            .with_contents(["+ /ingest/normal/gap_ms"]);
 
         let blueprint = rerun::blueprint::Blueprint::new(
             rerun::blueprint::Vertical::new([
@@ -123,7 +123,7 @@ impl VizBridge {
                 ]).into(),
                 rerun::blueprint::Horizontal::new([
                     latency_view.into(),
-                    signals_view.into(),
+                    gap_view.into(),
                 ]).into(),
             ])
             .with_row_shares(vec![5.0, 1.0, 1.0]),
@@ -159,6 +159,13 @@ impl VizBridge {
                 }
             }
             Inner::Disabled => {}
+        }
+    }
+
+    pub fn set_frame_time(&self) {
+        if let Inner::Connected { ref rec, .. } = self.inner {
+            let ts = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
+            rec.set_time_sequence("frame_ns", ts);
         }
     }
 

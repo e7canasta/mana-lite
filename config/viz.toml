@@ -1,29 +1,33 @@
 # viz.toml — what data gets sent to Rerun
 # Toggle individual channels to reduce wire bandwidth or noise.
+#
+# Per-frame = data emitted every keyframe. Useful for timeseries.
+# Per-window = aggregates emitted every report_interval_s. Prefer text log.
 
 [viz]
 enabled = true
 rerun_addr = "127.0.0.1:9876"
 
 [viz.send]
-frames = true               # RGB image per keyframe (heavy)
-boxes = true                # detection bounding boxes with labels
-decode_latency = true       # H.264 decode time
-infer_latency = true        # per-model inference time
-track_counts = true         # total + active track count
-health_ms = true            # ms since last frame
-loop_latency = true         # superloop wall-clock
-frame_id = true             # frame counter scalar
+# Per-frame — what you want in timeseries during evaluation
+frames = true                       # RGB image (heavy ~2-6 MB/frame)
+boxes = true                        # detection bounding boxes
+infer_latency = true                # per-model inference time per frame
+decode_latency = true               # H.264 decode time per frame
+class_counts_per_frame = true       # per-class count every keyframe
+class_confidence_per_frame = true   # per-class conf min/max every keyframe
+class_area_per_frame = true         # per-class bbox area min/max every keyframe
+keyframe_gap = true                 # ms between consecutive keyframes
 
-# per-window report scalars (every report_interval_s)
-model_window_metrics = true # hz, avg/min/max ms, yield per model
-class_counts = true         # per-class detection count per model
-ingest_window = true        # ingest hz, decode_avg_ms, error counters
-infer_window = true         # global infer hz, avg/min/max, yield
-pipeline_window = true      # cycles, blind cycles
+# Per-window — prefer text log for these. Toggle on for Grafana-style dashboards.
+model_window_metrics = true
+class_counts = true
+ingest_window = true
+infer_window = true
+pipeline_window = true
 
-# per-frame per-class scalars (time series)
-class_counts_per_frame = true      # per-class count every keyframe
-class_confidence_per_frame = true  # per-class conf min/max every keyframe
-class_area_per_frame = true        # per-class bbox area min/max every keyframe
-keyframe_gap = true                # ms between consecutive keyframes
+# Auxiliary — internal plumbing, rarely useful
+track_counts = true
+health_ms = true
+loop_latency = true
+frame_id = true

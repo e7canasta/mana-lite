@@ -1,4 +1,4 @@
-use crate::metrics::MetricsReport;
+use crate::metrics::{MetricsReport, PerClassFrameStats};
 
 pub enum Event {
     Meta {
@@ -16,12 +16,14 @@ pub enum Event {
         frame_id: u64,
         is_keyframe: bool,
         decode_ms: u64,
+        gap_ms: u64,
     },
     Detection {
         frame_id: u64,
         model: String,
         infer_ms: u64,
         detections: Vec<DetRecord>,
+        per_class: Option<PerClassFrameStats>,
     },
     Zone {
         zone: String,
@@ -132,12 +134,12 @@ impl Event {
         }
     }
 
-    pub fn frame_ingest(frame_id: u64, is_keyframe: bool, decode_ms: u64) -> Self {
-        Event::Frame { frame_id, is_keyframe, decode_ms }
+    pub fn frame_ingest(frame_id: u64, is_keyframe: bool, decode_ms: u64, gap_ms: u64) -> Self {
+        Event::Frame { frame_id, is_keyframe, decode_ms, gap_ms }
     }
 
-    pub fn detection(frame_id: u64, model: &str, infer_ms: u64, detections: Vec<DetRecord>) -> Self {
-        Event::Detection { frame_id, model: model.into(), infer_ms, detections }
+    pub fn detection(frame_id: u64, model: &str, infer_ms: u64, detections: Vec<DetRecord>, per_class: Option<PerClassFrameStats>) -> Self {
+        Event::Detection { frame_id, model: model.into(), infer_ms, detections, per_class }
     }
 
     pub fn zone_occupied(zone: &str, label: &str, by_class: &str, confidence: f32, frame_id: u64) -> Self {

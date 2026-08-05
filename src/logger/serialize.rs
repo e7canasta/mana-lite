@@ -38,15 +38,17 @@ pub fn write_event(event: &Event, ts: &str, buf: &mut Vec<u8>) {
                 buf.extend_from_slice(b"\"");
             }
         }
-        Event::Frame { frame_id, is_keyframe, decode_ms } => {
+        Event::Frame { frame_id, is_keyframe, decode_ms, gap_ms } => {
             buf.extend_from_slice(b"\"type\":\"frame\",\"frame_id\":");
             write_u64(*frame_id, buf);
             buf.extend_from_slice(b",\"is_keyframe\":");
             buf.extend_from_slice(if *is_keyframe { b"true" } else { b"false" });
             buf.extend_from_slice(b",\"decode_ms\":");
             write_u64(*decode_ms, buf);
+            buf.extend_from_slice(b",\"gap_ms\":");
+            write_u64(*gap_ms, buf);
         }
-        Event::Detection { frame_id, model, infer_ms, detections } => {
+        Event::Detection { frame_id, model, infer_ms, detections, per_class } => {
             buf.extend_from_slice(b"\"type\":\"detection\",\"frame_id\":");
             write_u64(*frame_id, buf);
             buf.extend_from_slice(b",\"model\":\"");
@@ -68,6 +70,30 @@ pub fn write_event(event: &Event, ts: &str, buf: &mut Vec<u8>) {
                 buf.extend_from_slice(b"]}");
             }
             buf.extend_from_slice(b"]");
+            if let Some(pc) = per_class {
+                if !pc.stats.is_empty() {
+                    buf.extend_from_slice(b",\"per_class\":{");
+                    let mut first = true;
+                    for (cls, stat) in &pc.stats {
+                        if !first { buf.push(b','); }
+                        first = false;
+                        buf.extend_from_slice(b"\"");
+                        buf.extend_from_slice(cls.as_bytes());
+                        buf.extend_from_slice(b"\":{\"count\":");
+                        write_u64(stat.count, buf);
+                        buf.extend_from_slice(b",\"conf_min\":");
+                        write_f32(stat.conf_min, buf);
+                        buf.extend_from_slice(b",\"conf_max\":");
+                        write_f32(stat.conf_max, buf);
+                        buf.extend_from_slice(b",\"area_min\":");
+                        write_f64(stat.area_min, buf);
+                        buf.extend_from_slice(b",\"area_max\":");
+                        write_f64(stat.area_max, buf);
+                        buf.extend_from_slice(b"}");
+                    }
+                    buf.extend_from_slice(b"}");
+                }
+            }
         }
         Event::Zone { zone, event, class, label, confidence, frame_id } => {
             buf.extend_from_slice(b"\"type\":\"zone\",\"zone\":\"");
@@ -216,6 +242,22 @@ pub fn write_u64(n: u64, buf: &mut Vec<u8>) {
 }
 
 pub fn write_f32(v: f32, buf: &mut Vec<u8>) {
+    if v.is_nan() || v.is_infinite() || v.is_subnormal() {
+        buf.extend_from_slice(b"null");
+        return;
+    }
+    use std::io::Write;
+    let _ = write!(buf, "{v:.6}");
+    let strip = buf.iter().rev().take_while(|&&b| b == b'0').count();
+    let dot = buf.iter().rposition(|&b| b == b'.').unwrap_or(buf.len());
+    let keep = if strip > 0 && buf.len() - strip > dot { buf.len() - strip } else { buf.len() };
+    buf.truncate(keep);
+    if buf.ends_with(&[b'.']) {
+        buf.truncate(buf.len() - 1);
+    }
+}
+
+pub fn write_f64(v: f64, buf: &mut Vec<u8>) {
     if v.is_nan() || v.is_infinite() || v.is_subnormal() {
         buf.extend_from_slice(b"null");
         return;

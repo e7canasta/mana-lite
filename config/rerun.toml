@@ -1,23 +1,24 @@
-# rerun.toml — Rerun viewer blueprint layout.
-# Each [[rerun.rows]] entry is a panel row (top to bottom).
-# kind: spatial2d | timeseries | horizontal
-# horizontal rows contain [[rerun.rows.panels]] children.
+# rerun.toml — Rerun viewer blueprint layout (declarative reference).
+# The actual blueprint is sent by code (send_default_blueprint in viz.rs).
+# This file documents the intended layout for manual import or future auto-build.
 
 [rerun]
 app = "mana-lite"
 max_bytes_in_flight_mb = 32
 auto_views = false
-panels_expanded = true            # Blueprint, Selection, Time panels
+panels_expanded = true
 
+# Row 1: Camera + bounding boxes overlay
 [[rerun.rows]]
 kind = "spatial2d"
 name = "Camera"
 origin = "/world/camera"
 share = 5.0
 
+# Row 2: Per-frame per-class stats (horizontal: 3 timeseries)
 [[rerun.rows]]
 kind = "horizontal"
-name = "Per-Frame Classes"
+name = "Per-Class Activity"
 share = 1.0
 panels = [
     { kind = "timeseries", name = "Counts",     origin = "/infer", contents = ["+ /infer/**/per_frame/counts/**"] },
@@ -25,11 +26,12 @@ panels = [
     { kind = "timeseries", name = "Area",       origin = "/infer", contents = ["+ /infer/**/per_frame/area/**"] },
 ]
 
+# Row 3: Pipeline health (horizontal: latency + stream gap)
 [[rerun.rows]]
 kind = "horizontal"
-name = "Latency & Signals"
+name = "Pipeline Health"
 share = 1.0
 panels = [
-    { kind = "timeseries", name = "Latency", origin = "/pipeline",     contents = ["+ $origin/infer/**/latency_us", "+ $origin/decode/latency_us"] },
-    { kind = "timeseries", name = "Signals", origin = "/ingest/normal", contents = ["+ /ingest/normal/gap_ms", "+ /world/signals/frame_id"] },
+    { kind = "timeseries", name = "Latency", origin = "/pipeline",     contents = ["+ /pipeline/infer/**/latency_us", "+ /pipeline/decode/latency_us"] },
+    { kind = "timeseries", name = "Stream",  origin = "/ingest/normal", contents = ["+ /ingest/normal/gap_ms"] },
 ]
