@@ -190,29 +190,42 @@ pub fn compute_largest_class_roi(
     margin: f32,
     frame_w: u32,
     frame_h: u32,
+    min_region: Option<[u32; 4]>,
 ) -> Option<(u32, u32, u32, u32)> {
-    let best = detections
+    let class_rect = detections
         .iter()
         .filter(|d| d.class == target_class)
         .max_by(|a, b| {
             let area_a = (a.bbox[2] - a.bbox[0]) * (a.bbox[3] - a.bbox[1]);
             let area_b = (b.bbox[2] - b.bbox[0]) * (b.bbox[3] - b.bbox[1]);
             area_a.partial_cmp(&area_b).unwrap_or(std::cmp::Ordering::Equal)
-        })?;
+        })
+        .map(|best| {
+            let [bx1, by1, bx2, by2] = best.bbox;
+            let bw = bx2 - bx1;
+            let bh = by2 - by1;
+            let expand_w = bw * margin;
+            let expand_h = bh * margin;
+            (
+                (bx1 - expand_w).max(0.0) as u32,
+                (by1 - expand_h).max(0.0) as u32,
+                ((bx2 + expand_w) as u32).min(frame_w),
+                ((by2 + expand_h) as u32).min(frame_h),
+            )
+        });
 
-    let [bx1, by1, bx2, by2] = best.bbox;
-    let bw = bx2 - bx1;
-    let bh = by2 - by1;
-    let expand_w = bw * margin;
-    let expand_h = bh * margin;
+    let result = match (class_rect, min_region) {
+        (Some((cx1, cy1, cx2, cy2)), Some([mx1, my1, mx2, my2])) => (
+            cx1.min(mx1), cy1.min(my1),
+            cx2.max(mx2), cy2.max(my2),
+        ),
+        (Some(cr), None) => cr,
+        (None, Some([mx1, my1, mx2, my2])) => (mx1, my1, mx2, my2),
+        (None, None) => return None,
+    };
 
-    let x1 = (bx1 - expand_w).max(0.0) as u32;
-    let y1 = (by1 - expand_h).max(0.0) as u32;
-    let x2 = ((bx2 + expand_w) as u32).min(frame_w);
-    let y2 = ((by2 + expand_h) as u32).min(frame_h);
-
-    if x2 <= x1 || y2 <= y1 {
+    if result.2 <= result.0 || result.3 <= result.1 {
         return None;
     }
-    Some((x1, y1, x2, y2))
+    Some(result)
 }

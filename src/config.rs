@@ -227,6 +227,8 @@ pub struct CropConfig {
     pub margin: f32,
     #[serde(default)]
     pub region: Option<[u32; 4]>,
+    #[serde(default)]
+    pub min_region: Option<[u32; 4]>,
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq)]

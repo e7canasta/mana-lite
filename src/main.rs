@@ -14,7 +14,7 @@ mod zones;
 
 use cascade::{CascadeRule, CascadeScheduler};
 use config::{
-    AppConfig, load_config, load_app_config, load_fsm_catalog, load_model_catalog,
+    AppConfig, CropType, load_config, load_app_config, load_fsm_catalog, load_model_catalog,
     load_zone_catalog, validate_fsm, load_viz_data, load_metrics_log, load_rerun_blueprint,
     RerunBlueprintConfig,
 };
@@ -257,12 +257,12 @@ impl App {
         let mut model_dets: HashMap<String, Vec<Detection>> = HashMap::new();
 
         for model_key in &ordered {
-            if !self.cascade.should_run(model_key, &model_dets) {
+            let crop_rect = self.resolve_crop_rect(model_key, &model_dets, fb);
+
+            if crop_rect.is_none() && !self.cascade.should_run(model_key, &model_dets) {
                 self.metrics.tick_infer_skip(model_key);
                 continue;
             }
-
-            let crop_rect = self.resolve_crop_rect(model_key, &model_dets, fb);
 
             if let Some((detections, infer_ms)) = self.infer.run(model_key, &fb.rgb, fb.w, fb.h, crop_rect) {
                 self.record_model_result(model_key, infer_ms, &detections);
@@ -281,10 +281,17 @@ impl App {
         fb: &FrameBuffer,
     ) -> Option<(u32, u32, u32, u32)> {
         let crop_cfg = self.infer.crop_info(model_key)?;
-        let parent_key = self.cascade.parent_of(model_key)?;
-        let parent_dets = model_dets.get(parent_key)?;
+
+        if crop_cfg.crop_type == CropType::Static {
+            return crop_cfg.region.map(|[x1, y1, x2, y2]| (x1, y1, x2, y2));
+        }
+
         let class = crop_cfg.class.as_ref()?;
-        compute_largest_class_roi(parent_dets, class, crop_cfg.margin, fb.w, fb.h)
+        let parent_dets = self.cascade.parent_of(model_key)
+            .and_then(|pk| model_dets.get(pk));
+
+        let dets_slice = parent_dets.map(|v| v.as_slice()).unwrap_or(&[]);
+        compute_largest_class_roi(dets_slice, class, crop_cfg.margin, fb.w, fb.h, crop_cfg.min_region)
     }
 
     fn resolve_models(&self, config: &AppConfig) -> Vec<String> {
