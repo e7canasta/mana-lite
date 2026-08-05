@@ -135,9 +135,10 @@ fn log_per_model(name: &str, m: &PerModelMetrics, window_s: u64) {
     } else {
         "?/0".into()
     };
-    let flags: Vec<&str> = vec![
-        if m.skips > 0 { Some("skip") } else { None },
-        if m.empty > 0 { Some("empty") } else { None },
+    let flags: Vec<String> = vec![
+        if m.skips > 0 { Some("skip".to_string()) } else { None },
+        if m.empty > 0 { Some("empty".to_string()) } else { None },
+        m.roi.map(|[x1, y1, x2, y2]| format!("roi:[{x1},{y1} {x2},{y2}]")),
     ].into_iter().flatten().collect();
     let flag_str = if flags.is_empty() { String::new() } else { format!(" | {}", flags.join(",")) };
 

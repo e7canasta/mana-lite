@@ -1,8 +1,8 @@
 [[rules]]
 model = "detect-fast"
 
-[[rules]]
-model = "detect-large"
-
-[[rules]]
-model = "detect-v2"
+# [[rules]]
+# model = "detect-large"
+#
+# [[rules]]
+# model = "detect-v2"

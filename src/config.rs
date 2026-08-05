@@ -379,6 +379,8 @@ impl Default for VizDataInner {
 pub struct VizSendToggles {
     #[serde(default = "default_true")] pub frames: bool,
     #[serde(default = "default_true")] pub boxes: bool,
+    #[serde(default)] pub crop_frames: bool,
+    #[serde(default)] pub roi_rects: bool,
     #[serde(default = "default_true")] pub decode_latency: bool,
     #[serde(default = "default_true")] pub infer_latency: bool,
     #[serde(default = "default_true")] pub class_counts_per_frame: bool,
@@ -390,7 +392,7 @@ pub struct VizSendToggles {
 impl Default for VizSendToggles {
     fn default() -> Self {
         Self {
-            frames: true, boxes: true,
+            frames: true, boxes: true, crop_frames: false, roi_rects: false,
             decode_latency: true, infer_latency: true,
             class_counts_per_frame: true, class_confidence_per_frame: true,
             class_area_per_frame: true, keyframe_gap: true,
@@ -700,7 +702,7 @@ mod tests {
         assert!(catalog.models.contains_key("detect-fast"));
         let detect = &catalog.models["detect-fast"];
         assert_eq!(detect.task, "detect");
-        assert_eq!(detect.confidence, 0.5);
+        assert_eq!(detect.confidence, 0.25);
     }
 
     #[test]

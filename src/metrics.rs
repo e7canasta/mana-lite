@@ -62,6 +62,7 @@ pub struct PerModelMetrics {
     pub conf_min: f64,
     pub bbox_area_sum: f64,
     pub class_counts: HashMap<String, u64>,
+    pub roi: Option<[u32; 4]>,
 }
 
 impl Default for PerModelMetrics {
@@ -78,6 +79,7 @@ impl Default for PerModelMetrics {
             conf_min: 0.0,
             bbox_area_sum: 0.0,
             class_counts: HashMap::new(),
+            roi: None,
         }
     }
 }
@@ -204,7 +206,7 @@ impl MetricsEngine {
         self.current.frames_total += 1;
     }
 
-    pub fn tick_inference_model(&mut self, model_key: &str, elapsed_us: u64, detections: &[Detection]) {
+    pub fn tick_inference_model(&mut self, model_key: &str, elapsed_us: u64, detections: &[Detection], crop_rect: Option<[u32; 4]>) {
         self.current.inferences += 1;
         self.current.infer_total_us += elapsed_us;
         self.current.infer_min_us = self.current.infer_min_us.min(elapsed_us);
@@ -220,6 +222,7 @@ impl MetricsEngine {
         m.infer_min_us = m.infer_min_us.min(elapsed_us);
         m.infer_max_us = m.infer_max_us.max(elapsed_us);
         m.total_dets += detections.len() as u64;
+        m.roi = crop_rect;
         if detections.is_empty() {
             m.empty += 1;
         }

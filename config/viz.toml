@@ -1,17 +1,15 @@
-# viz.toml — what gets sent to Rerun (per-frame only).
-# Window aggregates (Hz, avg_ms, skips) belong in the text log and JSONL, not here.
-# Rerun is for real-time per-frame timeseries: see jitter, spikes, gaps.
-
 [viz]
 enabled = true
 rerun_addr = "127.0.0.1:9876"
 
 [viz.send]
-frames = true                       # RGB image per keyframe
-boxes = true                        # detection bounding boxes
-decode_latency = true               # H.264 decode time per frame
-infer_latency = true                # per-model inference time per frame
-class_counts_per_frame = true       # per-class detection count per frame
-class_confidence_per_frame = true   # per-class conf min/max per frame
-class_area_per_frame = true         # per-class bbox area min/max per frame
-keyframe_gap = true                 # ms between keyframes
+frames = true
+boxes = true
+crop_frames = true
+roi_rects = true
+decode_latency = false
+infer_latency = false
+class_counts_per_frame = false
+class_confidence_per_frame = false
+class_area_per_frame = false
+keyframe_gap = false

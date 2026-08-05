@@ -48,13 +48,24 @@ pub fn write_event(event: &Event, ts: &str, buf: &mut Vec<u8>) {
             buf.extend_from_slice(b",\"gap_ms\":");
             write_u64(*gap_ms, buf);
         }
-        Event::Detection { frame_id, model, infer_ms, detections, per_class } => {
+        Event::Detection { frame_id, model, infer_ms, detections, per_class, crop } => {
             buf.extend_from_slice(b"\"type\":\"detection\",\"frame_id\":");
             write_u64(*frame_id, buf);
             buf.extend_from_slice(b",\"model\":\"");
             write_json_string(model, buf);
             buf.extend_from_slice(b"\",\"infer_ms\":");
             write_u64(*infer_ms, buf);
+            if let Some([x1, y1, x2, y2]) = crop {
+                buf.extend_from_slice(b",\"crop\":[");
+                write_u64(*x1 as u64, buf);
+                buf.push(b',');
+                write_u64(*y1 as u64, buf);
+                buf.push(b',');
+                write_u64(*x2 as u64, buf);
+                buf.push(b',');
+                write_u64(*y2 as u64, buf);
+                buf.push(b']');
+            }
             buf.extend_from_slice(b",\"det\":[");
             for (i, d) in detections.iter().enumerate() {
                 if i > 0 { buf.push(b','); }
@@ -170,6 +181,17 @@ pub fn write_event(event: &Event, ts: &str, buf: &mut Vec<u8>) {
                 append_field(buf, "dets", m.total_dets);
                 append_field(buf, "skips", m.skips);
                 append_field(buf, "empty", m.empty);
+                if let Some([x1, y1, x2, y2]) = m.roi {
+                    buf.extend_from_slice(b",\"roi\":[");
+                    write_u64(x1 as u64, buf);
+                    buf.push(b',');
+                    write_u64(y1 as u64, buf);
+                    buf.push(b',');
+                    write_u64(x2 as u64, buf);
+                    buf.push(b',');
+                    write_u64(y2 as u64, buf);
+                    buf.push(b']');
+                }
                 if !m.class_counts.is_empty() {
                     buf.extend_from_slice(b",\"classes\":{");
                     let mut first_class = true;

@@ -1,6 +1,10 @@
+metrics_file = "config/metrics.toml"
+viz_file = "config/viz.toml"
+rerun_file = "config/rerun.toml"
+
 [source]
-url = "rtsp://192.168.1.6:8554/clip1"
-# url = "rtsp://192.168.1.6:8554/home"
+# url = "rtsp://192.168.1.6:8554/clip1"
+url = "rtsp://192.168.1.6:8554/home"
 username = "admin"
 password = ""
 transport = "tcp"
@@ -42,7 +46,3 @@ fsm = false
 [viz]
 enabled = true
 rerun_addr = "127.0.0.1:9876"
-
-metrics_file = "config/metrics.toml"
-viz_file = "config/viz.toml"
-rerun_file = "config/rerun.toml"

@@ -20,7 +20,7 @@ use config::{
 };
 use error::{ConfigError, ManaError, Result};
 use fsm::FsmEngine;
-use infer::{Detection, InferEngine, compute_largest_class_roi};
+use infer::{CropRect, Detection, InferEngine, InferenceResult, compute_largest_class_roi};
 use ingest::{AnyReader, Frame, IngestEngine, QueuedReader, RawKeyframe, RetinaReader};
 use logger::{DetRecord, Event, JsonlLevel, Logger};
 use mana_types::RawFrameV1;
@@ -61,6 +61,12 @@ struct App {
     viz: VizBridge,
     state: PipelineState,
     log: Logger,
+    crop_frames_pending: Vec<CropFrameQueue>,
+}
+
+struct CropFrameQueue {
+    model: String,
+    crop_frame: Option<infer::CropFrameInfo>,
 }
 
 impl App {
@@ -178,6 +184,7 @@ impl App {
         Ok(Self {
             infer, model_tasks, tracker, zone_engine, fsm_engine, cascade,
             ingest, metrics, health, decoder, snapshots, viz, state, log,
+            crop_frames_pending: Vec::new(),
         })
     }
 
@@ -257,6 +264,8 @@ impl App {
         let mut model_dets: HashMap<String, Vec<Detection>> = HashMap::new();
 
         for model_key in &ordered {
+            let is_static = self.infer.crop_info(model_key)
+                .map_or(false, |c| c.crop_type == CropType::Static);
             let crop_rect = self.resolve_crop_rect(model_key, &model_dets, fb);
 
             let always_run = self.infer.crop_info(model_key)
@@ -267,12 +276,14 @@ impl App {
                 continue;
             }
 
-            if let Some((detections, infer_ms)) = self.infer.run(model_key, &fb.rgb, fb.w, fb.h, crop_rect) {
-                self.record_model_result(model_key, infer_ms, &detections);
+            let manual_crop = if is_static { None } else { crop_rect };
+            if let Some(mut output) = self.infer.run(model_key, &fb.rgb, fb.w, fb.h, manual_crop) {
+                let crop_frame = output.crop_frame.take();
+                self.record_model_result(model_key, &output, crop_frame, crop_rect);
                 if config.pipeline.track {
-                    self.run_tracking(&detections);
+                    self.run_tracking(&output.detections);
                 }
-                model_dets.insert(model_key.clone(), detections);
+                model_dets.insert(model_key.clone(), output.detections);
             }
         }
     }
@@ -286,7 +297,7 @@ impl App {
         let crop_cfg = self.infer.crop_info(model_key)?;
 
         if crop_cfg.crop_type == CropType::Static {
-            return crop_cfg.region.map(|[x1, y1, x2, y2]| (x1, y1, x2, y2));
+            return crop_cfg.region.map(CropRect::from_array);
         }
 
         let class = crop_cfg.class.as_ref()?;
@@ -310,16 +321,23 @@ impl App {
             .collect()
     }
 
-    fn record_model_result(&mut self, model_key: &str, infer_ms: u64, detections: &[Detection]) {
-        let per_class = PerClassFrameStats::from_detections(detections);
-        self.metrics.tick_inference_model(model_key, infer_ms, detections);
-        self.viz.log_infer_latency(model_key, infer_ms);
-        self.viz.log_detection_boxes(model_key, detections);
+    fn record_model_result(&mut self, model_key: &str, output: &InferenceResult, crop_frame: Option<infer::CropFrameInfo>, crop_rect: Option<CropRect>) {
+        let per_class = PerClassFrameStats::from_detections(&output.detections);
+        self.metrics.tick_inference_model(model_key, output.infer_ms, &output.detections, crop_rect.map(|r| r.to_array()));
+        self.viz.log_infer_latency(model_key, output.infer_ms);
+        self.viz.log_detection_boxes(model_key, &output.detections);
+        if let Some(rect) = crop_rect {
+            self.viz.log_roi_boxes(model_key, rect);
+        }
         self.viz.log_per_frame_class_stats(model_key, &per_class);
+        if crop_rect.is_some() {
+            self.crop_frames_pending.push(CropFrameQueue { model: model_key.to_string(), crop_frame });
+        }
         self.log.emit(Event::detection(
-            self.state.frame_number(), model_key, infer_ms,
-            detections.iter().map(DetRecord::from).collect(),
+            self.state.frame_number(), model_key, output.infer_ms,
+            output.detections.iter().map(DetRecord::from).collect(),
             Some(per_class),
+            crop_rect.map(|r| r.to_array()),
         ));
     }
 
@@ -375,10 +393,13 @@ impl App {
 
     fn flush_viz_metrics(&mut self, frame_buf: &Option<FrameBuffer>) {
         if let Some(fb) = frame_buf.as_ref() {
-            self.viz.log_frame(
-                &raw_frame_header(fb, self.state.frame_number()),
-                &fb.rgb,
-            );
+            let header = raw_frame_header(fb, self.state.frame_number());
+            self.viz.log_frame(&header, &fb.rgb);
+            for entry in self.crop_frames_pending.drain(..) {
+                if let Some(crop) = entry.crop_frame {
+                    self.viz.log_crop_frame(&entry.model, &header, crop);
+                }
+            }
         }
     }
 

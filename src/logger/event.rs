@@ -24,6 +24,7 @@ pub enum Event {
         infer_ms: u64,
         detections: Vec<DetRecord>,
         per_class: Option<PerClassFrameStats>,
+        crop: Option<[u32; 4]>,
     },
     Zone {
         zone: String,
@@ -138,8 +139,8 @@ impl Event {
         Event::Frame { frame_id, is_keyframe, decode_ms, gap_ms }
     }
 
-    pub fn detection(frame_id: u64, model: &str, infer_ms: u64, detections: Vec<DetRecord>, per_class: Option<PerClassFrameStats>) -> Self {
-        Event::Detection { frame_id, model: model.into(), infer_ms, detections, per_class }
+    pub fn detection(frame_id: u64, model: &str, infer_ms: u64, detections: Vec<DetRecord>, per_class: Option<PerClassFrameStats>, crop: Option<[u32; 4]>) -> Self {
+        Event::Detection { frame_id, model: model.into(), infer_ms, detections, per_class, crop }
     }
 
     pub fn zone_occupied(zone: &str, label: &str, by_class: &str, confidence: f32, frame_id: u64) -> Self {

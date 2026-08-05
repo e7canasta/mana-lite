@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 use mana_types::RawFrameV1;
 use mana_viz::logging;
 
-use crate::infer::Detection;
+use crate::infer::{CropRect, Detection, CropFrameInfo};
 use crate::metrics::PerClassFrameStats;
 use crate::config::{VizSendToggles, RerunRoot};
 
@@ -24,15 +24,13 @@ pub struct VizBridge {
     inner: Inner,
     addr: String,
     toggles: VizSendToggles,
-    #[allow(dead_code)]
-    blueprint: Option<RerunRoot>,
 }
 
 const INITIAL_BACKOFF_MS: u64 = 1_000;
 const MAX_BACKOFF_MS: u64 = 30_000;
 
 impl VizBridge {
-    pub fn new(rerun_addr: &str, toggles: &VizSendToggles, blueprint: &RerunRoot) -> Self {
+    pub fn new(rerun_addr: &str, toggles: &VizSendToggles, _blueprint: &RerunRoot) -> Self {
         Self {
             inner: Inner::Disconnected {
                 next_retry: Instant::now(),
@@ -41,7 +39,6 @@ impl VizBridge {
             },
             addr: rerun_addr.to_string(),
             toggles: toggles.clone(),
-            blueprint: Some(blueprint.clone()),
         }
     }
 
@@ -50,7 +47,6 @@ impl VizBridge {
             inner: Inner::Disabled,
             addr: String::new(),
             toggles: VizSendToggles::default(),
-            blueprint: None,
         }
     }
 
@@ -87,45 +83,11 @@ impl VizBridge {
             .with_origin("/world/camera")
             .with_contents(["+ $origin/**"]);
 
-        let class_counts_view = rerun::blueprint::TimeSeriesView::new("Counts")
-            .with_origin("/infer")
-            .with_contents(["+ /infer/**/per_frame/counts/**"]);
-
-        let class_conf_view = rerun::blueprint::TimeSeriesView::new("Confidence")
-            .with_origin("/infer")
-            .with_contents(["+ /infer/**/per_frame/conf/**"]);
-
-        let class_area_view = rerun::blueprint::TimeSeriesView::new("Area")
-            .with_origin("/infer")
-            .with_contents(["+ /infer/**/per_frame/area/**"]);
-
-        let latency_view = rerun::blueprint::TimeSeriesView::new("Latency")
-            .with_origin("/pipeline")
-            .with_contents(["+ /pipeline/infer/**/latency_us", "+ /pipeline/decode/latency_us"]);
-
-        let gap_view = rerun::blueprint::TimeSeriesView::new("Stream")
-            .with_origin("/ingest/normal")
-            .with_contents(["+ /ingest/normal/gap_ms"]);
-
-        let blueprint = rerun::blueprint::Blueprint::new(
-            rerun::blueprint::Vertical::new([
-                camera_view.into(),
-                rerun::blueprint::Horizontal::new([
-                    class_counts_view.into(),
-                    class_conf_view.into(),
-                    class_area_view.into(),
-                ]).into(),
-                rerun::blueprint::Horizontal::new([
-                    latency_view.into(),
-                    gap_view.into(),
-                ]).into(),
-            ])
-            .with_row_shares(vec![5.0, 1.0, 1.0]),
-        )
-        .with_blueprint_panel(rerun::blueprint::BlueprintPanel::new().with_state(PanelState::Expanded))
-        .with_selection_panel(rerun::blueprint::SelectionPanel::new().with_state(PanelState::Expanded))
-        .with_time_panel(rerun::blueprint::TimePanel::new().with_state(PanelState::Expanded))
-        .with_auto_views(false);
+        let blueprint = rerun::blueprint::Blueprint::new(camera_view)
+            .with_blueprint_panel(rerun::blueprint::BlueprintPanel::new().with_state(PanelState::Expanded))
+            .with_selection_panel(rerun::blueprint::SelectionPanel::new().with_state(PanelState::Expanded))
+            .with_time_panel(rerun::blueprint::TimePanel::new().with_state(PanelState::Expanded))
+            .with_auto_views(true);
 
         if let Err(e) = blueprint.send(rec, Default::default()) {
             log::warn!("viz blueprint send failed: {e}");
@@ -169,6 +131,58 @@ impl VizBridge {
             if let Err(e) = logging::frame::log_frame_rgb24(rec, "/world/camera/bgr", header, rgb) {
                 log::warn!("viz frame log failed: {e}");
             }
+        }
+    }
+
+    pub fn log_crop_frame(&self, model: &str, header: &RawFrameV1, crop: CropFrameInfo) {
+        if !self.toggles.crop_frames { return; }
+        let rec = match &self.inner {
+            Inner::Connected { rec, .. } => rec,
+            _ => return,
+        };
+        let path = format!("/world/camera/crops/{model}/bgr");
+        if let Err(e) = logging::frame::log_frame_rgb24_owned(
+            rec,
+            &path,
+            &RawFrameV1 {
+                width: crop.w,
+                height: crop.h,
+                ..header.clone()
+            },
+            crop.rgb,
+        ) {
+            log::warn!("viz crop frame {model} failed: {e}");
+        }
+    }
+
+    pub fn log_roi_boxes(&self, model: &str, rect: CropRect) {
+        if !self.toggles.roi_rects { return; }
+        let rec = match &self.inner {
+            Inner::Connected { rec, .. } => rec,
+            _ => return,
+        };
+        let path = format!("/world/camera/rois/{model}");
+        rec.log(path.as_str(), &rerun::Clear::recursive()).ok();
+
+        let x1 = rect.x1 as f32; let y1 = rect.y1 as f32;
+        let x2 = rect.x2 as f32; let y2 = rect.y2 as f32;
+        let cx = (x1 + x2) / 2.0;
+        let cy = (y1 + y2) / 2.0;
+        let hw = ((x2 - x1).abs()) / 2.0;
+        let hh = ((y2 - y1).abs()) / 2.0;
+        let label = format!("ROI {:.0}x{:.0}", (x2 - x1).abs(), (y2 - y1).abs());
+
+        let bbox = rerun::Boxes2D::from_centers_and_half_sizes(
+            [rerun::datatypes::Vec2D([cx, cy])],
+            [rerun::datatypes::Vec2D([hw, hh])],
+        )
+        .with_labels([label.as_str()])
+        .with_colors([rerun::Color::from_unmultiplied_rgba(0, 255, 0, 255)])
+        .with_radii([2.0]);
+
+        let entity = format!("{path}/roi/0");
+        if let Err(e) = rec.log(entity.as_str(), &bbox) {
+            log::warn!("viz roi boxes {model} failed: {e}");
         }
     }
 

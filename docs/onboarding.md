@@ -177,39 +177,245 @@ El filtro por task es complementario al cascade:
 
 ## 4. ROI — crops por modelo
 
-> **Guia completa:** [docs/roi.md](roi.md) — las dos fuentes (static/dinamico), las tres politicas (`min_region`, `max_region`, `fallback`), recetas practicas, y verificacion.
+> **Guia completa:** [docs/roi.md](roi.md) — las dos fuentes, las tres politicas (`min_region`, `max_region`, `fallback`), recetas practicas, y verificacion detallada.
 
-Cada modelo puede definir un crop en `models.toml` bajo `[models.<name>.crop]`. El modelo recibe solo una region del frame → mas rapido y mas preciso.
+### Concepto
 
-**Dos fuentes, tres politicas:**
+Cada modelo puede recortar el frame antes de inferir. El modelo solo ve los pixeles de una region → procesa menos, se distrae menos.
+
+| Motivacion | Sin ROI | Con ROI |
+|---|---|---|
+| **Velocidad** | 640x480 → toda la escena | 400x300 → 2.5x menos pixeles |
+| **Precision** | Fondo agrega ruido al clasificador | Solo la zona relevante |
+| **Privacidad** | Detecta objetos en la puerta | `max_region` excluye la puerta |
+
+Un crop de la mitad del area reduce ~4x los pixeles que el modelo procesa.
+
+---
+
+### Las dos fuentes
+
+#### Static — rectangulo fijo
+
+Para camaras fijas que miran un area predecible. Coordenadas en pixeles del frame original.
 
 ```toml
-# Static — rectangulo fijo
 [models.detect-fast.crop]
 type = "static"
-region = [80, 150, 560, 430]
+region = [120, 90, 520, 390]  # x1, y1, x2, y2 — centro del frame
+```
 
-# LargestClass — dinamico, desde detecciones del parent
+El ROI se calcula una vez al cargar el modelo. No depende de detecciones. El modelo siempre corre en esa region.
+
+**Ideal para:** camara apuntando a una cama, silla, puerta — zonas fijas.
+
+#### LargestClass — dinamico desde el parent
+
+El ROI se recalcula cada frame tomando el bbox mas grande de una clase detectada por el modelo padre.
+
+```toml
 [models.pose-standard.crop]
 type = "largest_class"
 class = "person"
-margin = 0.15
-min_region = [100, 200, 500, 450]   # nunca mas chico que esto
-max_region = [0, 0, 640, 400]       # nunca mas grande que esto
-fallback = "full"                    # sin persona → frame completo
+margin = 0.15                    # expande el bbox 15% en cada direccion
 ```
 
-| Campo | Tipo | Default | Descripcion |
-|---|---|---|---|
-| `type` | `"static"` o `"largest_class"` | — | Fuente del ROI |
-| `class` | string | — | Clase a buscar (solo `largest_class`) |
-| `margin` | float | `0.15` | Expansion relativa al bbox |
-| `region` | `[x1,y1,x2,y2]` | — | Rect fijo (solo `static`) |
-| `min_region` | `[x1,y1,x2,y2]` | — | Piso: nunca mas chico que esto |
-| `max_region` | `[x1,y1,x2,y2]` | — | Techo: nunca mas grande que esto |
-| `fallback` | `"skip"` o `"full"` | `"skip"` | Sin deteccion: saltar o frame completo |
+**Ideal para:** modelo hijo que solo debe mirar donde el padre encontro algo. Ej: pose solo donde hay persona, face solo donde hay cabeza.
 
-**Regla de oro:** todas las detecciones salen en coordenadas del frame original, sin importar el crop. El tracking, zonas y FSM funcionan igual.
+---
+
+### Pipeline mental
+
+```
+Frame 640x480
+    │
+    ▼
+┌─────────────────────────────┐
+│  Modelo padre (detect-fast) │  ← frame completo, sin crop
+│  detecta: person @ [150,100,350,400], chair @ [500,200,600,300]
+└─────────────────────────────┘
+    │
+    ▼
+┌─────────────────────────────┐
+│  resolve_crop_rect()        │
+│  largest_class("person")    │
+│  → bbox[150,100→350,400]    │
+│  + margin 15%               │
+│  → crop [120,70,380,430]    │
+└─────────────────────────────┘
+    │
+    ▼  crop_rect = {x1:120, y1:70, x2:380, y2:430}
+┌─────────────────────────────┐
+│  Modelo hijo (pose)         │
+│  recorta RGB a 260x360      │
+│  infiere → keypoints         │
+│  +offset (120,70) → frame   │  ← coordenadas corregidas
+└─────────────────────────────┘
+    │
+    ▼  detecciones en espacio original
+Tracking, zonas, FSM, JSONL — sin cambios
+```
+
+---
+
+### Las tres politicas (solo `largest_class`)
+
+```toml
+[models.bed-detector.crop]
+type = "largest_class"
+class = "person"
+margin = 0.15
+min_region = [100, 200, 500, 450]   # piso: nunca mas chico
+max_region = [0, 0, 640, 400]       # techo: nunca mas grande
+fallback = "full"                    # "skip" (default) o "full"
+```
+
+| Politica | Funcion | Ejemplo |
+|---|---|---|
+| `min_region` | ROI nunca se achica mas que este rectangulo | Siempre cubre la cama aunque la persona este en una esquina |
+| `max_region` | ROI nunca se expande mas que este rectangulo | No mira la puerta (y > 400) por privacidad |
+| `fallback` | Que hacer si no se detecta la clase target | `"skip"` → no corre; `"full"` → corre en frame completo |
+
+**Tabla de decision:**
+
+| Hay persona? | Config | Comportamiento |
+|---|---|---|
+| No | `min_region` | Corre con `min_region` (el modelo igual se ejecuta) |
+| No | sin `min_region`, `fallback = "skip"` | No corre (el cascade ya lo habria salteado) |
+| No | sin `min_region`, `fallback = "full"` | Corre en frame completo |
+| Si | normal | `union(persona+margin, min_region) ∩ max_region` |
+
+---
+
+### Independencia por modelo
+
+Cada entry en `models.toml` define su propio `[models.<name>.crop]`. No se heredan, no se comparten. Tres modelos, tres politicas distintas:
+
+```toml
+[models.detect-fast]              # root — sin crop, frame completo
+path = "models/yolo26n.onnx"
+task = "detect"
+confidence = 0.5
+
+[models.bed-detector.crop]      # siempre cubre la cama, nunca la puerta
+type = "largest_class"
+class = "person"
+margin = 0.15
+min_region = [100, 200, 500, 450]
+max_region = [0, 0, 640, 400]
+fallback = "full"
+
+[models.pose-standard.crop]      # solo persona, crop justo
+type = "largest_class"
+class = "person"
+margin = 0.15
+```
+
+---
+
+### Interaccion con el cascade
+
+El crop y el cascade se complementan — no se reemplazan:
+
+```
+cascade decide SI corre  →  should_run(model, &model_dets)
+crop decide DONDE corre  →  resolve_crop_rect(model, &model_dets, fb)
+```
+
+**Regla para `largest_class`:** el modelo DEBE ser child en `cascade.toml` (tener `requires`). Si no, no hay parent de donde sacar detecciones.
+
+```toml
+# cascade.toml — esto es necesario para que largest_class funcione
+[[rules]]
+model = "pose-standard"
+requires = "detect-fast"          # ← define el parent
+requires_class = "person"         # ← condicion para correr
+```
+
+**Tabla de ejecucion:**
+
+| Crop config | Sin deteccion del parent | Con deteccion |
+|---|---|---|
+| Sin crop | `should_run()` decide | Frame completo |
+| `static` | Siempre corre con `region` | Siempre corre con `region` |
+| `largest_class` (sin min ni fallback) | Skip | Crop al bbox |
+| `largest_class` + `min_region` | Corre con `min_region` | Union |
+| `largest_class` + `fallback = "full"` | Frame completo | Crop al bbox |
+
+---
+
+### Interaccion con el resto del pipeline
+
+**No hay que tocar nada.** El engine aplica el offset automaticamente (`infer.rs:run()`):
+
+```
+deteccion en espacio del crop (10,20)
+    + offset del crop (120,70)
+    = deteccion en frame original (130,90)  ← esto recibe el tracker
+```
+
+- **Tracking:** las detecciones llegan con coordenadas originales. SORT funciona igual.
+- **Zonas:** `zones.toml` usa coordenadas del frame original — compatibles sin cambios.
+- **FSM:** `zone_occupied` evalua tracks en espacio original.
+- **Rerun:** las cajas se renderizan sobre la imagen completa.
+- **JSONL:** los bboxes se serializan en espacio original. Un `jq` no sabe que hubo crop.
+
+---
+
+### Como verificarlo
+
+#### En el log de arranque
+
+```
+model detect-fast: static ROI [120,90 520,390]
+model detect-fast: loaded (detect)
+```
+
+#### En el text log cada 5s
+
+Si el crop funciona, `detect-fast` deberia mostrar menos detecciones que sin crop (solo ve la region recortada), y la latencia deberia ser menor:
+
+```
+detect-fast:  0.5 Hz | 2 calls | 12ms (10-15ms) | 4/5fr
+```
+
+Compara con correrlo sin crop — la latencia y el numero de detecciones deberian bajar.
+
+#### En JSONL
+
+Cada evento de deteccion incluye el crop aplicado:
+
+```json
+{"type":"detection","frame_id":42,"model":"detect-fast","infer_ms":14,"crop":[120,90,520,390],"det":[{"class":"person","confidence":0.87,"bbox":[180,150,350,380]}]}
+```
+
+El campo `crop` solo aparece cuando el modelo tiene ROI. Las coordenadas de `bbox` estan en el frame original — el bbox `[180,150,...]` cae dentro de `crop:[120,90,...]` porque la persona detectada esta dentro de la region recortada.
+
+```bash
+jq 'select(.type=="detection" and .model=="detect-fast") | {f: .frame_id, crop: .crop, n: (.det | length)}' mana-*.jsonl
+```
+
+#### En Rerun
+
+Con `auto_views = true` en `rerun.toml`, Rerun genera las vistas automaticamente segun las entidades que recibe:
+
+- **Camera** (`/world/camera`): frame completo con bboxes en posiciones correctas
+- **Crops** (`/world/camera/crops/detect-fast`): vista separada con los pixeles exactos que recibio el modelo
+
+Ambas vistas aparecen en pestañas separadas del blueprint. Los bboxes del modelo aparecen solo dentro de la region recortada — si el crop funciona, no hay detecciones fuera de esa zona.
+
+---
+
+### Troubleshooting
+
+| Sintoma | Causa probable | Que revisar |
+|---|---|---|
+| El modelo hijo nunca corre | `largest_class` sin `min_region` ni `fallback` y el parent no detecta | Agregar `fallback = "full"` o `min_region` |
+| Detecciones desplazadas | Bug en el offset (no deberia pasar) | `infer.rs:run()` — `d.bbox[i] += offset` |
+| La latencia no baja | El crop es casi del tamano del frame | Ajustar `margin` mas chico o usar `static` |
+| `max_region` no restringe | `max_region` mas grande que el frame | Verificar coordenadas en `models.toml` |
+| Bboxes fuera del crop | El modelo detecta objetos en bordes del crop | Normal — el offset los mapea a frame original. Si salen del frame, revisar `imgsz` del modelo |
+| El campo `crop` no aparece en JSONL | El modelo no tiene `[models.<name>.crop]` configurado | Revisar `models.toml` y confirmar que `detection_events = true` en `metrics.toml` |
 
 ---
 

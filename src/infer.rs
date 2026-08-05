@@ -8,7 +8,35 @@ use crate::config::{CropConfig, CropType, ModelCatalog, ModelEntry};
 use crate::error::Result;
 use crate::logger::DetRecord;
 
-pub type CropRect = (u32, u32, u32, u32);
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CropRect {
+    pub x1: u32,
+    pub y1: u32,
+    pub x2: u32,
+    pub y2: u32,
+}
+
+impl CropRect {
+    pub fn from_array(a: [u32; 4]) -> Self {
+        CropRect { x1: a[0], y1: a[1], x2: a[2], y2: a[3] }
+    }
+
+    pub fn to_array(self) -> [u32; 4] {
+        [self.x1, self.y1, self.x2, self.y2]
+    }
+}
+
+pub struct CropFrameInfo {
+    pub rgb: Vec<u8>,
+    pub w: u32,
+    pub h: u32,
+}
+
+pub struct InferenceResult {
+    pub detections: Vec<Detection>,
+    pub infer_ms: u64,
+    pub crop_frame: Option<CropFrameInfo>,
+}
 
 pub struct InferEngine {
     models: HashMap<String, LoadedModel>,
@@ -62,9 +90,7 @@ impl InferEngine {
                     models.insert(key.clone(), LoadedModel {
                         model,
                         run_count: 0,
-                        crop_config: entry.crop.as_ref()
-                            .filter(|c| c.crop_type == CropType::LargestClass)
-                            .cloned(),
+                        crop_config: entry.crop.clone(),
                     });
                 }
                 Err(e) => {
@@ -86,27 +112,29 @@ impl InferEngine {
         w: u32,
         h: u32,
         crop_rect: Option<CropRect>,
-    ) -> Option<(Vec<Detection>, u64)> {
+    ) -> Option<InferenceResult> {
         let loaded = self.models.get_mut(model_key)?;
 
-        let (img, offset_x, offset_y) = if let Some((x1, y1, x2, y2)) = crop_rect {
-            let crop_w = x2 - x1;
-            let crop_h = y2 - y1;
+        let (img, offset_x, offset_y, crop_frame) = if let Some(r) = crop_rect {
+            let crop_w = r.x2 - r.x1;
+            let crop_h = r.y2 - r.y1;
             if crop_w == 0 || crop_h == 0 {
                 return None;
             }
             let mut cropped = vec![0u8; (crop_w * crop_h * 3) as usize];
-            for row in y1..y2 {
-                let src_off = (row * w + x1) as usize * 3;
-                let dst_off = ((row - y1) * crop_w) as usize * 3;
+            for row in r.y1..r.y2 {
+                let src_off = (row * w + r.x1) as usize * 3;
+                let dst_off = ((row - r.y1) * crop_w) as usize * 3;
                 cropped[dst_off..dst_off + (crop_w as usize * 3)]
                     .copy_from_slice(&rgb[src_off..src_off + (crop_w as usize * 3)]);
             }
+            let crop_rgb = cropped.clone();
             let img = DynamicImage::ImageRgb8(RgbImage::from_raw(crop_w, crop_h, cropped)?);
-            (img, x1 as f32, y1 as f32)
+            let info = Some(CropFrameInfo { rgb: crop_rgb, w: crop_w, h: crop_h });
+            (img, r.x1 as f32, r.y1 as f32, info)
         } else {
             let img = DynamicImage::ImageRgb8(RgbImage::from_raw(w, h, rgb.to_vec())?);
-            (img, 0.0, 0.0)
+            (img, 0.0, 0.0, None)
         };
 
         let results = loaded.model.predict_image(&img, String::new()).ok()?;
@@ -126,7 +154,7 @@ impl InferEngine {
         }
         loaded.run_count += 1;
 
-        Some((detections, infer_ms))
+        Some(InferenceResult { detections, infer_ms, crop_frame })
     }
 
     pub fn model_count(&self) -> usize {
@@ -209,32 +237,32 @@ pub fn compute_largest_class_roi(
             let bh = by2 - by1;
             let expand_w = bw * margin;
             let expand_h = bh * margin;
-            (
-                (bx1 - expand_w).max(0.0) as u32,
-                (by1 - expand_h).max(0.0) as u32,
-                ((bx2 + expand_w) as u32).min(frame_w),
-                ((by2 + expand_h) as u32).min(frame_h),
-            )
+            CropRect {
+                x1: (bx1 - expand_w).max(0.0) as u32,
+                y1: (by1 - expand_h).max(0.0) as u32,
+                x2: ((bx2 + expand_w) as u32).min(frame_w),
+                y2: ((by2 + expand_h) as u32).min(frame_h),
+            }
         });
 
     let mut result = match (class_rect, min_region) {
-        (Some((cx1, cy1, cx2, cy2)), Some([mx1, my1, mx2, my2])) => (
-            cx1.min(mx1), cy1.min(my1),
-            cx2.max(mx2), cy2.max(my2),
-        ),
+        (Some(cr), Some([mx1, my1, mx2, my2])) => CropRect {
+            x1: cr.x1.min(mx1), y1: cr.y1.min(my1),
+            x2: cr.x2.max(mx2), y2: cr.y2.max(my2),
+        },
         (Some(cr), None) => cr,
-        (None, Some([mx1, my1, mx2, my2])) => (mx1, my1, mx2, my2),
+        (None, Some([mx1, my1, mx2, my2])) => CropRect { x1: mx1, y1: my1, x2: mx2, y2: my2 },
         (None, None) => return None,
     };
 
     if let Some([mx1, my1, mx2, my2]) = max_region {
-        result.0 = result.0.max(mx1);
-        result.1 = result.1.max(my1);
-        result.2 = result.2.min(mx2);
-        result.3 = result.3.min(my2);
+        result.x1 = result.x1.max(mx1);
+        result.y1 = result.y1.max(my1);
+        result.x2 = result.x2.min(mx2);
+        result.y2 = result.y2.min(my2);
     }
 
-    if result.2 <= result.0 || result.3 <= result.1 {
+    if result.x2 <= result.x1 || result.y2 <= result.y1 {
         return None;
     }
     Some(result)
@@ -252,35 +280,35 @@ mod tests {
     fn roi_largest_class_simple() {
         let dets = vec![person(100.0, 100.0, 200.0, 300.0)];
         let r = compute_largest_class_roi(&dets, "person", 0.0, 640, 480, None, None).unwrap();
-        assert_eq!(r, (100, 100, 200, 300));
+        assert_eq!(r, CropRect { x1: 100, y1: 100, x2: 200, y2: 300 });
     }
 
     #[test]
     fn roi_min_region_union() {
         let dets = vec![person(300.0, 100.0, 400.0, 200.0)];
         let r = compute_largest_class_roi(&dets, "person", 0.0, 640, 480, Some([100, 200, 500, 450]), None).unwrap();
-        assert_eq!(r, (100, 100, 500, 450));
+        assert_eq!(r, CropRect { x1: 100, y1: 100, x2: 500, y2: 450 });
     }
 
     #[test]
     fn roi_min_region_fallback() {
         let dets: Vec<Detection> = vec![];
         let r = compute_largest_class_roi(&dets, "person", 0.0, 640, 480, Some([100, 200, 500, 450]), None).unwrap();
-        assert_eq!(r, (100, 200, 500, 450));
+        assert_eq!(r, CropRect { x1: 100, y1: 200, x2: 500, y2: 450 });
     }
 
     #[test]
     fn roi_max_region_clamps() {
         let dets = vec![person(0.0, 0.0, 640.0, 480.0)];
         let r = compute_largest_class_roi(&dets, "person", 0.0, 640, 480, None, Some([50, 50, 400, 300])).unwrap();
-        assert_eq!(r, (50, 50, 400, 300));
+        assert_eq!(r, CropRect { x1: 50, y1: 50, x2: 400, y2: 300 });
     }
 
     #[test]
     fn roi_min_max_together() {
         let dets = vec![person(200.0, 100.0, 300.0, 200.0)];
         let r = compute_largest_class_roi(&dets, "person", 0.0, 640, 480, Some([50, 50, 500, 400]), Some([0, 0, 350, 300])).unwrap();
-        assert_eq!(r, (50, 50, 350, 300));
+        assert_eq!(r, CropRect { x1: 50, y1: 50, x2: 350, y2: 300 });
     }
 
     #[test]
