@@ -208,8 +208,7 @@ impl App {
 
             self.drain_ingest_counters();
             self.evaluate_fsm_wildcard(config);
-            let result = self.state.evaluate_health(&mut self.health, &mut self.log, &mut self.metrics);
-            if let Some((_, _)) = result.as_ref() {}
+            self.state.evaluate_health(&mut self.health, &mut self.log, &mut self.metrics);
             self.log.flush();
 
             self.viz.tick();
@@ -233,7 +232,7 @@ impl App {
 
         let (frame_buf, decode_us) = self.decoder.decode_timed(&kf.h264);
         let dt_ms = self.state.on_keyframe(decode_us, &mut self.metrics, &mut self.health, &mut self.log);
-        self.log_decode_latency_to_viz(decode_us);
+        self.viz.log_decode_latency(decode_us);
         self.viz.log_keyframe_gap(dt_ms);
         self.save_snapshot_if_enabled(&kf.h264, &frame_buf, config);
 
@@ -244,10 +243,6 @@ impl App {
         }
         self.evaluate_scene(config);
         self.flush_viz_metrics(&frame_buf);
-    }
-
-    fn log_decode_latency_to_viz(&self, decode_us: u64) {
-        self.viz.log_decode_latency(decode_us);
     }
 
     fn save_snapshot_if_enabled(&self, h264: &[u8], frame_buf: &Option<FrameBuffer>, config: &AppConfig) {

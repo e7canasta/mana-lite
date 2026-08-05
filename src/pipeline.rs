@@ -2,49 +2,26 @@ use crate::logger::{Event, Logger};
 use crate::metrics::{Health, HealthTransition, MetricsEngine, MetricsReport, PerModelMetrics};
 use std::time::Instant;
 
-#[derive(Debug, Clone, Copy)]
-pub struct DemoConfig {
-    max_frames: u64,
-}
-
-impl DemoConfig {
-    pub fn disabled() -> Self {
-        Self { max_frames: 0 }
-    }
-
-    pub fn limited(max_frames: u64) -> Self {
-        Self { max_frames }
-    }
-
-    pub fn is_active(&self) -> bool {
-        self.max_frames > 0
-    }
-
-    pub fn should_exit(&self, frame_count: u64) -> bool {
-        self.max_frames > 0 && frame_count >= self.max_frames
-    }
-}
-
 pub struct PipelineState {
     frame_count: u64,
-    demo: DemoConfig,
+    max_frames: Option<u64>,
     panic_count: u32,
     last_keyframe_at: Instant,
 }
 
 impl PipelineState {
     pub fn new(demo_mode: bool) -> Self {
-        let demo = if demo_mode { DemoConfig::limited(5) } else { DemoConfig::disabled() };
-        Self { frame_count: 0, demo, panic_count: 0, last_keyframe_at: Instant::now() }
+        Self {
+            frame_count: 0,
+            max_frames: if demo_mode { Some(5) } else { None },
+            panic_count: 0,
+            last_keyframe_at: Instant::now(),
+        }
     }
 
-    pub fn frame_number(&self) -> u64 {
-        self.frame_count
-    }
+    pub fn frame_number(&self) -> u64 { self.frame_count }
 
-    pub fn on_ok(&mut self) {
-        self.panic_count = 0;
-    }
+    pub fn on_ok(&mut self) { self.panic_count = 0; }
 
     pub fn on_panic(&mut self, max_consecutive: u32) -> bool {
         self.panic_count += 1;
@@ -66,36 +43,24 @@ impl PipelineState {
         dt_ms
     }
 
-    pub fn evaluate_health(&self, health: &mut Health, log: &mut Logger, metrics: &mut MetricsEngine) -> Option<(MetricsReport, Vec<String>)> {
+    pub fn evaluate_health(&self, health: &mut Health, log: &mut Logger, metrics: &mut MetricsEngine) {
         match health.evaluate() {
-            HealthTransition::Blind { ms_since_frame } => {
-                log.emit(Event::health_blind(ms_since_frame));
-            }
-            HealthTransition::Stale { component, ms_since_frame } => {
-                log.emit(Event::health_stale(component, ms_since_frame));
-            }
-            HealthTransition::Recovered => {
-                log.emit(Event::health_heartbeat(0, "ingest", 0));
-            }
+            HealthTransition::Blind { ms_since_frame } => log.emit(Event::health_blind(ms_since_frame)),
+            HealthTransition::Stale { component, ms_since_frame } => log.emit(Event::health_stale(component, ms_since_frame)),
+            HealthTransition::Recovered => log.emit(Event::health_heartbeat(0, "ingest", 0)),
             HealthTransition::None => {}
         }
-        if health.is_blind() {
-            metrics.tick_blind();
-        }
+        if health.is_blind() { metrics.tick_blind(); }
         if let Some((report, model_order)) = metrics.take_report() {
             log_report(&report, &model_order);
-            log.emit(Event::metrics(report.clone()));
-            return Some((report, model_order));
+            log.emit(Event::metrics(report));
         }
-        None
     }
 
-    pub fn is_demo(&self) -> bool {
-        self.demo.is_active()
-    }
+    pub fn is_demo(&self) -> bool { self.max_frames.is_some() }
 
     pub fn should_exit(&self) -> bool {
-        self.demo.should_exit(self.frame_count)
+        self.max_frames.map_or(false, |max| self.frame_count >= max)
     }
 }
 

@@ -586,12 +586,18 @@ fn apply_env_overrides(cfg: &mut AppConfig) {
     env_parse!("MANA_BACKOFF_MAX_MS" => cfg.ingest.reconnect_backoff_max_ms);
 }
 
-pub fn load_model_catalog(path: &Path) -> Result<ModelCatalog> { load_config(path) }
-pub fn load_zone_catalog(path: &Path) -> Result<ZoneCatalog> { load_config(path) }
-pub fn load_fsm_catalog(path: &Path) -> Result<FsmCatalog> { load_config(path) }
-pub fn load_viz_data(path: &Path) -> Result<VizDataConfig> { load_config(path) }
-pub fn load_metrics_log(path: &Path) -> Result<MetricsLogConfig> { load_config(path) }
-pub fn load_rerun_blueprint(path: &Path) -> Result<RerunBlueprintConfig> { load_config(path) }
+macro_rules! config_loader {
+    ($name:ident -> $type:ty) => {
+        pub fn $name(path: &Path) -> Result<$type> { load_config(path) }
+    };
+}
+
+config_loader!(load_model_catalog -> ModelCatalog);
+config_loader!(load_zone_catalog -> ZoneCatalog);
+config_loader!(load_fsm_catalog -> FsmCatalog);
+config_loader!(load_viz_data -> VizDataConfig);
+config_loader!(load_metrics_log -> MetricsLogConfig);
+config_loader!(load_rerun_blueprint -> RerunBlueprintConfig);
 
 pub fn validate_fsm(fsm: &FsmCatalog, models: &ModelCatalog, zones: &Option<ZoneCatalog>) -> Vec<String> {
     let mut errors = Vec::new();
