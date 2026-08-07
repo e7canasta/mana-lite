@@ -1,8 +1,9 @@
 [workspace]
-members = ["std/mana-rtsp", "std/mana-types", "std/mana-video", "std/mana-viz"]
+members = ["std/mana-rtsp", "std/mana-types", "std/mana-video", "std/mana-viz", "std/mana-geometry"]
 
 [package]
 name = "mana-lite"
+default-run = "mana-lite"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.89"
@@ -23,6 +24,7 @@ mana-rtsp = { path = "std/mana-rtsp" }
 mana-video = { path = "std/mana-video" }
 mana-viz = { path = "std/mana-viz" }
 mana-types = { path = "std/mana-types" }
+mana-geometry = { path = "std/mana-geometry" }
 retina = "0.4"
 tokio = { version = "1", features = ["macros", "rt", "net", "time"] }
 futures = "0.3"
@@ -36,6 +38,9 @@ log = "0.4"
 env_logger = "0.11"
 ffmpeg-next = "8"
 image = "0.25"
+imageproc = "0.25"
+ndarray = "0.17"
+vernier-mask = "0.2"
 rerun = "0.35"
 
 [profile.release]

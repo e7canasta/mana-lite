@@ -3,6 +3,10 @@
 **Status:** Draft
 **Date:** 2026-08-04
 
+> Estado de implementación: esta iteración implementa dependencias, filtros
+> sobre tracks y scope semántico. El gating temporal por intervalo sigue
+> pendiente y no debe configurarse todavía.
+
 ## Context
 
 No todos los modelos deben correr cada frame. Un modelo de pose (30ms) no necesita correr a 30fps — con 2fps es suficiente para tracking clínico. Un modelo de profundidad (50ms) puede correr cada 5 segundos. Necesitamos un scheduler que decida qué modelos ejecutar este ciclo basado en:
@@ -15,7 +19,12 @@ Este scheduler reemplaza el enfoque naive de "ejecutar todos los modelos del est
 
 ## Decision
 
-**Cascade Scheduler con tres niveles de gating: schedule → filter → scope.**
+**Cascade Scheduler con cuatro niveles de gating: schedule → detection → track → semantic scope.**
+
+La cascada no consume detecciones aisladas para activar modelos hijos. El flujo
+es: NMS y filtros geométricos, actualización del tracker, confirmación temporal
+del track y finalmente evaluación de confianza, área y región semántica. Solo un
+track confirmado y visible puede activar un modelo hijo.
 
 ```rust
 struct CascadeScheduler {

@@ -3,8 +3,9 @@ viz_file = "config/viz.toml"
 rerun_file = "config/rerun.toml"
 
 [source]
-# url = "rtsp://192.168.1.6:8554/clip1"
-url = "rtsp://192.168.1.6:8554/home"
+# url = "rtsp://192.168.1.6:8554/mana015"
+url = "rtsp://192.168.1.14:8554/clip1"
+# url = "rtsp://192.168.1.6:8554/home"
 username = "admin"
 password = ""
 transport = "tcp"
@@ -21,8 +22,18 @@ reconnect_backoff_max_ms = 30000
 model_catalog = "config/models.toml"
 default_model = "detect-fast"
 cascade_file = "config/cascade.toml"
-zones_file = "config/zones.toml"
-fsm_file = "config/fsm.toml"
+# zones_file = "config/zones.toml"
+# fsm_file = "config/fsm.toml"
+
+[detection]
+face_component_coverage = 0.70
+face_max_center_y_ratio = 0.65
+
+[tracking]
+min_hits = 2
+max_age = 20
+tentative_max_age = 3
+iou_threshold = 0.2
 
 [health]
 data_stale_ms = 10_000

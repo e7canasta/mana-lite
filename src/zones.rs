@@ -7,8 +7,21 @@ use crate::track::Track;
 
 #[derive(Debug, Clone)]
 pub enum ZoneEvent {
-    Occupied { zone: String, label: Option<String>, #[allow(dead_code)] track_id: u64, class: String, confidence: f32 },
-    Vacated { zone: String, label: Option<String>, #[allow(dead_code)] track_id: u64, class: String },
+    Occupied {
+        zone: String,
+        label: Option<String>,
+        #[allow(dead_code)]
+        track_id: u64,
+        class: String,
+        confidence: f32,
+    },
+    Vacated {
+        zone: String,
+        label: Option<String>,
+        #[allow(dead_code)]
+        track_id: u64,
+        class: String,
+    },
 }
 
 struct ZoneState {
@@ -28,19 +41,22 @@ impl ZoneEngine {
     pub fn from_catalog(catalog: &ZoneCatalog) -> Self {
         let mut zones = HashMap::new();
         for (name, entry) in &catalog.zones {
-            zones.insert(name.clone(), ZoneState {
-                rect: [
-                    entry.x1 as f32,
-                    entry.y1 as f32,
-                    entry.x2 as f32,
-                    entry.y2 as f32,
-                ],
-                label: entry.label.clone(),
-                hysteresis_ms: entry.hysteresis_ms,
-                is_occupied: false,
-                occupied_by: Vec::new(),
-                vacated_since: None,
-            });
+            zones.insert(
+                name.clone(),
+                ZoneState {
+                    rect: [
+                        entry.x1 as f32,
+                        entry.y1 as f32,
+                        entry.x2 as f32,
+                        entry.y2 as f32,
+                    ],
+                    label: entry.label.clone(),
+                    hysteresis_ms: entry.hysteresis_ms,
+                    is_occupied: false,
+                    occupied_by: Vec::new(),
+                    vacated_since: None,
+                },
+            );
         }
         Self { zones }
     }
@@ -50,7 +66,8 @@ impl ZoneEngine {
 
         for (zone_name, state) in &mut self.zones {
             let label = state.label.clone();
-            let current: Vec<u64> = tracks.iter()
+            let current: Vec<u64> = tracks
+                .iter()
                 .filter(|t| t.is_confirmed && rect_intersects(&t.bbox, &state.rect))
                 .map(|t| t.id)
                 .collect();
@@ -102,7 +119,8 @@ impl ZoneEngine {
 }
 
 fn find_class_confidence(tracks: &[&Track], id: u64) -> (String, f32) {
-    tracks.iter()
+    tracks
+        .iter()
         .find(|t| t.id == id)
         .map(|t| (t.class.clone(), t.confidence))
         .unwrap_or_else(|| ("unknown".into(), 0.0))
@@ -114,12 +132,25 @@ fn rect_intersects(bbox: &[f32; 4], zone: &[f32; 4]) -> bool {
 
 pub fn zone_event_to_log(ev: &ZoneEvent, frame_id: u64) -> Event {
     match ev {
-        ZoneEvent::Occupied { zone, label, track_id: _, class, confidence } => {
-            Event::zone_occupied(zone, label.as_deref().unwrap_or(zone), class, *confidence, frame_id)
-        }
-        ZoneEvent::Vacated { zone, label, track_id: _, class } => {
-            Event::zone_vacated(zone, label.as_deref().unwrap_or(zone), class, frame_id)
-        }
+        ZoneEvent::Occupied {
+            zone,
+            label,
+            track_id: _,
+            class,
+            confidence,
+        } => Event::zone_occupied(
+            zone,
+            label.as_deref().unwrap_or(zone),
+            class,
+            *confidence,
+            frame_id,
+        ),
+        ZoneEvent::Vacated {
+            zone,
+            label,
+            track_id: _,
+            class,
+        } => Event::zone_vacated(zone, label.as_deref().unwrap_or(zone), class, frame_id),
     }
 }
 
@@ -130,50 +161,88 @@ mod tests {
 
     fn make_track(id: u64, class: &str, bbox: [f32; 4], confirmed: bool) -> Track {
         Track {
-            id, class: class.into(), bbox, confidence: 0.9,
-            velocity: [0.0; 4], hits: if confirmed { 3 } else { 1 },
-            misses: 0, age: 3, is_confirmed: confirmed,
+            id,
+            source_model: "detect-fast".into(),
+            class: class.into(),
+            bbox,
+            confidence: 0.9,
+            evidence: Vec::new(),
+            velocity: [0.0; 4],
+            hits: if confirmed { 3 } else { 1 },
+            hit_streak: if confirmed { 3 } else { 1 },
+            misses: 0,
+            age: 3,
+            is_confirmed: confirmed,
         }
     }
 
     #[test]
     fn occupied_triggers_event() {
-        let catalog = ZoneCatalog { zones: HashMap::from([
-            ("bed".into(), ZoneEntry {
-                x1: 0, y1: 0, x2: 200, y2: 200,
-                label: None, hysteresis_ms: 100,
-            })
-        ])};
+        let catalog = ZoneCatalog {
+            zones: HashMap::from([(
+                "bed".into(),
+                ZoneEntry {
+                    x1: 0,
+                    y1: 0,
+                    x2: 200,
+                    y2: 200,
+                    label: None,
+                    hysteresis_ms: 100,
+                },
+            )]),
+        };
         let mut engine = ZoneEngine::from_catalog(&catalog);
         let track = make_track(1, "person", [50.0, 50.0, 150.0, 150.0], true);
         let events = engine.evaluate(&[&track]);
-        assert!(events.iter().any(|e| matches!(e, ZoneEvent::Occupied { zone, .. } if zone == "bed")));
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, ZoneEvent::Occupied { zone, .. } if zone == "bed"))
+        );
     }
 
     #[test]
     fn vacated_after_hysteresis() {
-        let catalog = ZoneCatalog { zones: HashMap::from([
-            ("bed".into(), ZoneEntry {
-                x1: 0, y1: 0, x2: 500, y2: 500,
-                label: None, hysteresis_ms: 0, // zero hysteresis for test
-            })
-        ])};
+        let catalog = ZoneCatalog {
+            zones: HashMap::from([(
+                "bed".into(),
+                ZoneEntry {
+                    x1: 0,
+                    y1: 0,
+                    x2: 500,
+                    y2: 500,
+                    label: None,
+                    hysteresis_ms: 0, // zero hysteresis for test
+                },
+            )]),
+        };
         let mut engine = ZoneEngine::from_catalog(&catalog);
         let track = make_track(1, "person", [100.0, 100.0, 200.0, 200.0], true);
 
         engine.evaluate(&[&track]);
         let events = engine.evaluate(&[]);
-        assert!(events.iter().any(|e| matches!(e, ZoneEvent::Vacated { zone, .. } if zone == "bed")));
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, ZoneEvent::Vacated { zone, .. } if zone == "bed"))
+        );
     }
 
     #[test]
     fn non_confirmed_track_ignored() {
-        let catalog = ZoneCatalog { zones: HashMap::from([
-            ("bed".into(), ZoneEntry {
-                x1: 0, y1: 0, x2: 500, y2: 500,
-                label: None, hysteresis_ms: 100,
-            })
-        ])};
+        let catalog = ZoneCatalog {
+            zones: HashMap::from([(
+                "bed".into(),
+                ZoneEntry {
+                    x1: 0,
+                    y1: 0,
+                    x2: 500,
+                    y2: 500,
+                    label: None,
+                    hysteresis_ms: 100,
+                },
+            )]),
+        };
         let mut engine = ZoneEngine::from_catalog(&catalog);
         let unconfirmed = make_track(1, "person", [100.0, 100.0, 200.0, 200.0], false);
         let events = engine.evaluate(&[&unconfirmed]);

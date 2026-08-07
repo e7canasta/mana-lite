@@ -1,0 +1,96 @@
+# Ejemplo: apagar ramas del cascade con el flag `enabled` (ADR-020).
+#
+# Copia este archivo sobre `config/models.toml` para ejecutar SOLO la rama
+# principal (detect-fast + pose). `enabled = false` excluye el modelo del
+# scheduling y de la inferencia; sus reglas de cascade ni se evalúan.
+#
+# El flag es opcional: sin `enabled`, el modelo se considera habilitado
+# (default `true`), así que los archivos existentes no cambian.
+
+[models.detect-fast]
+path = "models/yolo26s.onnx"
+task = "detect"
+confidence = 0.10
+iou = 0.5
+imgsz = 640
+# Complejidad de los contornos de máscara: epsilon de simplificación del
+# polígono (mayor = menos vértices). Solo aplica a modelos con máscara
+# (seg). Default 0.75.
+polygon_simplify = 0.75
+
+[models.detect-fast.postprocess]
+allow_classes = ["person", "wheelchair"]
+min_confidence = 0.25
+min_area_ratio = 0.001
+max_area_ratio = 1.0
+nms_iou = 0.50
+
+[models.detect-fast.crop]
+type = "static"
+region = [560, 140, 1240, 820]
+
+[models.pose-standard]
+path = "models/yolo26n-pose.onnx"
+task = "pose"
+confidence = 0.3
+iou = 0.5
+imgsz = 640
+
+[models.pose-standard.crop]
+type = "largest_class"
+class = "person"
+margin = 0.15
+
+[models.pose-standard.postprocess]
+allow_classes = ["person"]
+min_confidence = 0.1
+min_area_ratio = 0.2
+max_area_ratio = 0.8
+nms_iou = 0.50
+
+# Rama hermana deshabilitada: no se programa ni se infiere.
+[models.face-yolo]
+enabled = false
+path = "models/yolov12l-face.onnx"
+task = "detect"
+confidence = 0.10
+iou = 0.5
+imgsz = 640
+
+[models.face-yolo.crop]
+type = "largest_class"
+class = "person"
+square_size = 320
+upper_fraction = 0.50
+
+[models.face-yolo.postprocess]
+allow_classes = ["face"]
+min_confidence = 0.10
+min_area_ratio = 0.0001
+max_area_ratio = 0.35
+nms_iou = 0.05
+max_detections = 1
+
+# Rama hermana deshabilitada: seg no corre aunque haya persona confirmada.
+[models.seg-standard]
+enabled = false
+path = "models/yolo26n-seg.onnx"
+task = "detect"
+confidence = 0.30
+iou = 0.5
+imgsz = 640
+polygon_simplify = 0.90
+
+[models.seg-standard.crop]
+type = "largest_class"
+class = "person"
+margin = 0.15
+
+[models.seg-standard.postprocess]
+allow_classes = ["person"]
+min_confidence = 0.25
+min_area_ratio = 0.01
+max_area_ratio = 1.0
+min_component_area_ratio = 0.01
+mask_threshold = 0.5
+nms_iou = 0.50

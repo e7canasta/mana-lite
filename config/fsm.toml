@@ -7,11 +7,11 @@ models = ["detect-fast"]
 
 [fsm.states.watching]
 label = "Person Present"
-models = ["detect-fast"]
+models = ["detect-fast", "pose-standard"]
 
 [fsm.states.bed_alert]
 label = "ALERT: Bed Exit Attempt"
-models = ["detect-fast"]
+models = ["detect-fast", "pose-standard"]
 dwell_min_ms = 3_000
 
 [fsm.states.blind]

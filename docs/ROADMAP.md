@@ -1,6 +1,6 @@
 # Mana Lite Roadmap
 
-*Última actualización: 2026-08-05 — observability TOML-driven + per-frame class stats*
+*Última actualización: 2026-08-06 — rama `seg-standard` (máscaras + polígonos) y flag `enabled`*
 
 ---
 
@@ -40,7 +40,7 @@
 
 ---
 
-## Estado Actual (v0.1.2 — completado)
+## Estado Actual
 
 **Lo que funciona hoy:**
 
@@ -50,15 +50,25 @@
 | Ingesta RTSP | `ingest.rs` (RetinaReader + reconnect) | 406 | 8 | ✅ Done |
 | Decode H.264 | `snapshot.rs` (ffmpeg + PNG saver) | 230 | 5 | ✅ Done |
 | Cascade | `cascade.rs` (model dependency scheduler) | 130 | 8 | ✅ Done |
-| Tracking | `track.rs` (SORT: Kalman + Hungarian) | 180 | 6 | ✅ Done |
+| Detection consolidation | `detection.rs` (stateless fusion + enrichment) | 210 | 4 | ✅ Done |
+| Tracking | `track.rs` (linear prediction + greedy IoU, optional) | 280 | 10 | 🧪 Prototype |
 | Zones | `zones.rs` (ROI evaluation + hysteresis) | 140 | 6 | ✅ Done |
 | FSM | `fsm.rs` (clinical state machine) | 320 | 12 | ✅ Done |
-| Inferencia | `infer.rs` (ORT session + ultralytics) | 110 | — | ✅ Done |
+| Inferencia | `infer.rs` (ORT session + ultralytics + máscaras CompactMask) | 250 | 10 | ✅ Done |
 | Logger JSONL | `logger/` (event, serialize, rotate) | 620 | 8 | ✅ Done |
 | Métricas + Health | `metrics.rs` (per-frame class stats + window reports) | 350 | — | ✅ Done |
 | Visualización | `viz.rs` (Rerun bridge + blueprint + exponential backoff) | 390 | — | ✅ Done |
 | Pipeline State | `pipeline.rs` (superloop orchestrator + frame gap) | 190 | — | ✅ Done |
 | **Total** | **12 módulos** | **~3,700** | **58** | |
+
+**Rama `seg-standard` (v0.3):**
+
+- Nueva crate `std/mana-geometry` (compact_mask, polygon, primitives, transform, bbox, iou, polygonize) importada de mana-os (ADR-019) — 154 tests.
+- Flag `enabled` por modelo en `config/models.toml` (ADR-020); ejemplo con face/seg apagados en `config/models.example.toml`.
+- `seg-standard` como tercer hermano del cascade: `same_frame`, crop `largest_class` persona (ADR-021, Spec-002).
+- Máscaras en wire JSONL (rle + bbox + origin + mask_dims + polígonos frame-normalizados) — Spec-003; tests round-trip.
+- Overlay RGBA + contornos en Rerun (`log_model_masks`, ADR-022).
+- Especificaciones: `docs/specs/seg-standard.md`, `docs/specs/mask-jsonl.md`; sprint en `docs/sprints/seg-standard.md`.
 
 **Observability features (nuevo en v0.1.2):**
 
@@ -83,6 +93,11 @@
 
 ## Sprints y Fases
 
+Las fases 2 y 3 de abajo conservan el diseño objetivo original. El runtime
+actual ya ejecuta inferencia y consolidación; el tracker implementado todavía
+no es el SORT completo descrito en ADR-013. El estado operativo y los contratos
+vigentes están en [ARCHITECTURE.md](ARCHITECTURE.md) y ADR-018.
+
 ### 🏗️ Sprint 2 — Inference Core  *(~1 semana)*
 
 > **Objetivo:** Preprocesar frames, correr modelos ONNX, obtener detecciones estructuradas.
@@ -96,9 +111,8 @@
 
 | Archivo | Rol | ~Líneas |
 |---------|-----|---------|
-| `src/preprocess.rs` | Cache de tensores por imgsz, resize+normalize | 120 |
-| `src/infer.rs` | Pool de sesiones ORT, dispatch multi-modelo | 180 |
-| `src/postprocess.rs` | NMS intra/inter-modelo, escalado, keypoints | 200 |
+| `src/infer.rs` | Ejecucion de modelos, filtros por modelo, NMS y escalado | 180 |
+| `src/detection.rs` | Consolidacion espacial cross-modelo | 210 |
 
 **ADR relacionados:** 010, 011, 012
 
@@ -205,10 +219,43 @@
 **Tests:** Integration test: frame sintético → detect → track → zone → FSM transition (end-to-end sin cámara real).
 
 **Definition of Done:**
-- Pipeline completo corre con `cargo run -- --config config/mana.toml --demo`
+- Pipeline completo corre con `cargo run -- --config config/mana.toml` sobre RTSP real
 - Rerun muestra: cámara + bounding boxes + tracks + zonas + texto de eventos
 - JSONL contiene todos los tipos de eventos (frame, detection, track, zone, fsm, health, metrics)
 - 26 tests existentes siguen pasando + nuevos tests de integración
+
+---
+
+### 🏗️ Sprint 6 — Detection Consolidation  *(~5-7 días)*
+
+> **Objetivo:** consolidar salidas de múltiples modelos en observaciones únicas,
+> mantener evidencias multi-rate y publicar una escena sin bbox duplicados.
+
+```
+Vec<Detection> ──▶ DetectionConsolidator ──▶ ConsolidatedObservation
+                                           │
+                                           ▼
+                                       Tracker
+                                           │
+                                           ▼
+                                       TrackedEntity
+```
+
+**ADR relacionado:** [017](adrs/017-detection-consolidation.md)
+
+**Contrato de etapas:** [018](adrs/018-runtime-stage-boundaries.md)
+
+**Guía del sprint:** [detection-consolidation.md](sprints/detection-consolidation.md)
+
+**Definition of Done:**
+
+- Una persona detectada por detect, pose y face produce una observación consolidada.
+- `track_id` pertenece solo a la entidad trackeada, no a la observación ni a cada modelo.
+- Rerun muestra un bbox canónico y capas separadas para enriquecimientos.
+- JSONL conserva detecciones de diagnóstico y eventos de entidad.
+- Pose y face llegan a frecuencias distintas sin crear duplicados.
+- Tests de fusión, containment y asociación multi-persona pasan; TTL queda
+  diferido al tracking.
 
 ---
 
@@ -232,6 +279,12 @@
 | [014](adrs/014-zone-engine.md) | Zone engine (spatial + hysteresis) | 🏗️ Draft |
 | [015](adrs/015-fsm-engine.md) | FSM engine (guards, dwell, Ton/Tof) | 🏗️ Draft |
 | [016](adrs/016-cascade-scheduler.md) | Cascade scheduler (interval + requires) | 🏗️ Draft |
+| [017](adrs/017-detection-consolidation.md) | Detection consolidation across models | ✅ Accepted |
+| [018](adrs/018-runtime-stage-boundaries.md) | Runtime stage and publication boundaries | ✅ Accepted |
+| [019](adrs/019-import-mana-os-std.md) | Import de std de mana-os (copia de crates) | ✅ Accepted |
+| [020](adrs/020-model-enabled-flag.md) | Flag `enabled` por modelo en models.toml | ✅ Accepted |
+| [021](adrs/021-mask-format-compactmask.md) | Formato de máscara (CompactMask + polígonos) | ✅ Accepted |
+| [022](adrs/022-mask-overlay-rgba.md) | Overlay de máscaras RGBA en Rerun | ✅ Accepted |
 
 ---
 
@@ -258,10 +311,10 @@
 
 | Hito | Condición | Validación |
 |------|-----------|-----------|
-| **S2 done** | `detect-fast` corre en CPU, genera detecciones | `cargo test` + demo mode con bboxes en Rerun |
+| **S2 done** | `detect-fast` corre en CPU, genera detecciones | `cargo test` + RTSP real con bboxes en Rerun |
 | **S3 done** | Tracks persisten entre frames con IDs consistentes | `cargo test` + video de 30s con el mismo track ID |
 | **S4 done** | FSM idle→watching→bed_alert→blind con zona real | `cargo test` + `config/fsm.toml` completo evaluado |
-| **S5 done** | Pipeline end-to-end con demo mode | `cargo run -- --demo` produce JSONL completo |
+| **S5 done** | Pipeline end-to-end con RTSP | `cargo run -- --config config/mana.toml` produce JSONL completo |
 | **Release** | 26 tests existentes + nuevos pasan, clippy limpio | CI verde, binario < 20MB |
 
 ---
@@ -272,7 +325,6 @@
 |------|-----------|-----|
 | Migrar serializador a serde | Baja | 009 |
 | `CycleContext` arena con `clear()` | Media | 009 |
-| Reemplazar `AnyReader` enum por trait (static dispatch) | Baja | 009 |
 | Sistema de errores tipados completo | Media | — |
 | Remover `mana-rtsp` crate (1 fn) → merge a ingest | Baja | — |
 | VAAPI/NVDec hardware decode | Baja | — |

@@ -60,13 +60,30 @@ struct DepthPostprocessor;    // devuelve 1 Detection con mask = depth map
    x_orig = (x_letterbox - pad_x) / ratio
    y_orig = (y_letterbox - pad_y) / ratio
 8. Clamp a [0, orig_w] × [0, orig_h]
+9. Aplicar los filtros configurados para el modelo: clase permitida, confianza,
+   área mínima/máxima y bbox válido.
+
+Los filtros se aplican después de restaurar coordenadas y antes de publicar la
+salida del modelo. Por tanto, la misma `Vec<Detection>` filtrada es la única
+que consumen tracking, métricas, Rerun y JSONL. Los filtros de cascada
+(`requires_*`) son posteriores y solo deciden si un track válido habilita un
+modelo hijo.
+
+Mana Lite también ejecuta un NMS defensivo explícito sobre la salida
+normalizada, por clase y usando `ModelEntry.iou`. El contador
+`post_nms_suppressed` permite distinguir las cajas que el propio proceso
+suprimió, incluso cuando el modelo exportado ya incluye NMS. La deduplicación
+entre modelos no se resuelve con NMS: pertenece a `DetectionConsolidator`.
 ```
 
 ## NMS: intra-modelo vs inter-modelo
 
 **Intra-modelo (siempre):** Cada postprocesador aplica NMS a sus propias detecciones. Detect-fast con detect-fast. Esto es estándar YOLO.
 
-**Inter-modelo (opcional, v0.3):** Después de que todos los modelos corrieron, un NMS adicional entre modelos elimina duplicados cross-model. Si detect-fast y pose-standard detectan la misma persona con bboxes casi idénticas (IoU > 0.8), nos quedamos con la de mayor confianza.
+**Inter-modelo:** La deduplicación entre salidas se realiza en la capa de
+consolidación de detecciones. `detect-fast` y `pose-standard` pueden conservar
+ambas evidencias, pero producen una sola `ConsolidatedObservation` y un solo
+bbox de escena.
 
 ```rust
 fn inter_model_nms(detections: &mut Vec<Detection>, iou_threshold: f32) {
@@ -87,7 +104,8 @@ fn inter_model_nms(detections: &mut Vec<Detection>, iou_threshold: f32) {
 }
 ```
 
-**Decisión:** Inter-modelo NMS en v0.2 (simple, evita duplicados cross-model). Umbral fijo IoU=0.7.
+**Decisión:** NMS intra-modelo con el umbral `ModelEntry.iou`; consolidación
+espacial posterior para relaciones entre modelos.
 
 ## Pose postprocessor
 

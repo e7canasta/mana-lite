@@ -1,8 +1,33 @@
+# Semantic regions use original-frame coordinates. They are eligibility gates,
+# not inference crops and not clinical zones.
+[regions.bed]
+rect = [100, 200, 500, 800]
+label = "Bed A"
+
 [[rules]]
 model = "detect-fast"
 
-# [[rules]]
-# model = "detect-large"
-#
-# [[rules]]
-# model = "detect-v2"
+[[rules]]
+model = "pose-standard"
+requires = "detect-fast"
+requires_class = "person"
+requires_min_confidence = 0.50
+requires_min_area_ratio = 0.01
+requires_region = "bed"
+requires_region_coverage = 0.30
+
+[[rules]]
+model = "face-yolo"
+requires = "detect-fast"
+requires_class = "person"
+requires_exact_count = 1
+same_frame = true
+
+[[rules]]
+model = "depth-standard"
+
+[[rules]]
+model = "seg-standard"
+requires = "detect-fast"
+requires_class = "person"
+same_frame = true

@@ -1,6 +1,7 @@
 use crate::config::IngestConfig;
 use crate::error::*;
 use std::collections::VecDeque;
+use std::time::Instant;
 
 pub trait FrameReader {
     async fn next_frame(&mut self) -> Option<Frame>;
@@ -25,12 +26,17 @@ pub struct RetinaCounters {
 /// A deduplicated IDR keyframe ready for downstream decode.
 pub struct RawKeyframe {
     pub h264: Vec<u8>,
+    pub keyframes_seen: u64,
+    pub keyframes_dropped: u64,
+    pub source_window_ms: u64,
 }
 
 #[derive(Debug, Clone, Default)]
 pub struct IngestCounters {
     pub pframes_dropped: u64,
     pub keyframes_dup: u64,
+    pub keyframes_seen: u64,
+    pub keyframes_dropped: u64,
     pub retina: Option<RetinaCounters>,
 }
 
@@ -39,11 +45,26 @@ pub struct IngestEngine<R: FrameReader> {
     last_h264: Option<Vec<u8>>,
     pframes_dropped: u64,
     keyframes_dup: u64,
+    keyframes_seen: u64,
+    keyframes_dropped: u64,
+    pending_keyframes_seen: u64,
+    pending_keyframes_dropped: u64,
+    last_keyframe_at: Instant,
 }
 
 impl<R: FrameReader> IngestEngine<R> {
     pub fn new(reader: R) -> Self {
-        Self { reader, last_h264: None, pframes_dropped: 0, keyframes_dup: 0 }
+        Self {
+            reader,
+            last_h264: None,
+            pframes_dropped: 0,
+            keyframes_dup: 0,
+            keyframes_seen: 0,
+            keyframes_dropped: 0,
+            pending_keyframes_seen: 0,
+            pending_keyframes_dropped: 0,
+            last_keyframe_at: Instant::now(),
+        }
     }
 
     /// Drain all buffered frames and return the freshest IDR keyframe, or
@@ -57,6 +78,12 @@ impl<R: FrameReader> IngestEngine<R> {
             match self.reader.next_frame().await {
                 Some(frame) => {
                     if frame.is_keyframe {
+                        self.keyframes_seen += 1;
+                        self.pending_keyframes_seen += 1;
+                        if latest.is_some() {
+                            self.keyframes_dropped += 1;
+                            self.pending_keyframes_dropped += 1;
+                        }
                         latest = Some(frame);
                     } else {
                         pframes += 1;
@@ -77,48 +104,40 @@ impl<R: FrameReader> IngestEngine<R> {
 
         let h264 = kf.h264;
         self.last_h264 = Some(h264.clone());
-        Some(RawKeyframe { h264 })
+        let now = Instant::now();
+        let source_window_ms = now.duration_since(self.last_keyframe_at).as_millis() as u64;
+        let raw = RawKeyframe {
+            h264,
+            keyframes_seen: self.pending_keyframes_seen,
+            keyframes_dropped: self.pending_keyframes_dropped,
+            source_window_ms,
+        };
+        self.pending_keyframes_seen = 0;
+        self.pending_keyframes_dropped = 0;
+        self.last_keyframe_at = now;
+        Some(raw)
     }
 }
 
-impl IngestEngine<AnyReader> {
-    pub fn drain_retina_counters(&mut self) -> Option<RetinaCounters> {
-        match &mut self.reader {
-            AnyReader::Retina(r) => {
-                let c = r.counters.clone();
-                r.counters = RetinaCounters::default();
-                Some(c)
-            }
-            _ => None,
-        }
-    }
-
+impl IngestEngine<RetinaReader> {
     pub fn drain_ingest_counters(&mut self) -> IngestCounters {
-        let retina = self.drain_retina_counters();
+        let retina = {
+            let counters = self.reader.counters.clone();
+            self.reader.counters = RetinaCounters::default();
+            Some(counters)
+        };
         let c = IngestCounters {
             pframes_dropped: self.pframes_dropped,
             keyframes_dup: self.keyframes_dup,
+            keyframes_seen: self.keyframes_seen,
+            keyframes_dropped: self.keyframes_dropped,
             retina,
         };
         self.pframes_dropped = 0;
         self.keyframes_dup = 0;
+        self.keyframes_seen = 0;
+        self.keyframes_dropped = 0;
         c
-    }
-}
-
-pub struct QueuedReader {
-    frames: VecDeque<Frame>,
-}
-
-impl QueuedReader {
-    pub fn new(frames: Vec<Frame>) -> Self {
-        Self { frames: frames.into() }
-    }
-}
-
-impl FrameReader for QueuedReader {
-    async fn next_frame(&mut self) -> Option<Frame> {
-        self.frames.pop_front()
     }
 }
 
@@ -138,7 +157,11 @@ pub struct RetinaReader {
 
 fn fast_jitter(half: u64, seed: u64) -> u64 {
     let m = half.max(1);
-    ((seed.wrapping_mul(0x9E3779B97F4A7C15).wrapping_add(0xBF58476D1CE4E5B9) >> 32) as u64) % m
+    ((seed
+        .wrapping_mul(0x9E3779B97F4A7C15)
+        .wrapping_add(0xBF58476D1CE4E5B9)
+        >> 32) as u64)
+        % m
 }
 
 struct ErrorWindow {
@@ -150,14 +173,23 @@ struct ErrorWindow {
 
 impl ErrorWindow {
     fn new(cap: usize, threshold: u32) -> Self {
-        Self { ring: VecDeque::with_capacity(cap), count: 0, cap, threshold }
+        Self {
+            ring: VecDeque::with_capacity(cap),
+            count: 0,
+            cap,
+            threshold,
+        }
     }
 
     fn record(&mut self, is_error: bool) -> bool {
         self.ring.push_back(is_error);
-        if is_error { self.count += 1; }
+        if is_error {
+            self.count += 1;
+        }
         if self.ring.len() > self.cap {
-            if self.ring.pop_front().unwrap() { self.count -= 1; }
+            if self.ring.pop_front().unwrap() {
+                self.count -= 1;
+            }
         }
         self.count > self.threshold
     }
@@ -176,8 +208,8 @@ impl RetinaReader {
         transport: &str,
         cfg: &IngestConfig,
     ) -> Result<Self> {
-        let parsed = url::Url::parse(url)
-            .map_err(|e| ManaError::Ingest(format!("invalid url: {e}")))?;
+        let parsed =
+            url::Url::parse(url).map_err(|e| ManaError::Ingest(format!("invalid url: {e}")))?;
         let demuxed = open_rtsp(&parsed, username, password, transport).await?;
         log::info!("rtsp connected: {url}");
         Ok(Self {
@@ -206,7 +238,8 @@ impl RetinaReader {
             let delay = half + jitter;
             log::warn!(
                 "rtsp reconnect attempt {} (delay {}ms)",
-                self.retry_count, delay
+                self.retry_count,
+                delay
             );
             tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
             match open_rtsp(
@@ -330,34 +363,44 @@ impl FrameReader for RetinaReader {
     }
 }
 
-pub enum AnyReader {
-    Queued(QueuedReader),
-    Retina(RetinaReader),
-}
-
-impl FrameReader for AnyReader {
-    async fn next_frame(&mut self) -> Option<Frame> {
-        match self {
-            Self::Queued(r) => r.next_frame().await,
-            Self::Retina(r) => r.next_frame().await,
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    struct TestReader {
+        frames: VecDeque<Frame>,
+    }
+
+    impl TestReader {
+        fn new(frames: Vec<Frame>) -> Self {
+            Self {
+                frames: frames.into(),
+            }
+        }
+    }
+
+    impl FrameReader for TestReader {
+        async fn next_frame(&mut self) -> Option<Frame> {
+            self.frames.pop_front()
+        }
+    }
+
     fn make_keyframe(id: u8) -> Frame {
-        Frame { h264: vec![id; 64], is_keyframe: true }
+        Frame {
+            h264: vec![id; 64],
+            is_keyframe: true,
+        }
     }
 
     fn make_pframe(id: u8) -> Frame {
-        Frame { h264: vec![id; 32], is_keyframe: false }
+        Frame {
+            h264: vec![id; 32],
+            is_keyframe: false,
+        }
     }
 
-    fn make_reader(frames: Vec<Frame>) -> IngestEngine<QueuedReader> {
-        IngestEngine::new(QueuedReader::new(frames))
+    fn make_reader(frames: Vec<Frame>) -> IngestEngine<TestReader> {
+        IngestEngine::new(TestReader::new(frames))
     }
 
     #[tokio::test]
@@ -384,14 +427,18 @@ mod tests {
         let mut engine = make_reader(vec![make_keyframe(1), make_keyframe(2), make_keyframe(3)]);
         let kf = engine.poll_freshest_keyframe().await.unwrap();
         assert_eq!(kf.h264, vec![3u8; 64]);
+        assert_eq!(kf.keyframes_seen, 3);
+        assert_eq!(kf.keyframes_dropped, 2);
     }
 
     #[tokio::test]
     async fn pframes_between_keyframes_are_dropped() {
         let mut engine = make_reader(vec![
-            make_pframe(1), make_pframe(2),
+            make_pframe(1),
+            make_pframe(2),
             make_keyframe(10),
-            make_pframe(3), make_pframe(4),
+            make_pframe(3),
+            make_pframe(4),
             make_keyframe(20),
         ]);
         let kf = engine.poll_freshest_keyframe().await.unwrap();

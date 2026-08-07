@@ -28,7 +28,7 @@ Every event has a `t` (timestamp) and `type` field:
 {"t":"2026-08-03T20:15:10.000Z","type":"health","event":"blind","msg":"No frame for 10000ms"}
 ```
 
-### Six Event Types
+### Event Types
 
 | `type` | Semantic |
 |---|---|
@@ -36,6 +36,8 @@ Every event has a `t` (timestamp) and `type` field:
 | `health` | Liveness: heartbeat, stale, blind, panic count |
 | `frame` | Per-frame: frame number, keyframe, decode time |
 | `detection` | Inference: model name, detections array, infer time |
+| `consolidated_detection` | Same-frame spatial fusion without temporal identity |
+| `entity` | Tracked temporal identity with `track_id` |
 | `zone` | Spatial: zone name, occupied/vacated, triggering class |
 | `fsm` | Clinical: from/to/trigger/dwell on state transition |
 

@@ -1,12 +1,25 @@
 [models.detect-fast]
-path = "models/yolo26n.onnx"
+enabled = true
+# Baseline small FP16 320: models/yolo26s-fp16-320.onnx
+path = "models/yolo26x-fp16-640.onnx"
 task = "detect"
-confidence = 0.25
+confidence = 0.20
+iou = 0.5
 imgsz = 640
+half = true
+
+[models.detect-fast.postprocess]
+allow_classes = ["person", "wheelchair"]
+min_confidence = 0.25
+min_area_ratio = 0.001
+max_area_ratio = 1.0
+nms_iou = 0.50
 
 [models.detect-fast.crop]
 type = "static"
-region = [420, 0, 1500, 1080]
+# Baseline centered ROI 680x680: [560, 140, 1240, 820]
+region = [560, 140, 1240, 820]
+# region = [420, 0, 1500, 1080]
 
 # [models.detect-large]
 # path = "models/yolo26x.onnx"
@@ -20,8 +33,88 @@ region = [420, 0, 1500, 1080]
 # confidence = 0.3
 # imgsz = 640
 
-# [models.pose-standard]
-# path = "models/yolo26n-pose.onnx"
-# task = "pose"
-# confidence = 0.3
-# imgsz = 640
+[models.pose-standard]
+enabled = false
+# Baseline FP32 640: models/yolo26n-pose.onnx
+path = "models/yolo26s-pose-fp16-320.onnx"
+task = "pose"
+confidence = 0.3
+iou = 0.5
+imgsz = 320
+half = true
+
+[models.pose-standard.crop]
+type = "largest_class"
+class = "person"
+margin = 0.15
+
+[models.pose-standard.postprocess]
+allow_classes = ["person"]
+min_confidence = 0.1
+min_area_ratio = 0.2
+max_area_ratio = 0.8
+nms_iou = 0.50
+
+[models.face-yolo]
+enabled = false
+path = "models/yolov12l-face.onnx"
+task = "detect"
+confidence = 0.10
+iou = 0.5
+imgsz = 640
+
+[models.face-yolo.crop]
+type = "largest_class"
+class = "person"
+# The face model receives a square upper-body crop, not the full person bbox.
+square_size = 320
+upper_fraction = 0.50
+
+[models.face-yolo.postprocess]
+allow_classes = ["face"]
+min_confidence = 0.10
+min_area_ratio = 0.0001
+max_area_ratio = 0.35
+# Face duplicates from the same subject should collapse aggressively.
+# The explicit NMS keeps the highest-confidence box.
+nms_iou = 0.05
+# Optional second stage after NMS: keep only the strongest candidate.
+max_detections = 1
+
+[models.seg-standard]
+enabled = false
+# Baseline small FP16 320: models/yolo26s-seg-fp16-320.onnx
+path = "models/yolo26x-seg-fp16-640.onnx"
+task = "detect"
+confidence = 0.20
+imgsz = 640
+half = true
+iou = 0.1
+polygon_simplify = 0.98
+
+[models.seg-standard.crop]
+type = "largest_class"
+class = "person"
+margin = 0.15
+
+[models.seg-standard.postprocess]
+allow_classes = ["person"]
+min_confidence = 0.25
+min_area_ratio = 0.05
+max_area_ratio = 1.0
+min_component_area_ratio = 0.05
+mask_threshold = 0.5
+nms_iou = 0.10
+
+[models.depth-standard]
+# Experimental full-frame depth-only test branch.
+enabled = true
+path = "models/yolo26x-depth-fp16-320.onnx"
+task = "depth"
+confidence = 0.0
+imgsz = 320
+half = true
+
+[models.depth-standard.crop]
+type = "static"
+region = [560, 140, 1240, 820]

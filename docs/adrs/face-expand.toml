@@ -1,0 +1,34 @@
+Caso concreto:
+ROI fijo detect-fast: [560,140 → 1240,820]
+
+frame 184:
+person azul: [1189,247 → 1239,651]
+face ROI verde: [1055,189 → 1375,509]
+face detectada: [1291,189 → 1338,228]
+El bbox azul está dentro del ROI fijo. Pero el verde sale hasta x=1375, fuera de x=1240, y face-yolo incluso detecta una face fuera del ROI fijo.
+La explicación matemática es:
+bbox person visible:
+x = 1189..1240
+ancho = 51 px
+
+face square:
+side = max(320, ancho_person)
+centro_x = (1189 + 1240) / 2 = 1214
+x1 = 1214 - 160 = 1054
+x2 = 1214 + 160 = 1374
+Por eso ocurre:
+- detect-fast sí está limitado al ROI fijo.
+- El bbox azul sí está limitado al ROI fijo.
+- face-yolo recibe un crop físico real, pero ese crop se construye como un cuadrado de 320x320.
+- Ese cuadrado actualmente se limita contra los bordes del frame completo, no contra el ROI fijo padre.
+- En consecuencia, cuando la persona toca el borde, face-yolo puede mirar fuera del ROI de detect-fast.
+Así que tu razonamiento sobre el bbox azul es correcto. El error estaba en asumir que el ROI verde era el mismo espacio que el bbox azul. No lo es: es un segundo ROI expandido.
+No cambié nada en esta revisión. El punto de diseño pendiente queda claramente identificado:
+ROI face actual = cuadrado alrededor del bbox
+ROI face estricto = cuadrado ∩ ROI detect-fast
+El log demuestra que actualmente estamos usando la primera opción.
+▣  Plan · GPT-5.6 Luna (2x usage) · 36.1s
+excelnete lo podes dejar en adr guia onboardin blueprint a lo  sap erp para adminsitrador operadores y funcionales. por uqe es interesante ejemplos demos pero no lo quitemos funciona mejro asi... es mejor de lo planeado
+Thought: Reviewing ADR onboarding docs · 92ms
+I think we need to modify the ADR onboarding blueprint for operations. I should inspect the existing ADR structure and references. The user wants to keep the ADR guide in an SAP ERP style for admins and operators, which includes retaining examples and demos for better behavior. It seems like I need to make some edits to the documentation and possibly create ADR 019, while reviewing the relevant sections in the current sprint docs.
+Voy a documentar esta decisión como comportamiento oficial, no como workaround: ROI padre estático para detect-fast, ROI hijo dinámico para face-yolo que puede sobresalir deliberadamente, y separación clara entre lo que ve cada rol. Lo reflejaré en un ADR nuevo, onboarding, operaciones y blueprint/observabilidad, manteniendo ejemplos prácticos y demos de configuración.

@@ -1,3 +1,8 @@
+> **Nota:** este es un informe de exploracion historico y puede contener paths
+> o estados de sprints anteriores. Para operar o entender el runtime actual,
+> usar [operations.md](operations.md), [onboarding.md](onboarding.md) y
+> [ARCHITECTURE.md](ARCHITECTURE.md).
+
 Now I have a thorough picture of the entire codebase. Here is the complete detailed report.
 
 ---
@@ -63,7 +68,7 @@ Now I have a thorough picture of the entire codebase. Here is the complete detai
 │   ├── config.rs                  ← all TOML deserialization, env overrides, validation
 │   ├── ingest.rs                  ← RTSP client, frame queue, keyframe dedup, reconnect
 │   ├── snapshot.rs                ← H.264→RGB decoder (ffmpeg), PNG/H264 saver
-│   ├── pipeline.rs                ← PipelineState (frame counter, demo exit, health eval)
+│   ├── pipeline.rs                ← PipelineState (frame counter, health eval)
 │   ├── metrics.rs                 ← MetricsEngine + Health (blind/stale/recovered)
 │   ├── infer.rs                   ← ONNX inference engine (ultralytics-inference)
 │   ├── cascade.rs                 ← CascadeScheduler — model dependencies & gating
@@ -210,10 +215,10 @@ async fn main() -> Result<()>
 | 8 | Creates `Tracker::new()`, `ZoneEngine::from_catalog()`, `FsmEngine::from_catalog()`. |
 | 9 | Loads cascade rules (from `cascade.toml` or hardcoded fallback) → builds `CascadeScheduler`. |
 | 10 | Builds `model_tasks` map (`model_key → task_type`) from the model catalog. |
-| 11 | Creates `IngestEngine` — either `AnyReader::Retina` (real RTSP via `RetinaReader::connect()`) or `AnyReader::Queued` (demo mode, 5 synthetic frames). |
+| 11 | Creates `IngestEngine<RetinaReader>` using the real RTSP connection from `RetinaReader::connect()`. |
 | 12 | `MetricsEngine::new(interval_s)`, `Health::new(data_stale_ms)`, `FrameDecoder::new()`, `SnapshotSaver::new()`. |
 | 13 | If `viz.enabled`, creates `VizBridge::new()` — connects to Rerun via gRPC at `rerun_addr`, sends blueprint. |
-| 14 | `PipelineState::new(demo_mode)`. |
+| 14 | `PipelineState::new(metrics_text)`. |
 
 ### Superloop (`App::run`)
 
@@ -236,7 +241,7 @@ Each iteration:
 6. viz.log_metrics_report()          → per-window metrics to Rerun
 7. log.flush()                       → write buffered JSONL events to stdout/file
 8. viz.tick()                        → flush Rerun recording stream
-9. if state.should_exit() → break (demo mode after 5 frames)
+9. continue until the RTSP process is stopped or the panic policy exits
 ```
 
 ---

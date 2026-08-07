@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::time::Instant;
 
 use crate::infer::Detection;
+use ultralytics_inference::DepthMap;
 
 // ── Per-frame per-class stats (transient, computed each keyframe) ──
 
@@ -63,6 +64,11 @@ pub struct PerModelMetrics {
     pub bbox_area_sum: f64,
     pub class_counts: HashMap<String, u64>,
     pub roi: Option<[u32; 4]>,
+    pub depth_frames: u64,
+    pub depth_valid_pixels: u64,
+    pub depth_empty: u64,
+    pub depth_min_m: f64,
+    pub depth_max_m: f64,
 }
 
 impl Default for PerModelMetrics {
@@ -80,6 +86,11 @@ impl Default for PerModelMetrics {
             bbox_area_sum: 0.0,
             class_counts: HashMap::new(),
             roi: None,
+            depth_frames: 0,
+            depth_valid_pixels: 0,
+            depth_empty: 0,
+            depth_min_m: f64::INFINITY,
+            depth_max_m: 0.0,
         }
     }
 }
@@ -89,6 +100,8 @@ pub struct Metrics {
     pub cycles: u64,
     pub frames_total: u64,
     pub keyframes: u64,
+    pub keyframes_seen: u64,
+    pub keyframes_dropped: u64,
     pub pframes_dropped: u64,
     pub inferences: u64,
     pub infer_total_us: u64,
@@ -112,14 +125,28 @@ pub struct Metrics {
 impl Default for Metrics {
     fn default() -> Self {
         Self {
-            cycles: 0, frames_total: 0, keyframes: 0, pframes_dropped: 0,
-            inferences: 0, infer_total_us: 0,
-            infer_min_us: u64::MAX, infer_max_us: 0,
-            decode_total_us: 0, blind_cycles: 0,
-            timeouts: 0, ssrc_changes: 0, rtp_errors: 0,
-            stream_ends: 0, reconnect_attempts: 0,
-            ingest_pframes: 0, ingest_dup_keyframes: 0,
-            infer_skips: 0, infer_empty: 0, infer_total_dets: 0,
+            cycles: 0,
+            frames_total: 0,
+            keyframes: 0,
+            keyframes_seen: 0,
+            keyframes_dropped: 0,
+            pframes_dropped: 0,
+            inferences: 0,
+            infer_total_us: 0,
+            infer_min_us: u64::MAX,
+            infer_max_us: 0,
+            decode_total_us: 0,
+            blind_cycles: 0,
+            timeouts: 0,
+            ssrc_changes: 0,
+            rtp_errors: 0,
+            stream_ends: 0,
+            reconnect_attempts: 0,
+            ingest_pframes: 0,
+            ingest_dup_keyframes: 0,
+            infer_skips: 0,
+            infer_empty: 0,
+            infer_total_dets: 0,
             model_metrics: HashMap::new(),
         }
     }
@@ -132,11 +159,21 @@ impl Metrics {
             cycles: self.cycles,
             frames_total: self.frames_total,
             keyframes: self.keyframes,
+            keyframes_seen: self.keyframes_seen,
+            keyframes_dropped: self.keyframes_dropped,
             pframes_dropped: self.pframes_dropped,
             inferences: self.inferences,
             infer_total_ms: self.infer_total_us / 1000,
-            infer_min_ms: if self.inferences > 0 { self.infer_min_us / 1000 } else { 0 },
-            infer_max_ms: if self.inferences > 0 { self.infer_max_us / 1000 } else { 0 },
+            infer_min_ms: if self.inferences > 0 {
+                self.infer_min_us / 1000
+            } else {
+                0
+            },
+            infer_max_ms: if self.inferences > 0 {
+                self.infer_max_us / 1000
+            } else {
+                0
+            },
             decode_total_ms: self.decode_total_us / 1000,
             blind_cycles: self.blind_cycles,
             timeouts: self.timeouts,
@@ -160,6 +197,8 @@ pub struct MetricsReport {
     pub cycles: u64,
     pub frames_total: u64,
     pub keyframes: u64,
+    pub keyframes_seen: u64,
+    pub keyframes_dropped: u64,
     pub pframes_dropped: u64,
     pub inferences: u64,
     pub infer_total_ms: u64,
@@ -206,7 +245,13 @@ impl MetricsEngine {
         self.current.frames_total += 1;
     }
 
-    pub fn tick_inference_model(&mut self, model_key: &str, elapsed_us: u64, detections: &[Detection], crop_rect: Option<[u32; 4]>) {
+    pub fn tick_inference_model(
+        &mut self,
+        model_key: &str,
+        elapsed_us: u64,
+        detections: &[Detection],
+        crop_rect: Option<[u32; 4]>,
+    ) {
         self.current.inferences += 1;
         self.current.infer_total_us += elapsed_us;
         self.current.infer_min_us = self.current.infer_min_us.min(elapsed_us);
@@ -216,7 +261,11 @@ impl MetricsEngine {
             self.current.infer_empty += 1;
         }
 
-        let m = self.current.model_metrics.entry(model_key.to_string()).or_default();
+        let m = self
+            .current
+            .model_metrics
+            .entry(model_key.to_string())
+            .or_default();
         m.inferences += 1;
         m.infer_total_us += elapsed_us;
         m.infer_min_us = m.infer_min_us.min(elapsed_us);
@@ -241,6 +290,56 @@ impl MetricsEngine {
         }
     }
 
+    pub fn tick_inference_depth(
+        &mut self,
+        model_key: &str,
+        elapsed_us: u64,
+        depth: Option<&DepthMap>,
+        crop_rect: Option<[u32; 4]>,
+    ) {
+        self.current.inferences += 1;
+        self.current.infer_total_us += elapsed_us;
+        self.current.infer_min_us = self.current.infer_min_us.min(elapsed_us);
+        self.current.infer_max_us = self.current.infer_max_us.max(elapsed_us);
+
+        let m = self
+            .current
+            .model_metrics
+            .entry(model_key.to_string())
+            .or_default();
+        m.inferences += 1;
+        m.infer_total_us += elapsed_us;
+        m.infer_min_us = m.infer_min_us.min(elapsed_us);
+        m.infer_max_us = m.infer_max_us.max(elapsed_us);
+        m.roi = crop_rect;
+        m.depth_frames += 1;
+
+        let mut valid_pixels = 0;
+        let mut min_depth = f64::INFINITY;
+        let mut max_depth: f64 = 0.0;
+        if let Some(map) = depth {
+            for &value in &map.data {
+                if value.is_finite() && value > 0.0 {
+                    let value = f64::from(value);
+                    valid_pixels += 1;
+                    min_depth = min_depth.min(value);
+                    max_depth = max_depth.max(value);
+                }
+            }
+        }
+        m.depth_valid_pixels += valid_pixels;
+        if valid_pixels == 0 {
+            m.depth_empty += 1;
+        } else {
+            m.depth_min_m = m.depth_min_m.min(min_depth);
+            m.depth_max_m = m.depth_max_m.max(max_depth);
+        }
+
+        if !self.model_order.iter().any(|n| n == model_key) {
+            self.model_order.push(model_key.to_string());
+        }
+    }
+
     pub fn tick_decode(&mut self, elapsed_us: u64) {
         self.current.decode_total_us += elapsed_us;
     }
@@ -251,27 +350,46 @@ impl MetricsEngine {
 
     pub fn tick_infer_skip(&mut self, model_key: &str) {
         self.current.infer_skips += 1;
-        let m = self.current.model_metrics.entry(model_key.to_string()).or_default();
+        let m = self
+            .current
+            .model_metrics
+            .entry(model_key.to_string())
+            .or_default();
         m.skips += 1;
         if !self.model_order.iter().any(|n| n == model_key) {
             self.model_order.push(model_key.to_string());
         }
     }
 
-    pub fn tick_ingest(&mut self, pframes: u64, dup_keyframes: u64) {
+    pub fn tick_ingest(
+        &mut self,
+        pframes: u64,
+        dup_keyframes: u64,
+        keyframes_seen: u64,
+        keyframes_dropped: u64,
+    ) {
         self.current.ingest_pframes += pframes;
         self.current.ingest_dup_keyframes += dup_keyframes;
+        self.current.keyframes_seen += keyframes_seen;
+        self.current.keyframes_dropped += keyframes_dropped;
     }
 
     pub fn tick_retina_counters(
-        &mut self, timeouts: u64, ssrc_changes: u64, rtp_errors: u64,
-        stream_ends: u64, reconnect_attempts: u64,
+        &mut self,
+        timeouts: u64,
+        ssrc_changes: u64,
+        rtp_errors: u64,
+        stream_ends: u64,
+        reconnect_attempts: u64,
     ) {
         self.current.timeouts = self.current.timeouts.saturating_add(timeouts);
         self.current.ssrc_changes = self.current.ssrc_changes.saturating_add(ssrc_changes);
         self.current.rtp_errors = self.current.rtp_errors.saturating_add(rtp_errors);
         self.current.stream_ends = self.current.stream_ends.saturating_add(stream_ends);
-        self.current.reconnect_attempts = self.current.reconnect_attempts.saturating_add(reconnect_attempts);
+        self.current.reconnect_attempts = self
+            .current
+            .reconnect_attempts
+            .saturating_add(reconnect_attempts);
     }
 
     pub fn take_report(&mut self) -> Option<(MetricsReport, Vec<String>)> {
@@ -288,8 +406,13 @@ impl MetricsEngine {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum HealthTransition {
-    Stale { component: &'static str, ms_since_frame: u64 },
-    Blind { ms_since_frame: u64 },
+    Stale {
+        component: &'static str,
+        ms_since_frame: u64,
+    },
+    Blind {
+        ms_since_frame: u64,
+    },
     Recovered,
     None,
 }
@@ -323,12 +446,17 @@ impl Health {
         if stale_ms > self.data_stale_ms {
             if !self.blind {
                 self.blind = true;
-                return HealthTransition::Blind { ms_since_frame: stale_ms };
+                return HealthTransition::Blind {
+                    ms_since_frame: stale_ms,
+                };
             }
         } else if stale_ms > self.data_stale_ms / 2 {
             if !self.blind && !self.stale {
                 self.stale = true;
-                return HealthTransition::Stale { component: "ingest", ms_since_frame: stale_ms };
+                return HealthTransition::Stale {
+                    component: "ingest",
+                    ms_since_frame: stale_ms,
+                };
             }
         }
 
@@ -346,5 +474,43 @@ impl Health {
 
     pub fn is_blind(&self) -> bool {
         self.blind
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ndarray::array;
+
+    #[test]
+    fn depth_metrics_count_only_finite_positive_pixels() {
+        let mut engine = MetricsEngine::new(0);
+        let depth = DepthMap::new(
+            array![[0.0, 1.0, 2.0], [f32::NAN, 3.0, f32::INFINITY]],
+            (2, 3),
+        );
+
+        engine.tick_inference_depth("depth-standard", 190_000, Some(&depth), None);
+        let (report, order) = engine.take_report().expect("zero-second report");
+        let metrics = &report.model_metrics["depth-standard"];
+
+        assert_eq!(order, vec!["depth-standard"]);
+        assert_eq!(metrics.depth_frames, 1);
+        assert_eq!(metrics.depth_valid_pixels, 3);
+        assert_eq!(metrics.depth_empty, 0);
+        assert_eq!(metrics.depth_min_m, 1.0);
+        assert_eq!(metrics.depth_max_m, 3.0);
+        assert_eq!(report.infer_empty, 0);
+    }
+
+    #[test]
+    fn empty_depth_does_not_count_as_detection_empty() {
+        let mut engine = MetricsEngine::new(0);
+        engine.tick_inference_depth("depth-standard", 10, None, None);
+        let (report, _) = engine.take_report().expect("zero-second report");
+        let metrics = &report.model_metrics["depth-standard"];
+
+        assert_eq!(metrics.depth_empty, 1);
+        assert_eq!(report.infer_empty, 0);
     }
 }

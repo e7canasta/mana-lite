@@ -16,6 +16,11 @@ Las detecciones por frame son efímeras — no tienen identidad. Necesitamos tra
 
 **SORT clásico (Simple Online and Realtime Tracking) con Kalman 7D + Hungarian matching.**
 
+La implementación actual de `mana-lite` es una primera etapa compatible con
+la misma interfaz: usa predicción lineal del bbox y matching greedy por IoU. No
+se debe considerar Kalman 7D + Hungarian completo hasta que ese reemplazo esté
+implementado y validado con video clínico.
+
 SORT fue publicado en 2016 (Bewley et al.) y es el algoritmo estándar en MOTChallenge. 7 dimensiones de estado: `[x, y, s, r, dx, dy, ds]` donde `s = w*h` (escala), `r = w/h` (aspect ratio).
 
 ```rust
@@ -23,6 +28,7 @@ struct TrackingEngine {
     tracks: HashMap<u64, TrackState>,
     next_id: u64,
     max_age: u32,            // 10 frames sin detección → eliminar track
+    tentative_max_age: u32,  // margen para confirmar tras un miss inicial
     min_hits: u32,           // 3 detecciones consecutivas → track confirmado
     iou_threshold: f32,      // 0.3 — umbral de matching
 }
@@ -161,10 +167,13 @@ En una habitación clínica, las oclusiones duran segundos como máximo (enferme
 | Parámetro | Default | Clínico | Razón |
 |-----------|---------|---------|-------|
 | `max_age` | 10 | 20 | I-frames cada 2s → 20 frames = 40s de oclusión tolerada |
+| `tentative_max_age` | 1 | 3 | No descartar una observación tentativa por 2-3 misses iniciales |
 | `min_hits` | 3 | 2 | Confirmar rápido (clínico no puede esperar 3 i-frames = 6s) |
 | `iou_threshold` | 0.3 | 0.2 | Personas lejanas = bboxes pequeños = IoU más bajo en matching |
 
-Estos valores son defaults configurables desde `mana.toml` en el futuro.
+Estos valores son configurables desde `mana.toml`. `max_age` aplica a tracks
+confirmados; `tentative_max_age` aplica a tracks que todavía no alcanzaron
+`min_hits`.
 
 ## Consequences
 

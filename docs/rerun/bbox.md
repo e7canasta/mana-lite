@@ -1,5 +1,12 @@
 Here is a complete breakdown of how detection boxes are logged to Rerun in the `mana-viz` crate.
 
+> **Estado:** este documento describe la API generica de `mana-viz` y el path
+> historico `/world/camera/detections`. El runtime actual de `mana-lite` usa
+> `src/viz.rs`: las observaciones consolidadas se publican en
+> `/world/camera/observations` y las entidades trackeadas, cuando se habilitan,
+> en `/world/camera/entities`. Para operar el sistema, usar
+> [docs/operations.md](../operations.md).
+
 ---
 
 ## 1. Core function: `log_detections_2d`

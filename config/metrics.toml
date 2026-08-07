@@ -2,26 +2,28 @@
 report_interval_s = 5
 
 [metrics.text]
-ingest_line = false
+ingest_line = true
 infer_summary = true
 per_model_lines = true
 
 [metrics.text.flags]
-ingest_pframes = false
-ingest_dup = false
-ingest_timeouts = false
-ingest_reconnect = false
-ingest_ssrc = false
-ingest_rtp = false
+ingest_pframes = true
+ingest_dup = true
+ingest_keyframe_drops = true
+ingest_timeouts = true
+ingest_reconnect = true
+ingest_ssrc = true
+ingest_rtp = true
 infer_skips = true
 infer_empty = true
 
 [metrics.jsonl]
 frame_events = false
-detection_events = true
+detection_events = false
 zone_events = false
 fsm_events = false
 metrics_event = false
 per_model_in_window = false
 class_counts_in_window = false
 class_per_frame_stats = false
+depth_events = true

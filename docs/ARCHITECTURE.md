@@ -1,6 +1,6 @@
 # Mana Lite Architecture
 
-*Última actualización: 2026-08-04 — post-refactor, pre-inference*
+*Última actualización: 2026-08-06 — consolidación de detecciones implementada*
 
 ---
 
@@ -11,14 +11,14 @@
  │                    Mana Lite — Clinical Perception Pipeline          │
  │                                                                       │
  │  ┌────────┐  ┌────────┐  ┌────────┐  ┌────────┐  ┌────────┐        │
- │  │INGEST  │─▶│DECODE  │─▶│INFER   │─▶│TRACK   │─▶│ZONES   │        │
- │  │ ✅ 1.0 │  │ ✅ 1.0 │  │ 🏗️ S2  │  │ 🏗️ S3  │  │ 🏗️ S4  │        │
+ │  │INGEST  │─▶│DECODE  │─▶│INFER   │─▶│CONSOL. │─▶│PUBLISH │        │
+ │  │ ✅      │  │ ✅      │  │ ✅      │  │ ✅      │  │ ✅      │        │
  │  └────────┘  └────────┘  └────────┘  └────────┘  └────┬───┘        │
  │                                                        │             │
  │                        ┌────────┐  ┌────────┐  ┌──────▼───┐        │
- │                        │PUBLISH │◀─│  FSM   │◀─│ CASCADE  │        │
- │                        │ ✅ 1.0 │  │ 🏗️ S4  │  │ 🏗️ S5   │        │
- │                        └────┬───┘  └────────┘  └──────────┘        │
+ │                        │ TRACK  │─▶│  FSM   │◀─│  ZONES   │        │
+ │                        │ optional│  │ optional│  │ optional│        │
+ │                        └────────┘  └────────┘  └──────────┘        │
  │                             │                                        │
  │                        stdout JSONL                                   │
  │                             │                                        │
@@ -37,7 +37,7 @@
 
 3. **Catalog over CLI.** Comportamiento definido en TOML, no en flags. `mana-lite --config mana.toml` es el único argumento requerido. [ADR-002](adrs/002-toml-catalog-pattern.md)
 
-4. **Arena allocation per cycle.** `CycleContext` aloja todos los datos intermedios una vez por ciclo. Cada fase toma `&mut CycleContext`, llena su slot, retorna. Al final: `clear()`, sin dealloc. [ADR-009](adrs/009-pipeline-design.md)
+4. **Explicit ownership per cycle.** `main.rs` owns the current frame and pending model outputs; consolidation borrows detection slices and returns only the evidence it needs. The planned `CycleContext` arena is not part of the current implementation. [ADR-018](adrs/018-runtime-stage-boundaries.md)
 
 5. **Generics for testability.** Cada engine es genérico sobre su dependencia externa (`FrameReader`, `ModelRunner`). Tests usan stubs. Producción usa implementaciones reales. Static dispatch — sin vtable. [ADR-009](adrs/009-pipeline-design.md)
 
@@ -68,17 +68,26 @@
  InferEngine (ORT session pool)
       │  Vec<ort::Value> (tensores crudos)
       ▼
- Postprocessor (NMS + escala + keypoints)
-      │  Vec<Detection> { class, conf, bbox, keypoints, mask }
-      │
-      ├─▶ CascadeScheduler ──▶ decide qué modelos correr próximo ciclo
-      │
-      ▼
- TrackingEngine (SORT: Kalman 7D + Hungarian)
-      │  HashMap<u64, TrackState>
-      │  TrackEvent { Created, Updated, Lost, Deleted }
-      │
-      ▼
+  InferEngine (NMS + filtros por modelo + escala)
+       │  Vec<Detection> { class, conf, bbox, keypoints, mask }
+       │
+       ▼
+  DetectionConsolidator (fusion + enrichment, stateless)
+       │  ConsolidatedObservation { bbox canónico, evidence, components }
+       ▼
+  ┌──────────────────────────────────────────────────────────────┐
+  │ tracking disabled: JSONL consolidated_detection + Rerun      │
+  │ /world/camera/observations                                   │
+  └──────────────────────────────────────────────────────────────┘
+        │ tracking enabled only
+        ▼
+  TrackingEngine (TrackedEntity: identity + freshness)
+       │  HashMap<u64, TrackState>
+       │  TrackEvent { Created, Updated, Lost, Deleted }
+       │
+       ├─▶ CascadeScheduler ──▶ semantic gates + child model crop
+       │
+       ▼
  ZoneEngine (intersección + histéresis)
       │  ZoneEvent { Occupied, Vacated }
       │
@@ -89,29 +98,28 @@
       ▼
  ┌─────────────────────────────────────────────┐
  │              Logger (JSONL stdout)           │
- │  Event::Frame, Detection, Track, Zone, FSM, │
- │  Health, Metrics, Meta                       │
+  │  Event::Frame, Detection, ConsolidatedDetection, Entity, │
+  │  Meta(track_*), Zone, FSM, Health, Metrics      │
  └─────────────────────────────────────────────┘
       │
       ▼
  VizBridge (Rerun gRPC)
 ```
 
-## Module Map (v0.2.0 target)
+## Module Map (current)
 
 ```
 src/
 ├── main.rs               Entry point, superloop orchestration ✅
-├── config.rs             Parsing for all seven TOML schemas ✅
+├── config.rs             Parsing for all TOML schemas         ✅
 ├── ingest.rs             Retina RTSP + keyframe drain + reconnect ✅
 ├── snapshot.rs           H.264 decode + RGB buffer + PNG saver ✅
-├── preprocess.rs         Letterbox resize + tensor cache          🏗️ S2
-├── infer.rs              ORT session pool + warmup + dispatch     🏗️ S2
-├── postprocess.rs        NMS + unified Detection type             🏗️ S2
-├── track.rs              SORT tracker (Kalman + Hungarian)        🏗️ S3
-├── zones.rs              Spatial zone evaluation + hysteresis     🏗️ S4
-├── fsm.rs                Clinical FSM engine + guard evaluation   🏗️ S4
-├── cascade.rs            Lazy model scheduler                     🏗️ S5
+├── infer.rs              Model execution + filters + NMS + masks ✅
+├── detection.rs          Stateless cross-model consolidation       ✅
+├── track.rs              Linear prediction + greedy IoU tracker    🧪 optional
+├── zones.rs              Spatial zone evaluation + hysteresis      ✅
+├── fsm.rs                Clinical FSM engine + guard evaluation    ✅
+├── cascade.rs            Model scheduler + track crop eligibility  ✅
 ├── pipeline.rs           PipelineState runtime                    ✅
 ├── metrics.rs            MetricsEngine + Health + PerClassFrameStats ✅
 ├── viz.rs                VizBridge + Rerun blueprint              ✅
@@ -122,18 +130,19 @@ src/
 └── error.rs              Typed error enums                        ✅
 ```
 
-### Config TOML files (all seven)
+### Config TOML files
 
 | File | Loaded via | Purpose |
 |---|---|---|
 | `config/mana.toml` | `load_app_config()` | Top-level: stream source, pipeline toggles, output paths |
-| `config/models.toml` | `load_model_catalog()` | ONNX model catalog: paths, tasks, imgsz, confidence, per-model crop ROI |
+| `config/models.toml` | `load_model_catalog()` | ONNX model catalog: paths, tasks, imgsz, confidence, `enabled` flag (ADR-020), per-model crop ROI |
+| `config/models.example.toml` | — | Ejemplo: ramas face/seg con `enabled = false` |
 | `config/cascade.toml` | `load_config::<CascadeConfig>()` | Model dependency graph (requires, requires_class) |
 | `config/fsm.toml` | `load_fsm_catalog()` | Clinical state machine: states, models, transitions |
 | `config/zones.toml` | `load_zone_catalog()` | Spatial ROIs for tracking + FSM zone guards |
-| `config/metrics.toml` | `load_metrics_log()` | Text log verbosity + JSONL event toggles |
+| `config/metrics.toml` | `load_metrics_log()` | Text log verbosity + metrics settings |
 | `config/viz.toml` | `load_viz_data()` | Rerun send toggles (per-frame + per-window channels) |
-| `config/rerun.toml` | `load_rerun_blueprint()` | Rerun viewer blueprint layout (declarative reference) |
+| `config/rerun.toml` | `load_rerun_blueprint()` | Rerun viewer blueprint layout |
 
 ## Dependency Graph
 
@@ -144,19 +153,17 @@ main.rs
  │    └── RetinaReader (async RTSP + reconnect)
  ├── snapshot.rs ──────────── ffmpeg-next, image, mana-video
  │    └── FrameDecoder, SnapshotSaver
- ├── preprocess.rs ────────── image (resize), ort::Tensor      🏗️
- │    └── PreprocessCache
- ├── infer.rs ─────────────── ort (ONNX Runtime)                🏗️
- │    └── InferEngine (session pool)
- ├── postprocess.rs ────────── (pure math: NMS, scale, IoU)     🏗️
- │    └── DetectPostprocessor, PosePostprocessor, ...
- ├── track.rs ─────────────── nalgebra (Kalman), (Hungarian)    🏗️
- │    └── TrackingEngine
- ├── zones.rs ──────────────── (pure math: AABB intersection)   🏗️
+  ├── infer.rs ─────────────── ultralytics inference + NMS      ✅
+  │    └── InferEngine
+  ├── detection.rs ─────────── pure spatial consolidation        ✅
+  │    └── DetectionConsolidator
+  ├── track.rs ─────────────── linear prediction + greedy IoU    🧪 optional
+  │    └── Tracker
+  ├── zones.rs ──────────────── (pure math: AABB intersection)   ✅ optional
  │    └── ZoneEngine
- ├── fsm.rs ────────────────── config::FsmCatalog               🏗️
+  ├── fsm.rs ────────────────── config::FsmCatalog               ✅ optional
  │    └── FsmEngine
- ├── cascade.rs ────────────── config::ModelCatalog             🏗️
+  ├── cascade.rs ────────────── config::ModelCatalog             ✅
  │    └── CascadeScheduler
  ├── pipeline.rs ──────────── logger, metrics, health            ✅
  │    └── PipelineState
@@ -170,13 +177,39 @@ main.rs
      └── ManaError, ConfigError, Result<T>
 ```
 
+## Cascade model branches
+
+El cascade (`src/cascade.rs`) programa los modelos en topo-orden; cada modelo puede
+declarar `requires` + `requires_class` en `config/cascade.toml`. La topología actual:
+
+```
+detect-fast (root, siempre corre)
+  ├── pose-standard   (requires=detect-fast, requires_class=person, crop largest_class)
+  ├── face-yolo       (requires=detect-fast, requires_class=person, crop square upper-body)
+  └── seg-standard    (requires=detect-fast, requires_class=person, same_frame=true,
+                        crop largest_class margin 0.15)   ← rama v0.3 (ADR-019..022)
+```
+
+Ramas hermanas: `seg-standard` no depende de pose/face y viceversa — si una falla,
+las otras siguen. Tres formas de excluir un modelo del ciclo:
+
+1. **`enabled = false`** en `[models.<key>]` (ADR-020, default `true`): el modelo se
+   filtra en `App::resolve_models` antes del cascade; no se programa ni se infiere.
+   Ver ejemplo en `config/models.example.toml`.
+2. **FSM**: si el estado actual no lista el modelo, no entra en `ordered()`.
+3. **Cascade**: sin track confirmado de la clase del padre, `should_run` es false.
+
+Salida de `seg-standard`: bboxes + máscaras `CompactMask` (crop-RLE, `vernier-mask`)
++ polígonos de contorno simplificados (RDP 0.75), ambos derivados del crop y
+normalizados al frame. Wire JSONL y overlay Rerun: Spec-003 y ADR-022.
+
 ## Cycle Lifecycle (Superloop)
 
 ```
 ┌──────────────────────────────────────────────────────┐
 │                    SUPERLOOP CYCLE                    │
 │                                                       │
-│  ctx.clear();  // reset arena, keep allocations       │
+│  begin cycle; keep owned frame and pending outputs    │
 │                                                       │
 │  ┌─ PHASE 0: TIMERS ──────────────────────────┐      │
 │  │ cascade.advance(); health.tick();           │      │
@@ -186,31 +219,30 @@ main.rs
 │  ┌─ PHASE 1: INGEST ──────────────────────────┐      │
 │  │ kf = ingest.poll_freshest_keyframe().await; │      │
 │  │ fb = decoder.decode_timed(&kf.h264);        │      │
-│  │ ctx.frame = fb;  // arena slot              │      │
+│  │ frame = fb;  // owned current-frame buffer  │      │
 │  │ < 5ms (decode)                              │      │
 │  └──────────────────────────────────────────────┘      │
 │                         │                              │
 │                    ┌────▼──── no frame? skip INFER     │
 │                    │                                   │
 │  ┌─ PHASE 2: INFER ──────────────────────────┐       │
-│  │ models = cascade.schedule(fsm.active());   │       │
-│  │ for m in models:                           │       │
-│  │   tensor = preprocess.get(m.imgsz, fb);    │       │
-│  │   outputs = infer.run(m, tensor);          │       │
-│  │   detections = postprocess.(outputs, fb);  │       │
-│  │ ctx.detections.extend(detections);         │       │
+│  │ run eligible models;                         │       │
+│  │ postprocess per-model detections;            │       │
+│  │ consolidate(model_detections);               │       │
+│  │ publish consolidated observations;           │       │
+│  │ if tracking: update tracks/entities;         │       │
+│  │ if tracks exist: run eligible child models;  │       │
 │  │ < 200ms (3 modelos CPU)                     │       │
 │  └──────────────────────────────────────────────┘       │
 │                         │                              │
-│  ┌─ PHASE 3: TRACK ───────────────────────────┐      │
-│  │ events = tracker.update(&ctx.detections);   │      │
-│  │ ctx.tracks = tracker.active();              │      │
-│  │ log.emit_all(events);                       │      │
+│  ┌─ PHASE 3: OPTIONAL TRACK / SCENE ───────────┐      │
+│  │ entity events only when tracking is enabled;│      │
+│  │ observations remain frame-local;            │      │
 │  │ < 1ms (20 tracks)                           │      │
 │  └──────────────────────────────────────────────┘      │
 │                         │                              │
 │  ┌─ PHASE 4: ZONES ───────────────────────────┐      │
-│  │ events = zones.evaluate(&ctx.tracks);       │      │
+│  │ events = zones.evaluate(&tracks);            │      │
 │  │ log.emit_all(events);                       │      │
 │  │ < 0.1ms                                     │      │
 │  └──────────────────────────────────────────────┘      │
@@ -227,7 +259,7 @@ main.rs
 │  ┌─ PHASE 6: PUBLISH ─────────────────────────┐      │
 │  │ log.flush();  // JSONL stdout + file rotate │      │
 │  │ viz.tick();   // Rerun flush                │      │
-│  │ snapshots.save(ctx.frame);  // PNG + H.264  │      │
+│  │ snapshots.save(frame);  // PNG + H.264       │      │
 │  │ < 1ms (buffer flush)                        │      │
 │  └──────────────────────────────────────────────┘      │
 │                                                       │
@@ -248,7 +280,7 @@ main.rs
 | IPC | iceoryx2 pub/sub | in-memory references |
 | Control plane | Zenoh | stdout JSONL |
 | Launch | Topological DAG | `cargo run -- --config mana.toml` |
-| Tracking | Kalman (mana-track) | SORT (embedded) |
+| Tracking | Kalman (mana-track) | Linear prediction + greedy IoU, optional |
 | World model | Retained state (mana-world) | Transient per-cycle |
 | Clinical reasoning | BrainService FSM | Embedded FSM |
 | Deployment | System-wide daemons | systemd unit |

@@ -6,7 +6,11 @@ pub fn write_event(event: &Event, ts: &str, buf: &mut Vec<u8>) {
     buf.extend_from_slice(ts.as_bytes());
     buf.extend_from_slice(b"\",");
     match event {
-        Event::Meta { event, detail, attrs } => {
+        Event::Meta {
+            event,
+            detail,
+            attrs,
+        } => {
             buf.extend_from_slice(b"\"type\":\"meta\",\"event\":\"");
             write_json_string(event, buf);
             buf.extend_from_slice(b"\",\"detail\":\"");
@@ -20,7 +24,12 @@ pub fn write_event(event: &Event, ts: &str, buf: &mut Vec<u8>) {
                 buf.extend_from_slice(b"\"");
             }
         }
-        Event::Health { event, frame_id, cycle_us, message } => {
+        Event::Health {
+            event,
+            frame_id,
+            cycle_us,
+            message,
+        } => {
             buf.extend_from_slice(b"\"type\":\"health\",\"event\":\"");
             write_json_string(event, buf);
             buf.extend_from_slice(b"\"");
@@ -38,7 +47,12 @@ pub fn write_event(event: &Event, ts: &str, buf: &mut Vec<u8>) {
                 buf.extend_from_slice(b"\"");
             }
         }
-        Event::Frame { frame_id, is_keyframe, decode_ms, gap_ms } => {
+        Event::Frame {
+            frame_id,
+            is_keyframe,
+            decode_ms,
+            gap_ms,
+        } => {
             buf.extend_from_slice(b"\"type\":\"frame\",\"frame_id\":");
             write_u64(*frame_id, buf);
             buf.extend_from_slice(b",\"is_keyframe\":");
@@ -48,13 +62,29 @@ pub fn write_event(event: &Event, ts: &str, buf: &mut Vec<u8>) {
             buf.extend_from_slice(b",\"gap_ms\":");
             write_u64(*gap_ms, buf);
         }
-        Event::Detection { frame_id, model, infer_ms, detections, per_class, crop } => {
+        Event::Detection {
+            frame_id,
+            model,
+            infer_ms,
+            pipeline_ms,
+            detections,
+            postprocess_rejected,
+            post_nms_suppressed,
+            per_class,
+            crop,
+        } => {
             buf.extend_from_slice(b"\"type\":\"detection\",\"frame_id\":");
             write_u64(*frame_id, buf);
             buf.extend_from_slice(b",\"model\":\"");
             write_json_string(model, buf);
             buf.extend_from_slice(b"\",\"infer_ms\":");
             write_u64(*infer_ms, buf);
+            buf.extend_from_slice(b",\"pipeline_ms\":");
+            write_u64(*pipeline_ms, buf);
+            buf.extend_from_slice(b",\"post_rejected\":");
+            write_u64(*postprocess_rejected as u64, buf);
+            buf.extend_from_slice(b",\"post_nms_suppressed\":");
+            write_u64(*post_nms_suppressed as u64, buf);
             if let Some([x1, y1, x2, y2]) = crop {
                 buf.extend_from_slice(b",\"crop\":[");
                 write_u64(*x1 as u64, buf);
@@ -68,17 +98,71 @@ pub fn write_event(event: &Event, ts: &str, buf: &mut Vec<u8>) {
             }
             buf.extend_from_slice(b",\"det\":[");
             for (i, d) in detections.iter().enumerate() {
-                if i > 0 { buf.push(b','); }
+                if i > 0 {
+                    buf.push(b',');
+                }
                 buf.extend_from_slice(b"{\"class\":\"");
                 write_json_string(&d.class, buf);
                 buf.extend_from_slice(b"\",\"confidence\":");
                 write_f32(d.confidence, buf);
                 buf.extend_from_slice(b",\"bbox\":[");
                 for (j, v) in d.bbox.iter().enumerate() {
-                    if j > 0 { buf.push(b','); }
+                    if j > 0 {
+                        buf.push(b',');
+                    }
                     write_f32(*v, buf);
                 }
-                buf.extend_from_slice(b"]}");
+                buf.extend_from_slice(b"]");
+                if let Some(mask) = &d.mask {
+                    buf.extend_from_slice(b",\"mask\":{\"rle\":[");
+                    for (j, count) in mask.rle.iter().enumerate() {
+                        if j > 0 {
+                            buf.push(b',');
+                        }
+                        write_u64(*count as u64, buf);
+                    }
+                    buf.extend_from_slice(b"],\"bbox\":[");
+                    for (j, v) in mask.bbox.iter().enumerate() {
+                        if j > 0 {
+                            buf.push(b',');
+                        }
+                        write_f32(*v, buf);
+                    }
+                    buf.extend_from_slice(b"],\"origin\":[");
+                    for (j, v) in mask.origin.iter().enumerate() {
+                        if j > 0 {
+                            buf.push(b',');
+                        }
+                        write_u64(*v as u64, buf);
+                    }
+                    buf.extend_from_slice(b"],\"mask_dims\":[");
+                    for (j, v) in mask.mask_dims.iter().enumerate() {
+                        if j > 0 {
+                            buf.push(b',');
+                        }
+                        write_u64(*v as u64, buf);
+                    }
+                    buf.extend_from_slice(b"],\"polygons\":[");
+                    for (j, poly) in mask.polygons.iter().enumerate() {
+                        if j > 0 {
+                            buf.push(b',');
+                        }
+                        buf.push(b'[');
+                        for (k, vertex) in poly.iter().enumerate() {
+                            if k > 0 {
+                                buf.push(b',');
+                            }
+                            buf.push(b'[');
+                            write_f32(vertex[0], buf);
+                            buf.push(b',');
+                            write_f32(vertex[1], buf);
+                            buf.push(b']');
+                        }
+                        buf.push(b']');
+                    }
+                    buf.extend_from_slice(b"]}");
+                }
+                buf.extend_from_slice(b"}");
             }
             buf.extend_from_slice(b"]");
             if let Some(pc) = per_class {
@@ -86,7 +170,9 @@ pub fn write_event(event: &Event, ts: &str, buf: &mut Vec<u8>) {
                     buf.extend_from_slice(b",\"per_class\":{");
                     let mut first = true;
                     for (cls, stat) in &pc.stats {
-                        if !first { buf.push(b','); }
+                        if !first {
+                            buf.push(b',');
+                        }
                         first = false;
                         buf.extend_from_slice(b"\"");
                         buf.extend_from_slice(cls.as_bytes());
@@ -106,7 +192,116 @@ pub fn write_event(event: &Event, ts: &str, buf: &mut Vec<u8>) {
                 }
             }
         }
-        Event::Zone { zone, event, class, label, confidence, frame_id } => {
+        Event::Depth {
+            frame_id,
+            model,
+            infer_ms,
+            pipeline_ms,
+            width,
+            height,
+            valid_pixels,
+            min_depth_m,
+            max_depth_m,
+        } => {
+            buf.extend_from_slice(b"\"type\":\"depth\",\"frame_id\":");
+            write_u64(*frame_id, buf);
+            buf.extend_from_slice(b",\"model\":\"");
+            write_json_string(model, buf);
+            buf.extend_from_slice(b"\",\"infer_ms\":");
+            write_u64(*infer_ms, buf);
+            buf.extend_from_slice(b",\"pipeline_ms\":");
+            write_u64(*pipeline_ms, buf);
+            buf.extend_from_slice(b",\"width\":");
+            write_u64(*width as u64, buf);
+            buf.extend_from_slice(b",\"height\":");
+            write_u64(*height as u64, buf);
+            buf.extend_from_slice(b",\"valid_pixels\":");
+            write_u64(*valid_pixels, buf);
+            buf.extend_from_slice(b",\"min_depth_m\":");
+            if let Some(value) = min_depth_m {
+                write_f32(*value, buf);
+            } else {
+                buf.extend_from_slice(b"null");
+            }
+            buf.extend_from_slice(b",\"max_depth_m\":");
+            if let Some(value) = max_depth_m {
+                write_f32(*value, buf);
+            } else {
+                buf.extend_from_slice(b"null");
+            }
+        }
+        Event::ConsolidatedDetection {
+            frame_id,
+            class,
+            confidence,
+            bbox,
+            primary_model,
+            sources,
+        } => {
+            buf.extend_from_slice(b"\"type\":\"consolidated_detection\",\"frame_id\":");
+            write_u64(*frame_id, buf);
+            buf.extend_from_slice(b",\"class\":\"");
+            write_json_string(class, buf);
+            buf.extend_from_slice(b"\",\"confidence\":");
+            write_f32(*confidence, buf);
+            buf.extend_from_slice(b",\"bbox\":[");
+            for (i, value) in bbox.iter().enumerate() {
+                if i > 0 {
+                    buf.push(b',');
+                }
+                write_f32(*value, buf);
+            }
+            buf.extend_from_slice(b"],\"primary_model\":\"");
+            write_json_string(primary_model, buf);
+            buf.extend_from_slice(b"\",\"sources\":[");
+            for (i, source) in sources.iter().enumerate() {
+                if i > 0 {
+                    buf.push(b',');
+                }
+                buf.push(b'\"');
+                write_json_string(source, buf);
+                buf.push(b'\"');
+            }
+            buf.extend_from_slice(b"]");
+        }
+        Event::Entity {
+            track_id,
+            class,
+            bbox,
+            sources,
+            frame_id,
+        } => {
+            buf.extend_from_slice(b"\"type\":\"entity\",\"track_id\":");
+            write_u64(*track_id, buf);
+            buf.extend_from_slice(b",\"class\":\"");
+            write_json_string(class, buf);
+            buf.extend_from_slice(b"\",\"bbox\":[");
+            for (i, value) in bbox.iter().enumerate() {
+                if i > 0 {
+                    buf.push(b',');
+                }
+                write_f32(*value, buf);
+            }
+            buf.extend_from_slice(b"],\"sources\":[");
+            for (i, source) in sources.iter().enumerate() {
+                if i > 0 {
+                    buf.push(b',');
+                }
+                buf.push(b'\"');
+                write_json_string(source, buf);
+                buf.push(b'\"');
+            }
+            buf.extend_from_slice(b"],\"frame_id\":");
+            write_u64(*frame_id, buf);
+        }
+        Event::Zone {
+            zone,
+            event,
+            class,
+            label,
+            confidence,
+            frame_id,
+        } => {
             buf.extend_from_slice(b"\"type\":\"zone\",\"zone\":\"");
             write_json_string(zone, buf);
             buf.extend_from_slice(b"\",\"event\":\"");
@@ -126,7 +321,14 @@ pub fn write_event(event: &Event, ts: &str, buf: &mut Vec<u8>) {
             buf.extend_from_slice(b",\"frame_id\":");
             write_u64(*frame_id, buf);
         }
-        Event::Fsm { from, from_label, to, to_label, trigger, dwell_ms } => {
+        Event::Fsm {
+            from,
+            from_label,
+            to,
+            to_label,
+            trigger,
+            dwell_ms,
+        } => {
             buf.extend_from_slice(b"\"type\":\"fsm\",\"from\":\"");
             write_json_string(from, buf);
             buf.extend_from_slice(b"\"");
@@ -154,6 +356,8 @@ pub fn write_event(event: &Event, ts: &str, buf: &mut Vec<u8>) {
             append_field(buf, "cycles", r.cycles);
             append_field(buf, "frames_total", r.frames_total);
             append_field(buf, "keyframes", r.keyframes);
+            append_field(buf, "keyframes_seen", r.keyframes_seen);
+            append_field(buf, "keyframes_dropped", r.keyframes_dropped);
             append_field(buf, "pframes_dropped", r.pframes_dropped);
             append_field(buf, "inferences", r.inferences);
             append_field(buf, "infer_total_ms", r.infer_total_ms);
@@ -169,7 +373,9 @@ pub fn write_event(event: &Event, ts: &str, buf: &mut Vec<u8>) {
             buf.extend_from_slice(b",\"models\":{");
             let mut first_model = true;
             for (name, m) in &r.model_metrics {
-                if !first_model { buf.push(b','); }
+                if !first_model {
+                    buf.push(b',');
+                }
                 first_model = false;
                 buf.extend_from_slice(b"\"");
                 buf.extend_from_slice(name.as_bytes());
@@ -181,6 +387,15 @@ pub fn write_event(event: &Event, ts: &str, buf: &mut Vec<u8>) {
                 append_field(buf, "dets", m.total_dets);
                 append_field(buf, "skips", m.skips);
                 append_field(buf, "empty", m.empty);
+                if m.depth_frames > 0 {
+                    append_field(buf, "depth_frames", m.depth_frames);
+                    append_field(buf, "depth_valid_pixels", m.depth_valid_pixels);
+                    append_field(buf, "depth_empty", m.depth_empty);
+                    buf.extend_from_slice(b",\"depth_min_m\":");
+                    write_f64(m.depth_min_m, buf);
+                    buf.extend_from_slice(b",\"depth_max_m\":");
+                    write_f64(m.depth_max_m, buf);
+                }
                 if let Some([x1, y1, x2, y2]) = m.roi {
                     buf.extend_from_slice(b",\"roi\":[");
                     write_u64(x1 as u64, buf);
@@ -196,7 +411,9 @@ pub fn write_event(event: &Event, ts: &str, buf: &mut Vec<u8>) {
                     buf.extend_from_slice(b",\"classes\":{");
                     let mut first_class = true;
                     for (cls, count) in &m.class_counts {
-                        if !first_class { buf.push(b','); }
+                        if !first_class {
+                            buf.push(b',');
+                        }
                         first_class = false;
                         buf.extend_from_slice(b"\"");
                         buf.extend_from_slice(cls.as_bytes());
@@ -272,7 +489,11 @@ pub fn write_f32(v: f32, buf: &mut Vec<u8>) {
     let _ = write!(buf, "{v:.6}");
     let strip = buf.iter().rev().take_while(|&&b| b == b'0').count();
     let dot = buf.iter().rposition(|&b| b == b'.').unwrap_or(buf.len());
-    let keep = if strip > 0 && buf.len() - strip > dot { buf.len() - strip } else { buf.len() };
+    let keep = if strip > 0 && buf.len() - strip > dot {
+        buf.len() - strip
+    } else {
+        buf.len()
+    };
     buf.truncate(keep);
     if buf.ends_with(&[b'.']) {
         buf.truncate(buf.len() - 1);
@@ -288,7 +509,11 @@ pub fn write_f64(v: f64, buf: &mut Vec<u8>) {
     let _ = write!(buf, "{v:.6}");
     let strip = buf.iter().rev().take_while(|&&b| b == b'0').count();
     let dot = buf.iter().rposition(|&b| b == b'.').unwrap_or(buf.len());
-    let keep = if strip > 0 && buf.len() - strip > dot { buf.len() - strip } else { buf.len() };
+    let keep = if strip > 0 && buf.len() - strip > dot {
+        buf.len() - strip
+    } else {
+        buf.len()
+    };
     buf.truncate(keep);
     if buf.ends_with(&[b'.']) {
         buf.truncate(buf.len() - 1);

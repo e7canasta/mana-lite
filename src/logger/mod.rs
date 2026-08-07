@@ -2,10 +2,10 @@ mod event;
 mod serialize;
 
 #[allow(unused_imports)]
-pub use event::{DetRecord, Event, JsonlLevel};
+pub use event::{DetRecord, Event, JsonlLevel, MaskRecord};
 use serialize::write_event;
 
-use crate::config::Rotate;
+use crate::config::{MetricsJsonlConfig, Rotate};
 use std::fs;
 use std::io::{self, BufWriter, Write};
 use std::path::PathBuf;
@@ -16,6 +16,7 @@ pub struct Logger {
     started_at: Instant,
     target: OutputTarget,
     level: JsonlLevel,
+    jsonl_config: MetricsJsonlConfig,
 }
 
 enum OutputTarget {
@@ -35,6 +36,7 @@ impl Logger {
             started_at: Instant::now(),
             target: OutputTarget::Stdout(BufWriter::new(io::stdout())),
             level,
+            jsonl_config: MetricsJsonlConfig::default(),
         }
     }
 
@@ -57,13 +59,23 @@ impl Logger {
         Ok(Self {
             buffer: Vec::with_capacity(32),
             started_at: Instant::now(),
-            target: OutputTarget::Rotating { dir, writer, current_hour: hour, current_day: day },
+            target: OutputTarget::Rotating {
+                dir,
+                writer,
+                current_hour: hour,
+                current_day: day,
+            },
             level,
+            jsonl_config: MetricsJsonlConfig::default(),
         })
     }
 
+    pub fn set_jsonl_config(&mut self, config: MetricsJsonlConfig) {
+        self.jsonl_config = config;
+    }
+
     pub fn emit(&mut self, event: Event) {
-        if self.level.allows(event.min_level()) {
+        if self.level.allows(event.min_level()) && self.jsonl_config.allows(&event) {
             self.buffer.push(event);
         }
     }
@@ -89,7 +101,12 @@ impl Logger {
                 w.write_all(buf)?;
                 w.flush()
             }
-            OutputTarget::Rotating { dir, writer, current_hour, current_day } => {
+            OutputTarget::Rotating {
+                dir,
+                writer,
+                current_hour,
+                current_day,
+            } => {
                 let now = chrono::Utc::now();
                 let rotate_needed = match *current_hour {
                     0 if *current_day > 0 => {
@@ -147,6 +164,20 @@ impl Logger {
     }
 }
 
+impl MetricsJsonlConfig {
+    fn allows(&self, event: &Event) -> bool {
+        match event {
+            Event::Frame { .. } => self.frame_events,
+            Event::Detection { .. } | Event::ConsolidatedDetection { .. } => self.detection_events,
+            Event::Depth { .. } => self.depth_events,
+            Event::Zone { .. } => self.zone_events,
+            Event::Fsm { .. } => self.fsm_events,
+            Event::Metrics(_) => self.metrics_event,
+            Event::Meta { .. } | Event::Health { .. } | Event::Entity { .. } => true,
+        }
+    }
+}
+
 fn open_file(dir: &PathBuf, fmt: &str) -> io::Result<(BufWriter<fs::File>, u32, u32)> {
     let now = chrono::Utc::now();
     let filename = format!("mana-{}.jsonl", now.format(fmt));
@@ -187,20 +218,154 @@ mod tests {
 
     #[test]
     fn detection_emits_class_and_bbox() {
-        let det = vec![DetRecord { class: "person".into(), confidence: 0.87, bbox: [100.0, 200.0, 300.0, 500.0] }];
+        let det = vec![DetRecord {
+            class: "person".into(),
+            confidence: 0.87,
+            bbox: [100.0, 200.0, 300.0, 500.0],
+            mask: None,
+        }];
         let mut log = test_logger();
-        log.emit(Event::detection(1, "detect-fast", 52, det, None, None));
+        log.emit(Event::detection(
+            1,
+            "detect-fast",
+            52,
+            60,
+            det,
+            0,
+            0,
+            None,
+            None,
+        ));
         let out = collect(&mut log);
         assert!(out.contains("\"type\":\"detection\""));
+        assert!(out.contains("\"pipeline_ms\":60"));
         assert!(out.contains("\"class\":\"person\""));
         assert!(out.contains("\"confidence\":0.87"));
         assert!(out.contains("\"bbox\":[100,200,300,500]"));
     }
 
     #[test]
+    fn detection_emits_mask_wire_record() {
+        use crate::infer::DetectionMask;
+        use mana_geometry::compact_mask::CompactMask;
+        use std::sync::Arc;
+        let compact = CompactMask::from_dense(&[1, 1, 1, 1], 2, 2, (3, 4), (10, 10)).unwrap();
+        let mask = DetectionMask {
+            compact: Arc::new(compact),
+            polygons: Arc::new(vec![vec![[0.25, 0.25], [0.75, 0.25], [0.75, 0.75]]]),
+            origin: [0, 0],
+            mask_dims: [10, 10],
+        };
+        let record = mask.to_wire_record();
+        let det = vec![DetRecord {
+            class: "person".into(),
+            confidence: 0.9,
+            bbox: [3.0, 4.0, 5.0, 6.0],
+            mask: Some(record),
+        }];
+        let mut log = test_logger();
+        log.emit(Event::detection(
+            1,
+            "seg-standard",
+            52,
+            60,
+            det,
+            0,
+            0,
+            None,
+            None,
+        ));
+        let out = collect(&mut log);
+        assert!(out.contains("\"mask\":{\"rle\":["), "missing rle: {out}");
+        assert!(
+            out.contains("\"bbox\":[3,4,5,6]"),
+            "missing mask bbox: {out}"
+        );
+        assert!(out.contains("\"origin\":[0,0]"));
+        assert!(out.contains("\"mask_dims\":[10,10]"));
+        assert!(out.contains("\"polygons\":[[[0.25,0.25],[0.75,0.25],[0.75,0.75]]]"));
+    }
+
+    #[test]
+    fn mask_wire_record_round_trips_through_rle() {
+        use crate::infer::DetectionMask;
+        use mana_geometry::compact_mask::CompactMask;
+        use std::sync::Arc;
+        let compact = CompactMask::from_dense(&[1, 1, 1, 1], 2, 2, (3, 4), (10, 10)).unwrap();
+        let mask = DetectionMask {
+            compact: Arc::new(compact),
+            polygons: Arc::new(vec![]),
+            origin: [0, 0],
+            mask_dims: [10, 10],
+        };
+        let record = mask.to_wire_record();
+        let rebuilt = vernier_mask::Rle::from_counts(
+            (record.bbox[3] - record.bbox[1]) as u32,
+            (record.bbox[2] - record.bbox[0]) as u32,
+            record.rle.clone(),
+        );
+        let raster = rebuilt.to_raster_bytes();
+        assert_eq!(
+            raster,
+            vec![1, 1, 1, 1],
+            "lossless round-trip of mask raster"
+        );
+    }
+
+    #[test]
+    fn jsonl_config_filters_optional_events() {
+        let mut log = test_logger();
+        log.set_jsonl_config(MetricsJsonlConfig {
+            frame_events: false,
+            ..MetricsJsonlConfig::default()
+        });
+        log.emit(Event::frame_ingest(1, true, 10, 100));
+        log.emit(Event::detection(
+            1,
+            "detect-fast",
+            10,
+            12,
+            Vec::new(),
+            0,
+            0,
+            None,
+            None,
+        ));
+
+        let out = collect(&mut log);
+        assert!(!out.contains("\"type\":\"frame\""));
+        assert!(out.contains("\"type\":\"detection\""));
+    }
+
+    #[test]
+    fn consolidated_detection_has_no_track_id() {
+        let mut log = test_logger();
+        log.emit(Event::consolidated_detection(
+            4,
+            "person",
+            0.91,
+            [10.0, 20.0, 110.0, 220.0],
+            "detect-fast",
+            vec!["detect-fast".into(), "pose-standard".into()],
+        ));
+        let out = collect(&mut log);
+        assert!(out.contains("\"type\":\"consolidated_detection\""));
+        assert!(out.contains("\"primary_model\":\"detect-fast\""));
+        assert!(out.contains("\"sources\":[\"detect-fast\",\"pose-standard\"]"));
+        assert!(!out.contains("track_id"));
+    }
+
+    #[test]
     fn fsm_transition_has_from_to_trigger() {
         let mut log = test_logger();
-        log.emit(Event::fsm_transition("idle", None, "monitoring", None, "bed_occupied", 0));
+        log.emit(Event::fsm_transition(
+            "idle",
+            None,
+            "monitoring",
+            None,
+            "bed_occupied",
+            0,
+        ));
         let out = collect(&mut log);
         assert!(out.contains("\"type\":\"fsm\""));
         assert!(out.contains("\"from\":\"idle\""));
@@ -245,10 +410,57 @@ mod tests {
 
     #[test]
     fn negative_float_is_valid_json() {
-        let det = vec![DetRecord { class: "x".into(), confidence: 0.5, bbox: [-10.5, 0.0, 100.0, 200.25] }];
+        let det = vec![DetRecord {
+            class: "x".into(),
+            confidence: 0.5,
+            bbox: [-10.5, 0.0, 100.0, 200.25],
+            mask: None,
+        }];
         let mut log = test_logger();
-        log.emit(Event::detection(1, "m", 10, det, None, None));
+        log.emit(Event::detection(1, "m", 10, 12, det, 0, 0, None, None));
         let out = collect(&mut log);
         assert!(out.contains("\"bbox\":[-10.5,0,100,200.25]"));
+    }
+
+    #[test]
+    fn depth_emits_dimensions_and_finite_stats() {
+        let mut log = test_logger();
+        log.emit(Event::depth(
+            7,
+            "depth-standard",
+            180,
+            190,
+            1920,
+            1080,
+            2,
+            Some(0.42),
+            Some(8.31),
+        ));
+        let out = collect(&mut log);
+        assert!(out.contains("\"type\":\"depth\""));
+        assert!(out.contains("\"width\":1920"));
+        assert!(out.contains("\"valid_pixels\":2"));
+        assert!(out.contains("\"min_depth_m\":0.42"));
+        assert!(out.contains("\"max_depth_m\":8.31"));
+    }
+
+    #[test]
+    fn depth_emits_null_stats_when_map_is_empty() {
+        let mut log = test_logger();
+        log.emit(Event::depth(
+            8,
+            "depth-standard",
+            10,
+            12,
+            4,
+            3,
+            0,
+            None,
+            None,
+        ));
+        let out = collect(&mut log);
+        assert!(out.contains("\"valid_pixels\":0"));
+        assert!(out.contains("\"min_depth_m\":null"));
+        assert!(out.contains("\"max_depth_m\":null"));
     }
 }

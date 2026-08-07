@@ -25,18 +25,29 @@ keyframes_only = true
 [inference]
 model_catalog = "config/models.toml"
 default_model = "detect-fast"
+cascade_file = "config/cascade.toml"
 zones_file = "config/zones.toml"
 fsm_file = "config/fsm.toml"
+disabled_tasks = []
+
+[tracking]
+min_hits = 2
+max_age = 20
+tentative_max_age = 3
+iou_threshold = 0.2
 
 [health]
 data_stale_ms = 10_000      # time without frame → BLIND
 max_consecutive_panics = 3
-heartbeat_every_n_cycles = 100
+report_interval_s = 5
 
 [output]
 format = "jsonl"            # "jsonl" only for v0.x
 save_dir = "./logs"         # optional, omit for stdout-only
 rotate = "hourly"           # "hourly" | "daily" | "never"
+snapshot_dir = "./snapshots"
+snapshot_verbose = false
+jsonl_level = "info"
 ```
 
 ### `models.toml` — Model Catalog
@@ -47,16 +58,24 @@ Each table under `[models]` is a named entry. Keys are stable identifiers for FS
 [models.detect-fast]
 path = "models/yolo26n.onnx"
 task = "detect"
+enabled = true          # default true; false deshabilita la rama en el cascade
 confidence = 0.5
-iou = 0.7
+iou = 0.5
 max_det = 100
 imgsz = 320
 device = "cpu"
+
+[models.detect-fast.postprocess]
+allow_classes = ["person", "wheelchair"]
+min_confidence = 0.25
+min_area_ratio = 0.001
+max_area_ratio = 1.0
 
 [models.detect-large]
 path = "models/yolo26x.onnx"
 task = "detect"
 confidence = 0.3
+iou = 0.5
 imgsz = 640
 
 [models.detect-v2]
@@ -69,6 +88,7 @@ imgsz = 320
 path = "models/yolo26n-pose.onnx"
 task = "pose"
 confidence = 0.3
+iou = 0.5
 imgsz = 640
 
 [models.face-v11]
@@ -101,6 +121,7 @@ imgsz = 384
 |---|---|---|---|---|
 | `path` | string | yes | — | Filesystem path to `.onnx` |
 | `task` | string | yes | — | `detect`, `segment`, `pose`, `classify`, `obb`, `semantic`, `depth` |
+| `enabled` | bool | no | true | `false` deshabilita el modelo en el scheduler (ADR-020) |
 | `confidence` | float | no | 0.25 | Detection confidence threshold |
 | `iou` | float | no | 0.7 | NMS IoU threshold |
 | `max_det` | int | no | 300 | Max detections per frame |
@@ -108,6 +129,103 @@ imgsz = 384
 | `device` | string | no | `"cpu"` | `cpu`, `rocm:0`, `openvino` |
 | `half` | bool | no | false | FP16 inference |
 | `rect` | bool | no | true | Rectangular (aspect-preserving) preprocessing |
+| `postprocess.allow_classes` | string[] | no | `[]` | Classes published by this model; empty allows all |
+| `postprocess.min_confidence` | float | no | 0.0 | Additional output confidence threshold |
+| `postprocess.min_area_ratio` | float | no | 0.0 | Minimum bbox area relative to original frame |
+| `postprocess.max_area_ratio` | float | no | 1.0 | Maximum bbox area relative to original frame |
+| `postprocess.min_component_area_ratio` | float | no | 0.0 | Minimum connected mask-component area relative to the detection mask crop |
+| `postprocess.mask_threshold` | float | no | 0.5 | Foreground threshold for segmentation masks |
+
+The model-level `confidence` and `iou` values configure the inference engine
+and its intra-model NMS. Each model can define its own postprocessing filters;
+they run afterward on that model's unified detections.
+
+For segmentation models, `min_component_area_ratio` removes disconnected
+foreground components smaller than the configured fraction of the detection
+mask crop. The cleaned raster is used to build both `CompactMask` and
+polygons, so the lossless mask and its derived contours remain aligned. Large
+disconnected components remain part of the same detection.
+
+Models may also define a physical crop. A static crop uses original-frame
+coordinates; a dynamic `largest_class` crop is resolved from the accepted
+cascade target.
+
+```toml
+[models.pose-standard.crop]
+type = "largest_class"
+class = "person"
+margin = 0.15
+
+[models.pose-standard.postprocess]
+allow_classes = ["person"]
+min_confidence = 0.3
+min_area_ratio = 0.001
+max_area_ratio = 1.0
+```
+
+`allow_classes = []` allows every class for that model. This supports models
+with different roles: a person detector can emit `person`, a wheelchair
+detector can emit `wheelchair`, a face model `face`, and a depth model can
+leave the allowlist empty.
+
+### `cascade.toml` - Cascaded Model Eligibility
+
+The cascade uses confirmed tracks from the parent model. A single-frame
+detection cannot activate a child model.
+
+```toml
+[regions.bed]
+rect = [100, 200, 500, 800]
+label = "Bed A"
+
+[[rules]]
+model = "detect-fast"
+
+[[rules]]
+model = "pose-standard"
+requires = "detect-fast"
+requires_class = "person"
+requires_min_confidence = 0.50
+requires_min_area_ratio = 0.01
+requires_region = "bed"
+requires_region_coverage = 0.30
+```
+
+`requires_region_coverage` is the intersection area between the track bbox and
+the semantic region divided by the track bbox area. It is not IoU, so a small
+person inside a larger region can still satisfy the rule.
+
+The model crop remains independent from semantic eligibility. For example,
+`pose-standard.crop` can crop to the confirmed person's bbox after the cascade
+has accepted that track.
+
+### Detection Consolidation
+
+Model detections are not scene entities. The pipeline uses three levels:
+
+```text
+Detection          one model output in one cycle
+ConsolidatedObservation  spatial consolidation for the current cycle
+TrackedEntity            temporal identity with multi-rate evidence
+```
+
+Detections from the same class can fuse by IoU. `pose`, `face` and `segment`
+can enrich a primary entity without creating a second scene bbox. Face uses
+containment over the face bbox rather than ordinary IoU because the face is a
+component inside the person bbox.
+
+The current stateless output is published once per `ConsolidatedObservation`:
+JSONL uses `consolidated_detection` and Rerun uses
+`/world/camera/observations`. Model-specific detections remain available as
+diagnostic events.
+
+When `pipeline.track = true`, the tracker additionally publishes the canonical
+bbox as a `TrackedEntity` and Rerun can show it in the entity layer. Therefore
+an observation and a tracked entity are deliberately separate outputs, even
+when they describe the same subject in one frame.
+
+Independent freshness and TTL for secondary evidence are planned for the
+tracking stage. They are not part of the current stateless consolidation mode.
 
 ### `zones.toml` — Spatial Zones
 
@@ -153,9 +271,9 @@ models = ["detect-fast"]
 label = "Person Present"
 models = ["detect-fast", "pose-standard"]
 
-[fsm.states.alarmed]
+[fsm.states.bed_alert]
 label = "ALERT: Bed Exit Attempt"
-models = ["detect-fast", "face-v12"]
+models = ["detect-fast", "pose-standard"]
 dwell_min_ms = 3000   # minimum time in this state before auto-escalation
 
 [fsm.states.blind]
@@ -173,7 +291,7 @@ guards = [
 
 [[fsm.transitions]]
 from = "watching"
-to = "alarmed"
+to = "bed_alert"
 guards = [
     { type = "zone_vacated", zone = "bed", min_duration_ms = 3000 }
 ]
@@ -186,7 +304,7 @@ guards = [
 ]
 
 [[fsm.transitions]]
-from = "alarmed"
+from = "bed_alert"
 to = "watching"
 guards = [
     { type = "zone_occupied", zone = "bed", min_duration_ms = 5000 },
@@ -195,8 +313,8 @@ guards = [
 
 # Guard-less transitions (auto-escalation by dwell)
 [[fsm.transitions]]
-from = "alarmed"
-to = "blinded"
+from = "bed_alert"
+to = "blind"
 dwell = "5m"    # after 5 minutes in alarmed, escalate
 
 [[fsm.transitions]]
@@ -228,12 +346,12 @@ guards = [
 | `TIMERS` | Advance `Ton`/`Tof` dwell counters, check stale timers | < 1µs |
 | `EVALUATE` | Evaluate FSM guards against current detections + zone state | < 10µs |
 | `INGEST` | Read one frame from RTSP (non-blocking try-read), decode if keyframe | < 5ms decode |
-| `INFER` | Run models requested by active FSM state. Skip models whose `interval_min_ms` hasn't elapsed. | 20-200ms per model |
+| `INFER` | Run root models, apply per-model postprocess filters, update tracking, then run eligible child models on confirmed-track crops. | 20-200ms per model |
 | `ZONES` | Map detections to spatial zones, update zone occupancy state | < 10µs |
 | `FSM` | Evaluate transitions with satisfied dwells, advance state | < 10µs |
 | `PUBLISH` | Flush accumulated events to stdout | < 100µs |
 
-The loop runs **as fast as the slowest phase allows** (bottlenecked by INFER). When no inference is scheduled for a cycle, the loop runs at frame rate (~30-60 fps decode only, no model cost).
+The loop runs **as fast as the slowest phase allows** (bottlenecked by INFER). Child models are skipped when no confirmed track satisfies their cascade rule. Timer-based model intervals are not part of the current implementation.
 
 ## Event Output (JSONL)
 
@@ -244,10 +362,12 @@ Every line is a complete JSON object terminated by `\n`. All timestamps are ISO 
 {"t":"2026-08-03T20:15:00.200Z","type":"meta","event":"model_loaded","model":"detect-fast","path":"models/yolo26n.onnx","task":"detect","warmup_ms":340}
 {"t":"2026-08-03T20:15:00.334Z","type":"health","event":"heartbeat","f":0,"ph":"timers","cyc_us":12}
 {"t":"2026-08-03T20:15:00.450Z","type":"frame","f":1,"kf":true,"dec_ms":18}
-{"t":"2026-08-03T20:15:00.520Z","type":"detection","f":1,"m":"detect-fast","inf_ms":52,"det":[{"c":"person","conf":0.87,"bb":[100,200,300,500]}]}
-{"t":"2026-08-03T20:15:00.530Z","type":"zone","z":"bed","e":"occupied","cls":"person","f":1}
-{"t":"2026-08-03T20:15:00.540Z","type":"fsm","from":"idle","to":"monitoring","tr":"bed_occupied","dwell":0}
-{"t":"2026-08-03T20:15:02.500Z","type":"fsm","from":"monitoring","to":"alarmed","tr":"bed_exit_attempt","dwell":3000}
+{"t":"2026-08-03T20:15:00.520Z","type":"detection","f":1,"m":"detect-fast","inf_ms":52,"pipeline_ms":58,"post_rejected":2,"post_nms_suppressed":1,"det":[{"c":"person","conf":0.87,"bb":[100,200,300,500]}]}
+{"t":"2026-08-03T20:15:00.525Z","type":"consolidated_detection","frame_id":1,"class":"person","confidence":0.87,"bbox":[100,200,300,500],"primary_model":"detect-fast","sources":["detect-fast"]}
+{"t":"2026-08-03T20:15:00.530Z","type":"entity","track_id":7,"class":"person","bbox":[100,200,300,500],"sources":["detect-fast"]}
+{"t":"2026-08-03T20:15:00.535Z","type":"zone","z":"bed","e":"occupied","cls":"person","f":1}
+{"t":"2026-08-03T20:15:00.540Z","type":"fsm","from":"idle","to":"watching","tr":"bed_occupied","dwell":0}
+{"t":"2026-08-03T20:15:02.500Z","type":"fsm","from":"watching","to":"bed_alert","tr":"bed_exit_attempt","dwell":3000}
 {"t":"2026-08-03T20:15:05.000Z","type":"health","event":"stale","c":"ingest","ms":4500}
 {"t":"2026-08-03T20:15:10.000Z","type":"health","event":"blind","msg":"No frame for 10000ms"}
 {"t":"2026-08-03T20:30:00.000Z","type":"meta","event":"shutdown","reason":"SIGTERM","uptime":900}
@@ -255,7 +375,9 @@ Every line is a complete JSON object terminated by `\n`. All timestamps are ISO 
 
 **Field key abbreviations** (reduce line size for high-throughput):
 - `t` = timestamp, `f` = frame, `kf` = keyframe, `dec_ms` = decode_ms
-- `m` = model, `inf_ms` = infer_ms, `det` = detections
+- `m` = model, `inf_ms` = backend inference time, `pipeline_ms` = wall-clock model time, `post_rejected` = detections removed by model filters, `post_nms_suppressed` = detections removed by explicit mana-lite NMS, `det` = detections
+- `track_id` = tracked temporal entity identifier, `sources` = contributing models
+- `consolidated_detection` has no identity; it represents only the current frame
 - `c` = class, `conf` = confidence, `bb` = bbox
 - `z` = zone, `e` = event, `cls` = by_class
 - `tr` = trigger, `ph` = phase, `cyc_us` = cycle_us

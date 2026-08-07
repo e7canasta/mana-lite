@@ -184,6 +184,22 @@ class = "person"
 margin = 0.10
 ```
 
+Para face conviene evitar el bbox completo de una persona alta. Se puede usar
+un cuadrado centrado en la mitad superior:
+
+```toml
+[models.face-yolo.crop]
+type = "largest_class"
+class = "person"
+square_size = 320
+upper_fraction = 0.50
+```
+
+`square_size` esta expresado en pixeles del frame fuente. El cuadrado se centra
+horizontalmente en la persona y verticalmente en el centro de su mitad
+superior. El engine conserva letterboxing/aspect ratio dentro del modelo y
+devuelve las detecciones con offset al frame original.
+
 Tres modelos, tres politicas distintas. El cascade define **quien es el parent** (de donde vienen las detecciones para el ROI), y cada modelo define **como** usar esa informacion.
 
 ---
@@ -242,7 +258,9 @@ El parent se determina por el cascade: `cascade.parent_of("pose-standard")` devu
 
 ## 8. Interaccion con tracking, zonas y FSM
 
-**Tracking:** las detecciones que recibe el tracker ya estan en coordenadas originales. IOU matching, Kalman, todo funciona igual.
+**Tracking:** si se habilita, las observaciones que recibe el tracker ya estan en
+coordenadas originales. El tracker actual usa prediccion lineal y matching
+greedy por IoU; Kalman/Hungarian queda para una etapa posterior.
 
 **Zonas:** las zonas se definen en `zones.toml` en coordenadas del frame original. El offset del crop ya fue aplicado → un `person` en la zona `bed` se detecta igual con o sin crop.
 

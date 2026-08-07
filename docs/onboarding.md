@@ -2,6 +2,13 @@
 
 Guia paso a paso para configurar el pipeline de vision y manejar la cascada de modelos.
 
+Para operacion diaria, configuracion administrativa, lectura de logs y Rerun,
+ver [operations.md](operations.md). Este documento se concentra en el modelo
+mental de ingenieria y en el flujo del codigo.
+
+El handoff/sprint preparado para integrar profundidad YOLO26 esta en
+[sprints/depth-integration.md](sprints/depth-integration.md).
+
 ## Indice
 
 1. [Arquitectura de archivos](#1-arquitectura-de-archivos)
@@ -35,6 +42,7 @@ mana-lite/
 │   └── yolo26n-pose.onnx   # pose-standard: keypoints, requiere persona
 ├── docs/
 │   ├── onboarding.md       # este archivo
+│   ├── operations.md       # guia para administradores y operadores
 │   ├── observability.md   # guia completa de metricas + viz + rerun
 │   └── roi.md             # crops por modelo — static y dinamico
 └── logs/
@@ -49,7 +57,7 @@ Cada archivo TOML tiene una responsabilidad unica:
 | `models.toml` | Que modelos ONNX cargar y con que parametros | Si |
 | `cascade.toml` | Orden y dependencias entre modelos | No (usa default) |
 | `fsm.toml` | Que modelos correr en cada estado operacional | No |
-| `zones.toml` | Regiones de interes para el tracker y FSM | No |
+| `zones.toml` | Regiones de interes para tracks y FSM | No |
 | `metrics.toml` | Que se loguea (texto + JSONL) y cada cuanto | No (usa defaults) |
 | `viz.toml` | Que datos se envian a Rerun | No (usa defaults) |
 | `rerun.toml` | Layout del blueprint en Rerun | No (usa default) |
@@ -63,15 +71,19 @@ RTSP Stream
     │
     ▼
 ┌──────────┐    ┌──────────┐    ┌──────────┐    ┌──────────┐
-│  Ingest  │───▶│  Decode  │───▶│  Infer   │───▶│  Track   │
-│ (retina) │    │ H264→RGB │    │ (cascade)│    │ (SORT)   │
+│  Ingest  │───▶│  Decode  │───▶│  Infer   │───▶│Consolid. │
+│ (retina) │    │ H264→RGB │    │ (cascade)│    │(stateless)│
 └──────────┘    └──────────┘    └──────────┘    └──────────┘
-                                      │               │
-                                      ▼               ▼
-                                 ┌──────────┐    ┌──────────┐
-                                 │  Zones   │◀───│  Track   │
-                                 │ (evaluate)    │ (active) │
-                                 └──────────┘    └──────────┘
+                                       │
+                                       ▼
+                                  ┌──────────┐       tracking=true
+                                  │  Track   │──────────────┐
+                                  │ optional │              │
+                                  └──────────┘              ▼
+                                  ┌──────────┐    ┌──────────┐
+                                  │  Zones   │◀───│  Entity  │
+                                  │ (optional)    │ (tracked) │
+                                  └──────────┘    └──────────┘
                                       │
                                       ▼
                                  ┌──────────┐
@@ -89,9 +101,10 @@ RTSP Stream
 1. **Ingest**: Retina recibe frames RTP/RTSP. Filtra solo keyframes (IDR). Deduplica.
 2. **Decode**: H.264 → RGB via ffmpeg (swscaler). ~10-15ms tipico.
 3. **Infer**: El cascade decide que modelos correr y en que orden. Cada modelo recibe el frame RGB.
-4. **Track**: SORT asigna IDs a las detecciones entre frames consecutivos.
-5. **Zones**: Evalua si los tracks activos estan dentro de las ROIs definidas.
-6. **FSM**: Evalua transiciones basadas en eventos de zona + health. Cambia el conjunto de modelos activos.
+4. **Consolidate**: `Detection` de cada modelo se fusiona, sin memoria temporal, en `ConsolidatedObservation` y sus evidencias se asocian por relación espacial.
+5. **Publish observations**: JSONL emite `consolidated_detection` y Rerun dibuja `/world/camera/observations`.
+6. **Track (opcional)**: con `pipeline.track = true`, el tracker asigna IDs y mantiene `TrackedEntity` entre frames.
+7. **Zones/FSM (opcionales)**: consumen tracks y solo son útiles cuando el tracking está habilitado.
 
 ---
 
@@ -99,19 +112,54 @@ RTSP Stream
 
 ### Concepto
 
-El cascade es un **grafo de dependencias entre modelos**. No es un pipeline secuencial — es un scheduler que decide, en cada frame, que modelos ejecutar basado en lo que detecto el modelo padre.
+El cascade es un **grafo de dependencias entre modelos**. No es un pipeline secuencial — es un scheduler que decide, en cada frame, que modelos ejecutar basado en la evidencia temporal y espacial del modelo padre.
+
+El modelo root produce detecciones. Después de NMS y filtros básicos, el
+`DetectionConsolidator` fusiona las salidas del ciclo. Si el tracking está
+habilitado, el tracker confirma la identidad temporal y los modelos hijos solo
+se habilitan con tracks confirmados y visibles; una detección aislada no dispara
+pose.
+
+Los filtros básicos viven en `[models.<name>.postprocess]` y son propios de
+cada modelo: las detecciones que no pasan clase permitida, confianza, área o
+validación geométrica se eliminan antes de metrics, Rerun, JSONL y consolidación.
+Las reglas de cascade no vuelven a filtrar la salida publicada; solo aplican
+condiciones adicionales para habilitar hijos.
+
+Las regiones semánticas de la cascada son distintas de los crops físicos y de
+las zonas clínicas. La región responde a "¿esta persona pertenece a la escena
+relevante?"; el crop responde a "¿qué píxeles debe procesar el siguiente
+modelo?".
 
 ### Estructura de reglas
 
-Cada regla tiene 3 campos:
+Cada regla tiene dependencias, filtros opcionales y scope:
 
 ```toml
 # cascade.toml
+[regions.bed]
+rect = [100, 200, 500, 800]
+
 [[rules]]
 model = "pose-standard"         # este modelo...
 requires = "detect-fast"        # ...solo corre SI detect-fast...
 requires_class = "person"       # ...detecto al menos una "person"
 ```
+
+Para una cascada que depende de la escena actual, una regla puede usar:
+
+```toml
+[[rules]]
+model = "face-yolo"
+requires = "detect-fast"
+requires_class = "person"
+requires_exact_count = 1       # solo exactamente una persona
+same_frame = true              # usa la deteccion del parent del mismo frame
+```
+
+`same_frame = true` no necesita un track confirmado. Es apropiado para un
+modelo secundario como face que debe correr sobre el bbox de la deteccion
+actual, no sobre una identidad temporal.
 
 Reglas sin `requires` son **roots** — siempre corren cuando son solicitadas:
 
@@ -138,6 +186,10 @@ model = "detect-large"          # root 3
 model = "pose-standard"
 requires = "detect-fast"
 requires_class = "person"       # child
+requires_min_confidence = 0.5
+requires_min_area_ratio = 0.01
+requires_region = "bed"
+requires_region_coverage = 0.30
 ```
 
 Si los 4 modelos estan activos (sin FSM), `ordered()` produce:
@@ -157,6 +209,26 @@ Frame N+1:
 ```
 
 Los roots corren primero. Los children solo si el parent detecto la clase requerida.
+
+### Consolidación de entidades
+
+Una detección es la salida de un modelo, no una entidad clínica:
+
+```text
+detect-fast:   person bbox P
+pose:          person bbox P' + keypoints
+face:          face bbox F
+                         │
+                         ▼
+TrackedEntity 7: person bbox P + pose evidence + face component
+```
+
+El detector primario aporta el bbox canónico. Pose, face y segment enriquecen
+el track. Face se asocia por containment, no por IoU puro. Una silla de ruedas
+no se fusiona con la persona automáticamente: son entidades distintas.
+
+Si un modelo secundario corre a menor frecuencia, su evidencia conserva un
+`last_seen` propio y puede incorporarse al mismo track cuando llegue.
 
 ### Deshabilitar modelos por task
 
@@ -354,7 +426,9 @@ deteccion en espacio del crop (10,20)
     = deteccion en frame original (130,90)  ← esto recibe el tracker
 ```
 
-- **Tracking:** las detecciones llegan con coordenadas originales. SORT funciona igual.
+- **Tracking:** si se habilita, las observaciones llegan con coordenadas originales.
+  El tracker actual usa predicción lineal y matching greedy por IoU; no es todavía
+  Kalman/Hungarian.
 - **Zonas:** `zones.toml` usa coordenadas del frame original — compatibles sin cambios.
 - **FSM:** `zone_occupied` evalua tracks en espacio original.
 - **Rerun:** las cajas se renderizan sobre la imagen completa.
@@ -577,7 +651,7 @@ data_stale_ms = 30000           # tolerar 30s sin frame
 
 [pipeline]
 infer = true
-track = false                   # sin tracking = sin SORT overhead
+track = false                   # modo actual: solo consolidación stateless
 zones = false
 fsm = false                     # sin FSM = sin validacion de estados
 ```
@@ -623,7 +697,7 @@ Los snapshots guardan el H.264 raw y el frame RGB decodificado en `./snapshots/`
 ### Text log cada 5s
 
 ```
-ingest: 1.0 Hz — 5 keyframes in 5s | decode 15ms avg | cycles 80 | pframes:120, timeouts:80
+ingest: 1.0 Hz — 5 keyframes processed (5 seen) in 5s | decode 15ms avg | cycles 80 | pframes:120, timeouts:80
 infer:  2.0 Hz — 10 calls in 5s | 38ms avg | 2-145ms | 12 dets | skips:2, empty:1
   detect-fast:  0.4 Hz | 2 calls | 15ms avg | 10-22ms | 6/5fr
 ```
@@ -638,14 +712,26 @@ infer:  2.0 Hz — 10 calls in 5s | 38ms avg | 2-145ms | 12 dets | skips:2, empt
 | `skips` | 0 | Cascade no funciona |
 | `empty` | < 30% | Threshold muy alto |
 
-### Rerun — 6 paneles
+### Rerun — 7 paneles
 
 1. **Camera** — imagen + cajas con clase y confianza
 2. **Counts** — per-class detecciones por frame (flickereo = threshold mal)
 3. **Confidence** — min/max por clase (max-min > 0.4 = modelo duda)
 4. **Area** — min/max por clase (crece = objeto se acerca)
 5. **Latency** — inferencia + decode per frame (picos = thermal throttling)
-6. **Stream** — gap entre keyframes (picos = paquetes perdidos)
+6. **Stream** — `source_hz`, `processed_hz` y `gap_ms` en unidades crudas
+7. **Pipeline health** — `drop_ratio`, `throughput_ratio` y `freshness` en escala `0..1`
+
+La frecuencia de cada modelo vive bajo `/pipeline/infer/<model>/hz`. En el
+primer experimento debe verse `detect-fast` en cada ciclo procesado y
+`face-yolo` solo cuando hay exactamente una persona.
+
+`gap_ms` no se compara directamente con `Hz`. Para una explicacion de las
+formulas y de la diferencia entre valores crudos y normalizados, consultar la
+seccion [Frecuencia, Gap Y Salud Normalizada](operations.md#frecuencia-gap-y-salud-normalizada)
+de la guia operativa. El panel de salud normalizada es el criterio recomendado
+para el dashboard; las derivaciones aun no se emiten como paths independientes
+por `src/viz.rs`.
 
 ### JSONL — consultas rapidas
 

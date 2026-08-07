@@ -1,0 +1,15 @@
+[package]
+name = "mana-geometry"
+version = "0.1.0"
+edition = "2024"
+description = "Spatial geometry commons: CompactMask, polygons, primitives"
+license = "AGPL-3.0"
+
+[dependencies]
+vernier-mask = "0.2"
+thiserror = "2"
+image = "0.25"
+imageproc = "0.25"
+
+[dev-dependencies]
+proptest = "1"

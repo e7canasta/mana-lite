@@ -80,7 +80,7 @@ ingest: 0.6 Hz — 3 keyframes in 5s | decode 85ms avg | cycles 44 | pframes:97 
 
 `timeouts` ≈ `cycles` es **normal** — cada ciclo del loop hace un poll RTSP que da timeout (50ms) cuando no hay frame nuevo. Es el mecanismo de polling.
 
-Si `cycles` >> `timeouts` → hay algo raro. Significa que el loop está girando más rápido de lo esperado (sin sleep en demo mode, por ejemplo).
+Si `cycles` >> `timeouts` → hay algo raro. Significa que el loop está girando más rápido de lo esperado y no está esperando datos del RTSP.
 
 ### El reporte de 12s
 
