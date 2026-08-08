@@ -64,6 +64,7 @@ Cada archivo TOML tiene una responsabilidad unica:
 | `mana.toml` | Streaming, salud, output, paths a demas configs | Si |
 | `models.toml` | Que modelos ONNX cargar y con que parametros | Si |
 | `blueprints/<name>/blueprint.toml` | Perfil seleccionado: modelos activos, root y gates | Recomendado |
+| `[presence]` en `mana.toml` | Histeresis de presencia ante ticks vacios | Recomendado en 24/7 |
 | `cascade.toml` | Orden y dependencias entre modelos | No (usa default) |
 | `fsm.toml` | Que modelos correr en cada estado operacional | No |
 | `zones.toml` | Regiones de interes para tracks y FSM | No |

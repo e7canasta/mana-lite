@@ -145,6 +145,12 @@ impl Default for PresenceConfig {
     }
 }
 
+impl PresenceConfig {
+    pub fn is_valid(&self) -> bool {
+        !self.class.trim().is_empty() && self.on_ticks > 0 && self.off_ticks > 0
+    }
+}
+
 fn default_presence_class() -> String {
     "person".into()
 }
@@ -1212,6 +1218,8 @@ mod tests {
         let config = load_app_config(Path::new("config/mana.toml")).unwrap();
         assert_eq!(config.source.transport, "tcp");
         assert!(config.source.keyframes_only);
+        assert!(config.presence.enabled);
+        assert_eq!(config.presence.off_ticks, 4);
         assert_eq!(
             config.inference.blueprint_file,
             Some(PathBuf::from(

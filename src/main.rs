@@ -103,6 +103,12 @@ impl App {
                 msg: "face association ratios must be within 0..=1".into(),
             }));
         }
+        if !config.presence.is_valid() {
+            return Err(ManaError::Config(ConfigError::InvalidValue {
+                field: "presence".into(),
+                msg: "class must be non-empty and on_ticks/off_ticks must be positive".into(),
+            }));
+        }
         let model_catalog = load_model_catalog(&config.inference.model_catalog)?;
         if let Some((model, _)) = model_catalog
             .models
@@ -543,8 +549,12 @@ impl App {
             .filter(|model| self.cascade.parent_of(model).is_none())
             .map(|model| (*model).to_owned())
             .collect();
+        let mut primary_root_valid = false;
         for model_key in roots {
-            self.run_scheduled_model(&model_key, None, fb, &mut pending);
+            let valid = self.run_scheduled_model(&model_key, None, fb, &mut pending);
+            if model_key == self.primary_model {
+                primary_root_valid = valid;
+            }
         }
 
         let root_outputs: Vec<ModelDetections> = pending
@@ -567,11 +577,8 @@ impl App {
             })
             .collect();
         let root_observations = self.detection_consolidator.consolidate(&root_outputs);
-        let primary_root_ran = pending
-            .iter()
-            .any(|item| item.model_key == self.primary_model);
         let (effective_root_observations, presence_update) =
-            self.presence.update(&root_observations, primary_root_ran);
+            self.presence.update(&root_observations, primary_root_valid);
         if presence_update.held {
             log::debug!(
                 "presence: holding last observation for {} empty tick(s)",
@@ -674,22 +681,24 @@ impl App {
         target: Option<CascadeTarget>,
         fb: &FrameBuffer,
         pending: &mut Vec<PendingModelOutput>,
-    ) {
+    ) -> bool {
         let is_static = self
             .infer
             .crop_info(model_key)
             .is_some_and(|c| c.crop_type == CropType::Static);
         let crop_rect = self.resolve_crop_rect(model_key, target, fb);
         let manual_crop = if is_static { None } else { crop_rect };
-        if let Some(mut output) = self.infer.run(model_key, &fb.rgb, fb.w, fb.h, manual_crop) {
-            let crop_frame = output.crop_frame.take();
-            pending.push(PendingModelOutput {
-                model_key: model_key.to_owned(),
-                output,
-                crop_frame,
-                crop_rect,
-            });
-        }
+        let Some(mut output) = self.infer.run(model_key, &fb.rgb, fb.w, fb.h, manual_crop) else {
+            return false;
+        };
+        let crop_frame = output.crop_frame.take();
+        pending.push(PendingModelOutput {
+            model_key: model_key.to_owned(),
+            output,
+            crop_frame,
+            crop_rect,
+        });
+        true
     }
 
     fn resolve_crop_rect(

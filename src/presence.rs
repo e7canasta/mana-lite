@@ -42,7 +42,17 @@ impl PresenceFilter {
         observations: &[ConsolidatedObservation],
         signal_valid: bool,
     ) -> (Vec<ConsolidatedObservation>, PresenceUpdate) {
-        if !self.config.enabled || !signal_valid {
+        if !self.config.enabled {
+            return (
+                observations.to_vec(),
+                PresenceUpdate {
+                    state: self.state,
+                    held: false,
+                    empty_ticks: self.empty_ticks,
+                },
+            );
+        }
+        if !signal_valid {
             return (
                 observations.to_vec(),
                 PresenceUpdate {

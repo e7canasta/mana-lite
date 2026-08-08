@@ -73,10 +73,13 @@
         │  DepthMap { data: Array2<f32> }  (local al ROI, ADR-024)
         │
         ▼
-  DetectionConsolidator (fusion + enrichment, stateless)
-       │  ConsolidatedObservation { bbox canónico, evidence, components }
-       ▼
-  ┌──────────────────────────────────────────────────────────────┐
+   DetectionConsolidator (fusion + enrichment, stateless)
+        │  ConsolidatedObservation { bbox canónico, evidence, components }
+        ▼
+   PresenceFilter (optional signal debounce + short dropout hold)
+        │
+        ▼
+   ┌──────────────────────────────────────────────────────────────┐
   │ tracking disabled: JSONL consolidated_detection + Rerun      │
   │ /world/camera/observations                                   │
   └──────────────────────────────────────────────────────────────┘
@@ -117,6 +120,7 @@ src/
 ├── snapshot.rs           H.264 decode + RGB buffer + PNG saver ✅
 ├── infer.rs              Model execution + filters + NMS + masks ✅
 ├── detection.rs          Stateless cross-model consolidation       ✅
+├── presence.rs           Temporal presence/signal debounce          ✅
 ├── track.rs              Linear prediction + greedy IoU tracker    🧪 optional
 ├── zones.rs              Spatial zone evaluation + hysteresis      ✅
 ├── fsm.rs                Clinical FSM engine + guard evaluation    ✅

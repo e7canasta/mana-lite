@@ -42,6 +42,26 @@ para cada despliegue.
 
 ## Activation policies
 
+### Presence signal debounce
+
+Before the classic tracker, the consolidated primary observations pass through
+the temporal presence filter. It is a signal-quality policy, not identity
+tracking. A valid single-person observation turns presence on; a short run of
+empty valid inference ticks holds the last observation; multiple people are
+ambiguous immediately; an invalid tick does not count as absence.
+
+```toml
+[presence]
+enabled = true
+class = "person"
+on_ticks = 1
+off_ticks = 4
+```
+
+The filter may feed a held observation to the classic tracker for a short
+dropout. It does not create a new `track_id` and it does not replace IoU/Kalman
+matching.
+
 Se reconocen dos politicas:
 
 ### Same-frame

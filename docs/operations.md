@@ -63,6 +63,7 @@ raiz si las rutas son relativas.
 | `config/mana.toml` | RTSP, pipeline, tracking, consolidacion, salida, Rerun | Credenciales y rutas de produccion |
 | `config/models.toml` | ONNX, confianza, NMS, filtros, crops | `allow_classes`, areas y `iou` |
 | `config/blueprints/<name>/blueprint.toml` | Perfil activo, modelos y gates | Cambiar en 24/7 solo con validacion |
+| `[presence]` en `config/mana.toml` | Histeresis de señal de presencia | `off_ticks` y modelo primario |
 | `config/cascade.toml` | Dependencias entre modelos | `requires` y clase padre |
 | `config/metrics.toml` | Resumen terminal y eventos JSONL | Desactivar eventos necesarios para diagnostico |
 | `config/viz.toml` | Frames, boxes, ROI y series Rerun | `boxes` si se necesita inspeccion visual |

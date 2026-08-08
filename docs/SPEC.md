@@ -159,6 +159,22 @@ with different roles: a person detector can emit `person`, a wheelchair
 detector can emit `wheelchair`, a face model `face`, and a depth model can
 leave the allowlist empty.
 
+### `[presence]` en `mana.toml` — Temporal Presence Signal
+
+```toml
+[presence]
+enabled = true
+class = "person"
+on_ticks = 1
+off_ticks = 4
+```
+
+This filter runs after spatial consolidation of primary observations and before
+the classic tracker. Empty valid inference ticks shorter than `off_ticks` hold
+the last person observation. Missing/invalid input does not count as absence.
+Two or more accepted persons enter an ambiguous state immediately and are not
+held as a single person.
+
 ### `cascade.toml` - Cascaded Model Eligibility
 
 The cascade uses confirmed tracks from the parent model. A single-frame
