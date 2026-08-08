@@ -1,9 +1,13 @@
 # ADR-005: Cascaded Inference
 
-**Status:** Accepted
+**Status:** Historical strategy, superseded by [ADR-026](026-inference-blueprints.md) for deployment selection
 **Date:** 2026-08-03
 
 ## Context
+
+This ADR records the earlier FSM-driven and timer-gated designs. The current
+runtime selects a named blueprint first; its rules then feed the cascade
+scheduler. Interval scheduling remains future work.
 
 A clinical deployment might have 5+ models (detect, pose, face, segment, depth). Running all of them on every frame is wasteful. We need a lazy execution model that runs expensive models only when context (detections, zone occupancy, FSM state) justifies the cost.
 

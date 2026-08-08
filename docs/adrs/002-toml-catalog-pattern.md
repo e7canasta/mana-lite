@@ -1,9 +1,12 @@
 # ADR-002: TOML Catalog Pattern
 
-**Status:** Accepted
+**Status:** Accepted, extended by [ADR-026](026-inference-blueprints.md)
 **Date:** 2026-08-03
 
 ## Context
+
+The original four-file split describes the catalog and clinical domains. The
+named deployment profile introduced later is documented in ADR-026.
 
 Mana Lite needs to configure models, zones, and FSM rules. The full Mana OS uses Rust builder-pattern structs and CLI flags. For Mana Lite, we want:
 
@@ -62,3 +65,10 @@ To A/B test a new model, an ML engineer:
 - **Positive:** Zones and FSM can be edited by non-Rust-developers.
 - **Negative:** Four files to keep in sync. The root `mana.toml` explicitly points to the others, so there's no hidden convention.
 - **Negative:** TOML doesn't support `include` or `import`. Each file is self-contained. Cross-file references (FSM → model keys) are validated at startup with clear error messages.
+
+## Current Deployment Rule
+
+When `inference.blueprint_file` is set, the blueprint is the active model
+selection and cascade boundary. The model catalog remains shared. The legacy
+`default_model` and `cascade_file` path is still supported when no blueprint is
+selected.

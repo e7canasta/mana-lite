@@ -4,8 +4,8 @@ rerun_file = "config/rerun.toml"
 
 [source]
 # url = "rtsp://192.168.1.6:8554/mana015"
-url = "rtsp://192.168.1.14:8554/clip1"
-# url = "rtsp://192.168.1.6:8554/home"
+# url = "rtsp://192.168.1.15:8554/clip1"
+url = "rtsp://192.168.1.6:8554/home"
 username = "admin"
 password = ""
 transport = "tcp"
@@ -20,8 +20,8 @@ reconnect_backoff_max_ms = 30000
 
 [inference]
 model_catalog = "config/models.toml"
-default_model = "detect-fast"
-cascade_file = "config/cascade.toml"
+# Select one named inference profile under config/blueprints/.
+blueprint_file = "config/blueprints/detect-face/blueprint.toml"
 depth_rules_file = "config/depth-rules.toml"
 # zones_file = "config/zones.toml"
 # fsm_file = "config/fsm.toml"
@@ -57,4 +57,4 @@ zones = false
 fsm = false
 [viz]
 enabled = true
-rerun_addr = "127.0.0.1:9876"
+rerun_addr = "192.168.1.15:9876"

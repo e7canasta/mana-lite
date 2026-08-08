@@ -201,7 +201,10 @@ fn default_backoff_max_ms() -> u64 {
 #[derive(Debug, Deserialize)]
 pub struct InferenceConfig {
     pub model_catalog: PathBuf,
-    pub default_model: String,
+    #[serde(default)]
+    pub default_model: Option<String>,
+    #[serde(default)]
+    pub blueprint_file: Option<PathBuf>,
     #[serde(default)]
     pub cascade_file: Option<PathBuf>,
     #[serde(default)]
@@ -396,7 +399,7 @@ fn default_snapshot_dir() -> Option<PathBuf> {
     Some("./snapshots".into())
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 pub struct ModelCatalog {
     pub models: HashMap<String, ModelEntry>,
 }
@@ -1015,7 +1018,8 @@ fn apply_env_overrides(cfg: &mut AppConfig) {
     env_str!("MANA_TRANSPORT"         => cfg.source.transport);
     env_bool!("MANA_KEYFRAMES_ONLY"   => cfg.source.keyframes_only);
     env_path!("MANA_MODEL_CATALOG"     => cfg.inference.model_catalog);
-    env_str!("MANA_DEFAULT_MODEL"     => cfg.inference.default_model);
+    env_opt!("MANA_BLUEPRINT_FILE"     => cfg.inference.blueprint_file);
+    env_opt!("MANA_DEFAULT_MODEL"      => cfg.inference.default_model);
     env_parse!("MANA_DATA_STALE_MS"   => cfg.health.data_stale_ms);
     env_parse!("MANA_REPORT_INTERVAL" => cfg.health.report_interval_s);
     env_opt!("MANA_SAVE_DIR"          => cfg.output.save_dir);
@@ -1171,6 +1175,12 @@ mod tests {
         let config = load_app_config(Path::new("config/mana.toml")).unwrap();
         assert_eq!(config.source.transport, "tcp");
         assert!(config.source.keyframes_only);
+        assert_eq!(
+            config.inference.blueprint_file,
+            Some(PathBuf::from(
+                "config/blueprints/detect-face/blueprint.toml"
+            ))
+        );
         assert_eq!(config.health.data_stale_ms, 10_000);
         let model = load_model_catalog(Path::new("config/models.toml")).unwrap();
         assert!(model.models["detect-fast"].postprocess.is_valid());

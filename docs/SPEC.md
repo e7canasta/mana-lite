@@ -22,8 +22,7 @@ keyframes_only = true
 
 [inference]
 model_catalog = "config/models.toml"
-default_model = "detect-fast"
-cascade_file = "config/cascade.toml"
+blueprint_file = "config/blueprints/detect-face/blueprint.toml"
 zones_file = "config/zones.toml"
 fsm_file = "config/fsm.toml"
 
@@ -48,6 +47,9 @@ jsonl_level = "info"
 ```
 
 ### `models.toml` — Model Catalog
+
+The active inference profile is selected separately with
+`inference.blueprint_file`. See [specs/inference-blueprints.md](specs/inference-blueprints.md).
 
 Each table under `[models]` is a named entry. Keys are stable identifiers for FSM/stage to reference.
 

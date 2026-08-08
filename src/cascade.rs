@@ -6,6 +6,26 @@ use crate::config::ModelCatalog;
 use crate::track::Track;
 
 #[derive(Debug, Clone, Deserialize)]
+pub struct BlueprintConfig {
+    pub blueprint: BlueprintMetadata,
+    #[serde(default)]
+    pub rules: Vec<CascadeRule>,
+    #[serde(default)]
+    pub regions: HashMap<String, SemanticRegion>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct BlueprintMetadata {
+    pub name: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    pub primary_model: String,
+    pub models: Vec<String>,
+    #[serde(default)]
+    pub requires_tracking: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
 pub struct CascadeRule {
     pub model: String,
     pub requires: Option<String>,
@@ -230,6 +250,8 @@ impl CascadeScheduler {
         &self,
         model: &str,
         detections: &[crate::infer::Detection],
+        frame_w: u32,
+        frame_h: u32,
     ) -> Option<CascadeTarget> {
         let entry = self.entries.get(model)?;
         if !entry.same_frame || entry.requires.is_none() {
@@ -243,6 +265,26 @@ impl CascadeScheduler {
                     .requires_class
                     .as_deref()
                     .is_none_or(|class| detection.class == class)
+            })
+            .filter(|detection| {
+                entry
+                    .requires_min_confidence
+                    .is_none_or(|min| detection.confidence >= min)
+            })
+            .filter(|detection| {
+                entry
+                    .requires_min_area_ratio
+                    .is_none_or(|min| bbox_area_ratio(&detection.bbox, frame_w, frame_h) >= min)
+            })
+            .filter(|detection| {
+                entry.requires_region.as_deref().is_none_or(|region_name| {
+                    let Some(region) = self.regions.get(region_name) else {
+                        return false;
+                    };
+                    entry.requires_region_coverage.is_none_or(|min| {
+                        bbox_region_coverage(&detection.bbox, &region.rect) >= min
+                    })
+                })
             })
             .collect();
         if entry
@@ -439,12 +481,64 @@ mod tests {
         ];
         assert!(
             cascade
-                .target_for_detections("face-yolo", &one_person)
+                .target_for_detections("face-yolo", &one_person, 640, 480)
                 .is_some()
         );
         assert!(
             cascade
-                .target_for_detections("face-yolo", &two_people)
+                .target_for_detections("face-yolo", &two_people, 640, 480)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn same_frame_child_applies_confidence_and_area_gates() {
+        let cascade = CascadeScheduler::from_rules(&[
+            CascadeRule {
+                model: "detect-fast".into(),
+                requires: None,
+                requires_class: None,
+                requires_exact_count: None,
+                same_frame: false,
+                requires_min_confidence: None,
+                requires_min_area_ratio: None,
+                requires_region: None,
+                requires_region_coverage: None,
+            },
+            CascadeRule {
+                model: "face-yolo".into(),
+                requires: Some("detect-fast".into()),
+                requires_class: Some("person".into()),
+                requires_exact_count: Some(1),
+                same_frame: true,
+                requires_min_confidence: Some(0.8),
+                requires_min_area_ratio: Some(0.1),
+                requires_region: None,
+                requires_region_coverage: None,
+            },
+        ]);
+        let low_confidence = [crate::infer::Detection {
+            class: "person".into(),
+            confidence: 0.7,
+            bbox: [0.0, 0.0, 640.0, 480.0],
+            keypoints: None,
+            mask: None,
+        }];
+        let small = [crate::infer::Detection {
+            class: "person".into(),
+            confidence: 0.9,
+            bbox: [0.0, 0.0, 100.0, 100.0],
+            keypoints: None,
+            mask: None,
+        }];
+        assert!(
+            cascade
+                .target_for_detections("face-yolo", &low_confidence, 640, 480)
+                .is_none()
+        );
+        assert!(
+            cascade
+                .target_for_detections("face-yolo", &small, 640, 480)
                 .is_none()
         );
     }
@@ -624,5 +718,34 @@ mod tests {
                 .and_then(|r| r.requires_region.as_deref()),
             Some("bed")
         );
+    }
+
+    #[test]
+    fn configured_blueprints_are_valid() {
+        let models =
+            crate::config::load_model_catalog(std::path::Path::new("config/models.toml")).unwrap();
+        for path in [
+            "config/blueprints/detect-face/blueprint.toml",
+            "config/blueprints/detect-face-pose-seg/blueprint.toml",
+        ] {
+            let blueprint: BlueprintConfig =
+                crate::config::load_config(std::path::Path::new(path)).unwrap();
+            let config = CascadeConfig {
+                rules: blueprint.rules.clone(),
+                regions: blueprint.regions.clone(),
+            };
+            assert!(
+                config
+                    .validate(&models, &blueprint.blueprint.primary_model)
+                    .is_empty(),
+                "invalid blueprint {path}"
+            );
+            assert!(
+                blueprint
+                    .blueprint
+                    .models
+                    .contains(&blueprint.blueprint.primary_model)
+            );
+        }
     }
 }

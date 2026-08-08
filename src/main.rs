@@ -16,7 +16,7 @@ mod track;
 mod viz;
 mod zones;
 
-use cascade::{CascadeRule, CascadeScheduler, CascadeTarget};
+use cascade::{BlueprintConfig, CascadeRule, CascadeScheduler, CascadeTarget};
 use config::{
     AppConfig, CropType, MetricsLogConfig, RerunBlueprintConfig, load_app_config, load_config,
     load_depth_rules, load_fsm_catalog, load_metrics_log, load_model_catalog, load_rerun_blueprint,
@@ -32,7 +32,7 @@ use mana_types::RawFrameV1;
 use metrics::{Health, MetricsEngine, PerClassFrameStats};
 use pipeline::PipelineState;
 use snapshot::{FrameBuffer, FrameDecoder, SnapshotSaver};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::PathBuf;
 use track::{Tracker, TrackerConfig, track_event_to_log};
@@ -54,6 +54,7 @@ async fn main() -> Result<()> {
 
 struct App {
     infer: InferEngine,
+    primary_model: String,
     tracker: Tracker,
     zone_engine: Option<ZoneEngine>,
     fsm_engine: Option<FsmEngine>,
@@ -131,6 +132,82 @@ impl App {
                 msg: "square_size must be positive and upper_fraction must be within 0..=1".into(),
             }));
         }
+        let blueprint = config
+            .inference
+            .blueprint_file
+            .as_ref()
+            .map(|path| load_config::<BlueprintConfig>(path))
+            .transpose()?;
+        if let Some(ref bp) = blueprint {
+            log::info!(
+                "blueprint: {}{}",
+                bp.blueprint.name,
+                bp.blueprint
+                    .description
+                    .as_deref()
+                    .map(|description| format!(" — {description}"))
+                    .unwrap_or_default()
+            );
+        }
+
+        let primary_model = blueprint
+            .as_ref()
+            .map(|bp| bp.blueprint.primary_model.clone())
+            .or_else(|| config.inference.default_model.clone())
+            .ok_or_else(|| {
+                ManaError::Config(ConfigError::InvalidValue {
+                    field: "inference.primary_model".into(),
+                    msg: "set blueprint.primary_model or inference.default_model".into(),
+                })
+            })?;
+
+        let mut runtime_catalog = model_catalog.clone();
+        if let Some(ref bp) = blueprint {
+            let selected: HashSet<&str> = bp.blueprint.models.iter().map(String::as_str).collect();
+            if selected.is_empty() {
+                return Err(ManaError::Config(ConfigError::InvalidValue {
+                    field: "blueprint.models".into(),
+                    msg: "a blueprint must select at least one model".into(),
+                }));
+            }
+            if !selected.contains(primary_model.as_str()) {
+                return Err(ManaError::Config(ConfigError::InvalidValue {
+                    field: "blueprint.primary_model".into(),
+                    msg: "primary_model must be included in blueprint.models".into(),
+                }));
+            }
+            for model in &selected {
+                if !model_catalog.models.contains_key(*model) {
+                    return Err(ManaError::ModelNotFound((*model).into()));
+                }
+            }
+            for rule in &bp.rules {
+                if !selected.contains(rule.model.as_str()) {
+                    return Err(ManaError::Config(ConfigError::InvalidValue {
+                        field: format!("blueprint.rules.{}", rule.model),
+                        msg: "rule model must be listed in blueprint.models".into(),
+                    }));
+                }
+                if let Some(parent) = rule.requires.as_deref() {
+                    if !selected.contains(parent) {
+                        return Err(ManaError::Config(ConfigError::InvalidValue {
+                            field: format!("blueprint.rules.{}", rule.model),
+                            msg: "rule parent must be listed in blueprint.models".into(),
+                        }));
+                    }
+                }
+            }
+            if bp.blueprint.requires_tracking && !config.pipeline.track {
+                return Err(ManaError::Config(ConfigError::InvalidValue {
+                    field: "pipeline.track".into(),
+                    msg: format!("blueprint '{}' requires tracking", bp.blueprint.name),
+                }));
+            }
+            for (key, entry) in &mut runtime_catalog.models {
+                entry.enabled = selected.contains(key.as_str());
+            }
+        }
+
         let zones = config
             .inference
             .zones_file
@@ -176,19 +253,19 @@ impl App {
             .transpose()?
             .unwrap_or_else(RerunBlueprintConfig::default);
 
-        let default_model = model_catalog
+        let default_model = runtime_catalog
             .models
-            .get(&config.inference.default_model)
-            .ok_or_else(|| ManaError::ModelNotFound(config.inference.default_model.clone()))?;
+            .get(&primary_model)
+            .ok_or_else(|| ManaError::ModelNotFound(primary_model.clone()))?;
         if !default_model.enabled {
             return Err(ManaError::Config(ConfigError::InvalidValue {
-                field: format!("models.{}", config.inference.default_model),
+                field: format!("models.{primary_model}"),
                 msg: "default model must be enabled".into(),
             }));
         }
         log::info!(
             "default model: {} ({})",
-            config.inference.default_model,
+            primary_model,
             default_model.path.display()
         );
 
@@ -201,7 +278,7 @@ impl App {
                 f.fsm.states.len(),
                 f.fsm.transitions.len()
             );
-            let errors = validate_fsm(f, &model_catalog, &zones, &Some(depth_rules.clone()));
+            let errors = validate_fsm(f, &runtime_catalog, &zones, &Some(depth_rules.clone()));
             for e in &errors {
                 log::error!("fsm validation: {e}");
             }
@@ -231,13 +308,13 @@ impl App {
             &config_path.display().to_string(),
         ));
         log.emit(Event::meta_model_loaded(
-            &config.inference.default_model,
+            &primary_model,
             &default_model.path.display().to_string(),
             &default_model.task,
             0,
         ));
 
-        let depth_roi = model_catalog
+        let depth_roi = runtime_catalog
             .models
             .get("depth-standard")
             .and_then(|entry| entry.crop.as_ref())
@@ -245,7 +322,7 @@ impl App {
             .and_then(|crop| crop.region)
             .map(CropRect::from_array);
 
-        let infer = InferEngine::from_catalog(&model_catalog)?;
+        let infer = InferEngine::from_catalog(&runtime_catalog)?;
         log::info!("inference: {} model(s) loaded", infer.model_count());
         ultralytics_inference::logging::set_verbose(false);
 
@@ -257,10 +334,22 @@ impl App {
         });
         let zone_engine = zones.as_ref().map(|z| ZoneEngine::from_catalog(z));
         let fsm_engine = fsm.as_ref().map(|f| FsmEngine::from_catalog(f));
-        let (cascade_rules, cascade_regions) = if let Some(ref path) = config.inference.cascade_file
-        {
+        let (cascade_rules, cascade_regions) = if let Some(ref bp) = blueprint {
+            let cfg = cascade::CascadeConfig {
+                rules: bp.rules.clone(),
+                regions: bp.regions.clone(),
+            };
+            let errors = cfg.validate(&runtime_catalog, &primary_model);
+            if !errors.is_empty() {
+                return Err(ManaError::Config(ConfigError::InvalidValue {
+                    field: "inference.blueprint_file".into(),
+                    msg: errors.join("; "),
+                }));
+            }
+            (cfg.rules, cfg.regions)
+        } else if let Some(ref path) = config.inference.cascade_file {
             let cfg: cascade::CascadeConfig = load_config(path)?;
-            let errors = cfg.validate(&model_catalog, &config.inference.default_model);
+            let errors = cfg.validate(&runtime_catalog, &primary_model);
             if !errors.is_empty() {
                 return Err(ManaError::Config(ConfigError::InvalidValue {
                     field: "inference.cascade_file".into(),
@@ -270,51 +359,27 @@ impl App {
             (cfg.rules, cfg.regions)
         } else {
             (
-                vec![
-                    CascadeRule {
-                        model: "detect-fast".into(),
-                        requires: None,
-                        requires_class: None,
-                        requires_exact_count: None,
-                        same_frame: false,
-                        requires_min_confidence: None,
-                        requires_min_area_ratio: None,
-                        requires_region: None,
-                        requires_region_coverage: None,
-                    },
-                    CascadeRule {
-                        model: "detect-large".into(),
-                        requires: None,
-                        requires_class: None,
-                        requires_exact_count: None,
-                        same_frame: false,
-                        requires_min_confidence: None,
-                        requires_min_area_ratio: None,
-                        requires_region: None,
-                        requires_region_coverage: None,
-                    },
-                    CascadeRule {
-                        model: "detect-v2".into(),
-                        requires: None,
-                        requires_class: None,
-                        requires_exact_count: None,
-                        same_frame: false,
-                        requires_min_confidence: None,
-                        requires_min_area_ratio: None,
-                        requires_region: None,
-                        requires_region_coverage: None,
-                    },
-                ],
+                vec![CascadeRule {
+                    model: primary_model.clone(),
+                    requires: None,
+                    requires_class: None,
+                    requires_exact_count: None,
+                    same_frame: false,
+                    requires_min_confidence: None,
+                    requires_min_area_ratio: None,
+                    requires_region: None,
+                    requires_region_coverage: None,
+                }],
                 HashMap::new(),
             )
         };
         let cascade = CascadeScheduler::from_rules_and_regions(&cascade_rules, cascade_regions);
-        let model_tasks: HashMap<String, String> = model_catalog
+        let model_tasks: HashMap<String, String> = runtime_catalog
             .models
             .iter()
             .map(|(k, v)| (k.clone(), v.task.clone()))
             .collect();
-        let model_enabled: HashMap<String, bool> = model_catalog
+        let model_enabled: HashMap<String, bool> = runtime_catalog
             .models
             .iter()
             .map(|(k, v)| (k.clone(), v.enabled))
@@ -356,6 +421,7 @@ impl App {
 
         Ok(Self {
             infer,
+            primary_model,
             model_tasks,
             model_enabled,
             tracker,
@@ -484,7 +550,8 @@ impl App {
                             .map(|item| item.output.detections.as_slice())
                     })
                     .and_then(|detections| {
-                        self.cascade.target_for_detections(model_key, detections)
+                        self.cascade
+                            .target_for_detections(model_key, detections, fb.w, fb.h)
                     })
             } else {
                 let current_tracks = self.tracker.current_tracks();
@@ -501,7 +568,7 @@ impl App {
             let manual_crop = if is_static { None } else { crop_rect };
             if let Some(mut output) = self.infer.run(model_key, &fb.rgb, fb.w, fb.h, manual_crop) {
                 let crop_frame = output.crop_frame.take();
-                if config.pipeline.track && model_key == &config.inference.default_model {
+                if config.pipeline.track && model_key == &self.primary_model {
                     let observations =
                         self.detection_consolidator.consolidate(&[ModelDetections {
                             model: model_key,
@@ -528,7 +595,7 @@ impl App {
             })
             .map(|item| ModelDetections {
                 model: item.model_key.as_str(),
-                role: if item.model_key == config.inference.default_model {
+                role: if item.model_key == self.primary_model {
                     DetectionRole::Primary
                 } else {
                     DetectionRole::Secondary

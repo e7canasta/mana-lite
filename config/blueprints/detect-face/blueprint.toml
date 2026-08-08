@@ -1,0 +1,19 @@
+# Lightweight deployment: one primary detector plus face enrichment.
+# This blueprint uses same-frame gating and does not require tracking.
+[blueprint]
+name = "detect-face"
+description = "Detect one person and run face on the same frame"
+primary_model = "detect-fast"
+models = ["detect-fast", "face-yolo"]
+requires_tracking = false
+
+[[rules]]
+model = "detect-fast"
+
+[[rules]]
+model = "face-yolo"
+requires = "detect-fast"
+requires_class = "person"
+requires_exact_count = 1
+requires_min_confidence = 0.50
+same_frame = true

@@ -35,7 +35,7 @@
 
 2. **Mechanism ≠ Policy ≠ State.** Retina RTSP, ORT inference, y NMS math son *mechanism*. `models.toml`, `zones.toml`, `fsm.toml` son *policy*. `PipelineState`, `TrackState`, `FsmEngine.current_state` son *state*. [ADR-002](adrs/002-toml-catalog-pattern.md)
 
-3. **Catalog over CLI.** Comportamiento definido en TOML, no en flags. `mana-lite --config mana.toml` es el único argumento requerido. [ADR-002](adrs/002-toml-catalog-pattern.md)
+3. **Catalog over CLI.** Comportamiento definido en TOML, no en flags. `mana-lite --config mana.toml` es el único argumento requerido. El perfil de inferencia se selecciona con `inference.blueprint_file`. [ADR-002](adrs/002-toml-catalog-pattern.md), [ADR-026](adrs/026-inference-blueprints.md)
 
 4. **Explicit ownership per cycle.** `main.rs` owns the current frame and pending model outputs; consolidation borrows detection slices and returns only the evidence it needs. The planned `CycleContext` arena is not part of the current implementation. [ADR-018](adrs/018-runtime-stage-boundaries.md)
 
@@ -139,6 +139,7 @@ src/
 | `config/models.toml` | `load_model_catalog()` | ONNX model catalog: paths, tasks, imgsz, confidence, `enabled` flag (ADR-020), per-model crop ROI |
 | `config/models.example.toml` | — | Ejemplo: ramas face/seg con `enabled = false` |
 | `config/cascade.toml` | `load_config::<CascadeConfig>()` | Model dependency graph (requires, requires_class) |
+| `config/blueprints/<name>/blueprint.toml` | `load_config::<BlueprintConfig>()` | Named model set, primary root and cascade rules |
 | `config/fsm.toml` | `load_fsm_catalog()` | Clinical state machine: states, models, transitions |
 | `config/zones.toml` | `load_zone_catalog()` | Spatial ROIs for tracking + FSM zone guards |
 | `config/metrics.toml` | `load_metrics_log()` | Text log verbosity + metrics settings |
@@ -179,6 +180,10 @@ main.rs
 ```
 
 ## Cascade model branches
+
+The selected blueprint is the deployment boundary for the inference graph. The
+legacy standalone `cascade.toml` remains supported when no blueprint is
+selected, but a selected blueprint takes precedence over it.
 
 El cascade (`src/cascade.rs`) programa los modelos en topo-orden; cada modelo puede
 declarar `requires` + `requires_class` en `config/cascade.toml`. La topología actual:

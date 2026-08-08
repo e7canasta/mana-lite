@@ -1,8 +1,7 @@
-# Ejemplo: apagar ramas del cascade con el flag `enabled` (ADR-020).
+# Ejemplo legacy: apagar ramas del cascade con el flag `enabled` (ADR-020).
 #
-# Copia este archivo sobre `config/models.toml` para ejecutar SOLO la rama
-# principal (detect-fast + pose). `enabled = false` excluye el modelo del
-# scheduling y de la inferencia; sus reglas de cascade ni se evalúan.
+# Para perfiles nuevos, usa un blueprint en `config/blueprints/` y deja este
+# flag como control legacy del catalogo.
 #
 # El flag es opcional: sin `enabled`, el modelo se considera habilitado
 # (default `true`), así que los archivos existentes no cambian.

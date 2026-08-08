@@ -20,3 +20,10 @@ siguen siendo válidas (el toggle es de ejecución, no de config).
 - El orden de filtrado es: `enabled` → `disabled_tasks`.
 - `enabled = false` sobre `face-yolo` o `pose-standard` reduce coste sin
   tocar `detect-fast`.
+
+## Interaction with Blueprints
+
+When `inference.blueprint_file` is set, `blueprint.models` is the explicit
+runtime selection and takes precedence over the catalog `enabled` values for
+the selected process. The catalog flag remains the default mechanism for
+legacy configurations without a blueprint.

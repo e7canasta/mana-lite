@@ -63,6 +63,7 @@ Cada archivo TOML tiene una responsabilidad unica:
 |---------|----------------|-------------|
 | `mana.toml` | Streaming, salud, output, paths a demas configs | Si |
 | `models.toml` | Que modelos ONNX cargar y con que parametros | Si |
+| `blueprints/<name>/blueprint.toml` | Perfil seleccionado: modelos activos, root y gates | Recomendado |
 | `cascade.toml` | Orden y dependencias entre modelos | No (usa default) |
 | `fsm.toml` | Que modelos correr en cada estado operacional | No |
 | `zones.toml` | Regiones de interes para tracks y FSM | No |
@@ -127,6 +128,11 @@ RTSP Stream
 ---
 
 ## 3. El cascade: como funciona
+
+El perfil activo se elige en `mana.toml` con `inference.blueprint_file`. Los
+blueprints recomendados son `detect-face` para calibracion y
+`detect-face-pose-seg` para 24/7 con tracking. La especificacion completa esta
+en [specs/inference-blueprints.md](specs/inference-blueprints.md).
 
 ### Concepto
 

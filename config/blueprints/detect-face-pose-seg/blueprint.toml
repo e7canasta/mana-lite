@@ -1,0 +1,34 @@
+# Stable multi-model deployment. Children require a confirmed, visible track.
+[blueprint]
+name = "detect-face-pose-seg"
+description = "Primary detection with face, pose and segmentation enrichment"
+primary_model = "detect-fast"
+models = ["detect-fast", "face-yolo", "pose-standard", "seg-standard"]
+requires_tracking = true
+
+[[rules]]
+model = "detect-fast"
+
+[[rules]]
+model = "face-yolo"
+requires = "detect-fast"
+requires_class = "person"
+requires_exact_count = 1
+requires_min_confidence = 0.50
+requires_min_area_ratio = 0.01
+
+[[rules]]
+model = "pose-standard"
+requires = "detect-fast"
+requires_class = "person"
+requires_exact_count = 1
+requires_min_confidence = 0.50
+requires_min_area_ratio = 0.01
+
+[[rules]]
+model = "seg-standard"
+requires = "detect-fast"
+requires_class = "person"
+requires_exact_count = 1
+requires_min_confidence = 0.50
+requires_min_area_ratio = 0.01
