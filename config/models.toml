@@ -34,7 +34,7 @@ region = [560, 140, 1240, 820]
 # imgsz = 640
 
 [models.pose-standard]
-enabled = true
+enabled = false
 # Baseline FP32 640: models/yolo26n-pose.onnx
 path = "tools/model-tools/artifacts/yolo26-fp16/yolo26s-pose-fp16-320.onnx"
 task = "pose"
@@ -82,7 +82,7 @@ nms_iou = 0.05
 max_detections = 1
 
 [models.seg-standard]
-enabled = true
+enabled = false
 # Baseline small FP16 320: models/yolo26s-seg-fp16-320.onnx
 path = "models/yolo26x-seg-fp16-640.onnx"
 task = "detect"
@@ -109,7 +109,7 @@ nms_iou = 0.10
 [models.depth-standard]
 # Benchmark 2026-08-07: l/320 (172ms) recomendado — x/320 era un outlier
 # estructural; m/640 (492ms) es la opcion de calidad si el presupuesto permite.
-enabled = true
+enabled = false
 path = "models/yolo26l-depth-fp16-320.onnx"
 task = "depth"
 confidence = 0.0
