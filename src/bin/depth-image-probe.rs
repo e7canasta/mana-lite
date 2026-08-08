@@ -32,18 +32,24 @@ fn main() -> Result<(), Box<dyn Error>> {
     let depth = result.depth.as_ref().ok_or("inference returned no depth map")?;
 
     let shape = depth.data.shape();
-    if shape != [height as usize, width as usize] {
+    let (expected_width, expected_height) = roi
+        .map(|[x1, y1, x2, y2]| (x2 - x1, y2 - y1))
+        .unwrap_or((width, height));
+    if shape != [expected_height as usize, expected_width as usize] {
         return Err(format!(
-            "depth shape {:?} does not match image dimensions {}x{}",
-            shape, width, height
+            "depth shape {:?} does not match expected map dimensions {}x{}",
+            shape, expected_width, expected_height
         )
         .into());
     }
 
     let colors = depth.colorize(Colormap::default(), DepthViz::default());
-    let colorized = rgb_image_from_pixels(&colors, width, height)?;
-    let mut annotated = blend_depth(&image, &colors, 0.6)?;
-    draw_roi_overlay(&mut annotated, result.roi);
+    let depth_source = depth_source_image(&image, roi)?;
+    let colorized = rgb_image_from_pixels(&colors, expected_width, expected_height)?;
+    let mut annotated = blend_depth(&depth_source, &colors, 0.6)?;
+    if roi.is_none() {
+        draw_roi_overlay(&mut annotated, result.roi);
+    }
     annotated.save(&output_path)?;
 
     let depth_output = depth_output_path(&output_path);
@@ -138,6 +144,20 @@ fn rgb_image_from_pixels(
     RgbImage::from_raw(width, height, bytes).ok_or_else(|| "invalid RGB image dimensions".into())
 }
 
+fn depth_source_image(
+    image: &DynamicImage,
+    roi: Option<[u32; 4]>,
+) -> Result<DynamicImage, Box<dyn Error>> {
+    let Some([x1, y1, x2, y2]) = roi else {
+        return Ok(image.clone());
+    };
+    let (width, height) = image.dimensions();
+    if x2 > width || y2 > height || x2 <= x1 || y2 <= y1 {
+        return Err(format!("ROI [{x1},{y1} {x2},{y2}] is outside image {width}x{height}").into());
+    }
+    Ok(image.crop_imm(x1, y1, x2 - x1, y2 - y1))
+}
+
 fn blend_depth(
     image: &DynamicImage,
     colors: &[[u8; 3]],
@@ -221,17 +241,24 @@ fn write_recording(
 ) -> Result<(), Box<dyn Error>> {
     rec.set_time_sequence("frame_ns", chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0));
     let (width, height) = image.dimensions();
+    let (map_width, map_height) = colorized.dimensions();
     rec.log(
         "/world/camera/bgr",
         &rerun::Image::from_rgb24(image.to_rgb8().into_raw(), [width, height]),
     )?;
     rec.log(
-        "/world/camera/depth/original/disparity",
-        &rerun::Image::from_rgb24(colorized.as_raw().clone(), [width, height]),
+        "/world/camera/crops/depth-standard/depth/disparity",
+        &rerun::Image::from_rgb24(
+            colorized.as_raw().clone(),
+            [map_width, map_height],
+        ),
     )?;
     rec.log(
-        "/world/camera/depth/original/annotated",
-        &rerun::Image::from_rgb24(annotated.as_raw().clone(), [width, height]),
+        "/world/camera/crops/depth-standard/depth/annotated",
+        &rerun::Image::from_rgb24(
+            annotated.as_raw().clone(),
+            [annotated.width(), annotated.height()],
+        ),
     )?;
     if let Some((x1, y1, x2, y2)) = roi {
         let bbox = rerun::Boxes2D::from_centers_and_half_sizes(
@@ -247,10 +274,10 @@ fn write_recording(
         .with_labels(["ROI"])
         .with_colors([rerun::Color::from_rgb(255, 255, 0)])
         .with_radii([2.0]);
-        rec.log("/world/camera/depth/original/roi", &bbox)?;
+        rec.log("/world/camera/rois/depth-standard", &bbox)?;
     }
     rec.log(
-        "/world/camera/depth/original/stats/valid_pixels",
+        "/world/camera/depth/depth-standard/stats/valid_pixels",
         &rerun::Scalars::single(
             depth
                 .data
@@ -261,13 +288,13 @@ fn write_recording(
     )?;
     if let Some(value) = finite_min(depth) {
         rec.log(
-            "/world/camera/depth/original/stats/min_depth_m",
+            "/world/camera/depth/depth-standard/stats/min_depth_m",
             &rerun::Scalars::single(f64::from(value)),
         )?;
     }
     if let Some(value) = finite_max(depth) {
         rec.log(
-            "/world/camera/depth/original/stats/max_depth_m",
+            "/world/camera/depth/depth-standard/stats/max_depth_m",
             &rerun::Scalars::single(f64::from(value)),
         )?;
     }

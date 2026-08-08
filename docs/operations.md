@@ -4,6 +4,9 @@ Guia para administradores y operadores de una instancia de Mana Lite.
 Describe el modo actual de calibracion: inferencia, consolidacion de
 detecciones y observabilidad, sin identidad temporal.
 
+Para el blueprint completo de profundidad, roles, contratos ROI-locales y
+procedimientos de promocion, ver [specs/depth-standard.md](specs/depth-standard.md).
+
 ## 1. Modos De Ejecucion
 
 ### Modo Actual: Consolidacion Stateless

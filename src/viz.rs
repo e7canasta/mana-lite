@@ -34,6 +34,9 @@ pub struct VizBridge {
     last_infer_at: HashMap<String, Instant>,
 }
 
+const DEPTH_OVERLAY_ALPHA: u8 = 150;
+const POSE_KEYPOINT_CONFIDENCE: f32 = 0.25;
+
 fn sanitize_entity_name(name: &str) -> String {
     name.chars()
         .map(|c| {
@@ -44,6 +47,10 @@ fn sanitize_entity_name(name: &str) -> String {
             }
         })
         .collect()
+}
+
+fn pose_keypoint_visible(x: f32, y: f32, confidence: f32) -> bool {
+    confidence >= POSE_KEYPOINT_CONFIDENCE && x.is_finite() && y.is_finite()
 }
 
 const INITIAL_BACKOFF_MS: u64 = 1_000;
@@ -123,11 +130,44 @@ impl VizBridge {
 
     fn send_default_blueprint(rec: &rerun::RecordingStream) {
         use rerun::blueprint::components::PanelState;
-        use rerun::blueprint::{ContainerLike, Horizontal, TimeSeriesView, Vertical};
+        use rerun::blueprint::{
+            ContainerLike, Horizontal, Spatial2DView, Tabs, TimeSeriesView, Vertical,
+        };
 
-        let camera_view = rerun::blueprint::Spatial2DView::new("Camera")
+        let main_camera = Spatial2DView::new("Main frame")
             .with_origin("/world/camera")
+            .with_contents([
+                "+ /world/camera/bgr",
+                "+ /world/camera/entities/**",
+                "+ /world/camera/observations/**",
+                "+ /world/camera/detections/**",
+                "+ /world/camera/rois/**",
+            ]);
+        let face_crop = Spatial2DView::new("Face crop")
+            .with_origin("/world/camera/crops/face-yolo")
             .with_contents(["+ $origin/**"]);
+        let segmentation_crop = Spatial2DView::new("Mask + border")
+            .with_origin("/world/camera/crops/seg-standard")
+            .with_contents(["+ $origin/**"]);
+        let depth_crop = Spatial2DView::new("Depth disparity")
+            .with_origin("/world/camera/crops/depth-standard/depth")
+            .with_contents([
+                "+ $origin/disparity",
+                "+ $origin/context/seg-standard/polygon/**",
+                "+ $origin/context/detect-fast/**",
+                "+ $origin/context/face-yolo/**",
+            ]);
+        let camera_details = Vertical::new(vec![
+            face_crop.into(),
+            segmentation_crop.into(),
+            depth_crop.into(),
+        ])
+        .with_row_shares([1.0, 1.0, 1.0]);
+        let camera_tab = Horizontal::new(vec![
+            ContainerLike::from(main_camera),
+            ContainerLike::from(camera_details),
+        ])
+        .with_column_shares([3.0, 2.0]);
 
         let stream_view = TimeSeriesView::new("Stream")
             .with_origin("/ingest")
@@ -135,13 +175,24 @@ impl VizBridge {
         let inference_view = TimeSeriesView::new("Inference")
             .with_origin("/pipeline")
             .with_contents(["+ $origin/**"]);
-        let metrics_panel = Vertical::new(vec![stream_view.into(), inference_view.into()])
-            .with_row_shares([1.0, 1.0]);
-        let viewport = Horizontal::new(vec![
-            ContainerLike::from(camera_view),
-            ContainerLike::from(metrics_panel),
+        let depth_stats = TimeSeriesView::new("Depth stats")
+            .with_origin("/world/camera/depth")
+            .with_contents(["+ $origin/**"]);
+        let class_stats = TimeSeriesView::new("Class stats")
+            .with_origin("/infer")
+            .with_contents(["+ $origin/**"]);
+        let metrics_tab = Vertical::new(vec![
+            stream_view.into(),
+            inference_view.into(),
+            depth_stats.into(),
+            class_stats.into(),
         ])
-        .with_column_shares([3.0, 2.0]);
+        .with_row_shares([1.0, 1.0, 1.0, 1.0]);
+
+        let viewport = Tabs::new(vec![
+            ContainerLike::from(camera_tab),
+            ContainerLike::from(metrics_tab),
+        ]);
 
         let blueprint = rerun::blueprint::Blueprint::new(viewport)
             .with_blueprint_panel(
@@ -236,8 +287,11 @@ impl VizBridge {
         };
         let model = sanitize_entity_name(model);
         let base = format!("/world/camera/depth/{model}");
+        let visual_path = format!("/world/camera/crops/{model}/depth");
         if self.toggles.depth {
             rec.log(base.as_str(), &rerun::Clear::recursive()).ok();
+            rec.log(visual_path.as_str(), &rerun::Clear::recursive())
+                .ok();
         }
         if let Some(depth) = depth {
             let shape = depth.data.shape();
@@ -250,14 +304,22 @@ impl VizBridge {
                         (DepthViz::Disparity, "disparity")
                     }
                 };
-                let path = format!("{base}/{suffix}");
-                let rgb: Vec<u8> = depth
-                    .colorize(Colormap::Inferno, viz)
-                    .into_iter()
-                    .flatten()
+                let path = format!("{visual_path}/{suffix}");
+                let colors = depth.colorize(Colormap::Inferno, viz);
+                let rgba: Vec<u8> = depth
+                    .data
+                    .iter()
+                    .zip(colors.iter())
+                    .flat_map(|(&value, color)| {
+                        let alpha = if value.is_finite() && value > 0.0 {
+                            DEPTH_OVERLAY_ALPHA
+                        } else {
+                            0
+                        };
+                        [color[0], color[1], color[2], alpha]
+                    })
                     .collect();
-                let image =
-                    rerun::Image::from_rgb24(rgb, [shape[1] as u32, shape[0] as u32]);
+                let image = rerun::Image::from_rgba32(rgba, [shape[1] as u32, shape[0] as u32]);
                 if let Err(e) = rec.log(path.as_str(), &image) {
                     log::warn!("viz depth {model} failed: {e}");
                 }
@@ -398,7 +460,12 @@ impl VizBridge {
         }
     }
 
-    pub fn log_model_detections(&self, model: &str, detections: &[Detection]) {
+    pub fn log_model_detections(
+        &self,
+        model: &str,
+        detections: &[Detection],
+        crop_rect: Option<CropRect>,
+    ) {
         if !self.toggles.boxes {
             return;
         }
@@ -408,24 +475,230 @@ impl VizBridge {
         };
         let model = sanitize_entity_name(model);
         let path = format!("/world/camera/detections/{model}");
-        rec.log(path.as_str(), &rerun::Clear::recursive()).ok();
+        let crop_path = format!("/world/camera/crops/{model}/detections");
+        if !(model == "face-yolo" && detections.is_empty()) {
+            rec.log(path.as_str(), &rerun::Clear::recursive()).ok();
+            rec.log(crop_path.as_str(), &rerun::Clear::recursive()).ok();
+        }
 
         for (index, detection) in detections.iter().enumerate() {
-            let [x1, y1, x2, y2] = detection.bbox;
             let label = format!("{} {:.2}", detection.class, detection.confidence);
+            let log_box = |entity: String, [x1, y1, x2, y2]: [f32; 4]| {
+                let bbox = rerun::Boxes2D::from_centers_and_half_sizes(
+                    [rerun::datatypes::Vec2D([(x1 + x2) / 2.0, (y1 + y2) / 2.0])],
+                    [rerun::datatypes::Vec2D([
+                        (x2 - x1).abs() / 2.0,
+                        (y2 - y1).abs() / 2.0,
+                    ])],
+                )
+                .with_labels([label.as_str()])
+                .with_colors([rerun::Color::from_unmultiplied_rgba(255, 80, 80, 255)])
+                .with_radii([2.0]);
+                if let Err(e) = rec.log(entity.as_str(), &bbox) {
+                    log::warn!("viz raw detection {entity} failed: {e}");
+                }
+            };
+            log_box(format!("{path}/{index}"), detection.bbox);
+            if let Some(rect) = crop_rect {
+                let local_bbox = [
+                    detection.bbox[0] - rect.x1 as f32,
+                    detection.bbox[1] - rect.y1 as f32,
+                    detection.bbox[2] - rect.x1 as f32,
+                    detection.bbox[3] - rect.y1 as f32,
+                ];
+                log_box(format!("{crop_path}/{index}"), local_bbox);
+            }
+        }
+    }
+
+    pub fn log_model_pose(&self, model: &str, detections: &[Detection]) {
+        if !self.toggles.boxes || model != "pose-standard" {
+            return;
+        }
+        let rec = match &self.inner {
+            Inner::Connected { rec, .. } => rec,
+            _ => return,
+        };
+        let base = format!(
+            "/world/camera/detections/{}/pose",
+            sanitize_entity_name(model)
+        );
+        rec.log(base.as_str(), &rerun::Clear::recursive()).ok();
+
+        use ultralytics_inference::visualizer::color::POSE_COLORS;
+        use ultralytics_inference::visualizer::skeleton::{
+            KPT_COLOR_INDICES, LIMB_COLOR_INDICES, SKELETON,
+        };
+
+        for (person_index, detection) in detections.iter().enumerate() {
+            let Some(keypoints) = detection.keypoints.as_ref() else {
+                continue;
+            };
+            let mut points = Vec::new();
+            let mut point_ids = Vec::new();
+            let mut point_colors = Vec::new();
+            let mut skeleton = Vec::new();
+            let mut skeleton_colors = Vec::new();
+
+            for (keypoint_index, &[x, y, confidence]) in keypoints.iter().enumerate() {
+                if !pose_keypoint_visible(x, y, confidence) {
+                    continue;
+                }
+                points.push([x, y]);
+                point_ids.push(keypoint_index as u16);
+                let color_index = KPT_COLOR_INDICES[keypoint_index % KPT_COLOR_INDICES.len()];
+                let [r, g, b] = POSE_COLORS[color_index];
+                point_colors.push(rerun::Color::from_rgb(r, g, b));
+            }
+
+            for (limb_index, &[a, b]) in SKELETON.iter().enumerate() {
+                let (Some(&[x1, y1, c1]), Some(&[x2, y2, c2])) =
+                    (keypoints.get(a), keypoints.get(b))
+                else {
+                    continue;
+                };
+                if !pose_keypoint_visible(x1, y1, c1) || !pose_keypoint_visible(x2, y2, c2) {
+                    continue;
+                }
+                skeleton.push(vec![[x1, y1], [x2, y2]]);
+                let color_index = LIMB_COLOR_INDICES[limb_index % LIMB_COLOR_INDICES.len()];
+                let [r, g, b] = POSE_COLORS[color_index];
+                skeleton_colors.push(rerun::Color::from_unmultiplied_rgba(r, g, b, 220));
+            }
+
+            if !points.is_empty() {
+                let path = format!("{base}/{person_index}/keypoints");
+                let points = rerun::Points2D::new(points)
+                    .with_keypoint_ids(point_ids)
+                    .with_colors(point_colors)
+                    .with_radii([rerun::Radius::new_ui_points(5.0)]);
+                if let Err(e) = rec.log(path.as_str(), &points) {
+                    log::warn!("viz pose keypoints {path} failed: {e}");
+                }
+            }
+            if !skeleton.is_empty() {
+                let path = format!("{base}/{person_index}/skeleton");
+                let strips = rerun::LineStrips2D::new(skeleton)
+                    .with_colors(skeleton_colors)
+                    .with_radii([rerun::Radius::new_ui_points(3.0)]);
+                if let Err(e) = rec.log(path.as_str(), &strips) {
+                    log::warn!("viz pose skeleton {path} failed: {e}");
+                }
+            }
+        }
+    }
+
+    pub fn log_depth_context_boxes(
+        &self,
+        model: &str,
+        detections: &[Detection],
+        depth_roi: Option<CropRect>,
+    ) {
+        if !self.toggles.boxes || !matches!(model, "detect-fast" | "face-yolo") {
+            return;
+        }
+        let Some(depth_roi) = depth_roi else {
+            return;
+        };
+        let rec = match &self.inner {
+            Inner::Connected { rec, .. } => rec,
+            _ => return,
+        };
+        let model = sanitize_entity_name(model);
+        let path = format!("/world/camera/crops/depth-standard/depth/context/{model}");
+        if !(model == "face-yolo" && detections.is_empty()) {
+            rec.log(path.as_str(), &rerun::Clear::recursive()).ok();
+        }
+
+        let color = if model == "face-yolo" {
+            rerun::Color::from_unmultiplied_rgba(255, 220, 0, 165)
+        } else {
+            rerun::Color::from_unmultiplied_rgba(0, 255, 100, 165)
+        };
+        let label_prefix = if model == "face-yolo" { "face" } else { "body" };
+
+        for (index, detection) in detections.iter().enumerate() {
+            let Some([x1, y1, x2, y2]) = bbox_in_roi(detection.bbox, depth_roi) else {
+                continue;
+            };
+            let label = format!(
+                "{label_prefix} {} {:.2}",
+                detection.class, detection.confidence
+            );
             let bbox = rerun::Boxes2D::from_centers_and_half_sizes(
                 [rerun::datatypes::Vec2D([(x1 + x2) / 2.0, (y1 + y2) / 2.0])],
-                [rerun::datatypes::Vec2D([
-                    (x2 - x1).abs() / 2.0,
-                    (y2 - y1).abs() / 2.0,
-                ])],
+                [rerun::datatypes::Vec2D([(x2 - x1) / 2.0, (y2 - y1) / 2.0])],
             )
-            .with_labels([label.as_str()])
-            .with_colors([rerun::Color::from_unmultiplied_rgba(255, 80, 80, 255)])
-            .with_radii([2.0]);
+            .with_colors([color])
+            .with_radii([3.0]);
+            let bbox = if model == "face-yolo" {
+                bbox
+            } else {
+                bbox.with_labels([label.as_str()])
+            };
             let entity = format!("{path}/{index}");
             if let Err(e) = rec.log(entity.as_str(), &bbox) {
-                log::warn!("viz raw detection {entity} failed: {e}");
+                log::warn!("viz depth context box {entity} failed: {e}");
+            }
+        }
+    }
+
+    pub fn clear_depth_context_boxes(&self) {
+        if !self.toggles.boxes {
+            return;
+        }
+        let rec = match &self.inner {
+            Inner::Connected { rec, .. } => rec,
+            _ => return,
+        };
+        for model in ["detect-fast"] {
+            let path = format!("/world/camera/crops/depth-standard/depth/context/{model}");
+            rec.log(path.as_str(), &rerun::Clear::recursive()).ok();
+        }
+    }
+
+    pub fn log_depth_context_polygons(
+        &self,
+        model: &str,
+        detections: &[Detection],
+        depth_roi: Option<CropRect>,
+        frame_w: u32,
+        frame_h: u32,
+    ) {
+        if !self.toggles.mask_polygons || model != "seg-standard" {
+            return;
+        }
+        let Some(depth_roi) = depth_roi else {
+            return;
+        };
+        let rec = match &self.inner {
+            Inner::Connected { rec, .. } => rec,
+            _ => return,
+        };
+        if detections.is_empty() {
+            return;
+        }
+        let base = "/world/camera/crops/depth-standard/depth/context/seg-standard/polygon";
+        rec.log(base, &rerun::Clear::recursive()).ok();
+        let fw = frame_w.max(1) as f32;
+        let fh = frame_h.max(1) as f32;
+
+        for (index, detection) in detections.iter().enumerate() {
+            let Some(mask) = &detection.mask else {
+                continue;
+            };
+            for (polygon_index, polygon) in mask.polygons.as_ref().iter().enumerate() {
+                let points = polygon_in_roi(polygon, fw, fh, depth_roi);
+                if points.len() < 2 {
+                    continue;
+                }
+                let path = format!("{base}/{index}/{polygon_index}");
+                let strip = rerun::LineStrips2D::new([points])
+                    .with_colors([rerun::Color::from_unmultiplied_rgba(255, 255, 255, 165)])
+                    .with_radii([rerun::Radius::new_ui_points(3.0)]);
+                if let Err(e) = rec.log(path.as_str(), &strip) {
+                    log::warn!("viz depth context polygon {path} failed: {e}");
+                }
             }
         }
     }
@@ -456,7 +729,10 @@ impl VizBridge {
         };
         let model = sanitize_entity_name(model);
         let mask_path = format!("/world/camera/masks/{model}");
+        let crop_mask_path = format!("/world/camera/crops/{model}/mask");
         rec.log(mask_path.as_str(), &rerun::Clear::recursive()).ok();
+        rec.log(crop_mask_path.as_str(), &rerun::Clear::recursive())
+            .ok();
 
         let masked: Vec<&Detection> = detections.iter().filter(|d| d.mask.is_some()).collect();
         if masked.is_empty() {
@@ -483,6 +759,9 @@ impl VizBridge {
         let image = rerun::Image::from_rgba32(rgba, [mask_w, mask_h]);
         if let Err(e) = rec.log(mask_path.as_str(), &image) {
             log::warn!("viz mask overlay {model} failed: {e}");
+        }
+        if let Err(e) = rec.log(crop_mask_path.as_str(), &image) {
+            log::warn!("viz crop mask overlay {model} failed: {e}");
         }
 
         self.log_mask_debug(rec, &model, &masked, frame_w, frame_h);
@@ -705,6 +984,53 @@ fn finite_depth_max(depth: &DepthMap) -> Option<f32> {
         .reduce(f32::max)
 }
 
+fn bbox_in_roi(bbox: [f32; 4], roi: CropRect) -> Option<[f32; 4]> {
+    let width = (roi.x2.saturating_sub(roi.x1)) as f32;
+    let height = (roi.y2.saturating_sub(roi.y1)) as f32;
+    if width <= 0.0 || height <= 0.0 {
+        return None;
+    }
+    let x1 = (bbox[0] - roi.x1 as f32).clamp(0.0, width);
+    let y1 = (bbox[1] - roi.y1 as f32).clamp(0.0, height);
+    let x2 = (bbox[2] - roi.x1 as f32).clamp(0.0, width);
+    let y2 = (bbox[3] - roi.y1 as f32).clamp(0.0, height);
+    (x2 > x1 && y2 > y1).then_some([x1, y1, x2, y2])
+}
+
+fn polygon_in_roi(poly: &[[f32; 2]], fw: f32, fh: f32, roi: CropRect) -> Vec<[f32; 2]> {
+    let roi_x1 = roi.x1 as f32;
+    let roi_y1 = roi.y1 as f32;
+    let roi_x2 = roi.x2 as f32;
+    let roi_y2 = roi.y2 as f32;
+    let global: Vec<[f32; 2]> = poly
+        .iter()
+        .map(|point| [point[0] * fw, point[1] * fh])
+        .collect();
+    let min_x = global.iter().map(|point| point[0]).reduce(f32::min);
+    let max_x = global.iter().map(|point| point[0]).reduce(f32::max);
+    let min_y = global.iter().map(|point| point[1]).reduce(f32::min);
+    let max_y = global.iter().map(|point| point[1]).reduce(f32::max);
+    if !matches!((min_x, max_x, min_y, max_y), (Some(min_x), Some(max_x), Some(min_y), Some(max_y))
+        if max_x >= roi_x1 && min_x <= roi_x2 && max_y >= roi_y1 && min_y <= roi_y2)
+    {
+        return Vec::new();
+    }
+
+    let mut local: Vec<[f32; 2]> = global
+        .into_iter()
+        .map(|[x, y]| {
+            [
+                (x - roi_x1).clamp(0.0, roi_x2 - roi_x1),
+                (y - roi_y1).clamp(0.0, roi_y2 - roi_y1),
+            ]
+        })
+        .collect();
+    if let Some(first) = local.first().copied() {
+        local.push(first);
+    }
+    local
+}
+
 /// Frame-pixel vertices of a frame-normalized contour, closed by repeating
 /// the first vertex so Rerun renders a full polygon outline.
 fn frame_strip(poly: &[[f32; 2]], fw: f32, fh: f32) -> Vec<[f32; 2]> {
@@ -895,6 +1221,7 @@ mod mask_debug_tests {
             class: "person".into(),
             confidence: 0.9,
             bbox: [0.0, 0.0, 1.0, 1.0],
+            keypoints: None,
             mask: Some(DetectionMask {
                 compact: Arc::new(compact),
                 polygons: Arc::new(polygons),
@@ -1021,5 +1348,39 @@ mod mask_debug_tests {
         // Single-vertex polygon draws no line (len < 2) but the inverse
         // mapping itself is exercised without panicking.
         assert_eq!(poly_img.get_pixel(0, 0), &Rgb([0, 0, 0]));
+    }
+
+    #[test]
+    fn depth_context_bbox_is_translated_and_clipped_to_roi() {
+        let roi = CropRect {
+            x1: 560,
+            y1: 140,
+            x2: 1240,
+            y2: 820,
+        };
+
+        assert_eq!(
+            bbox_in_roi([500.0, 100.0, 700.0, 300.0], roi),
+            Some([0.0, 0.0, 140.0, 160.0])
+        );
+    }
+
+    #[test]
+    fn depth_context_bbox_is_ignored_when_outside_roi() {
+        let roi = CropRect {
+            x1: 560,
+            y1: 140,
+            x2: 1240,
+            y2: 820,
+        };
+
+        assert_eq!(bbox_in_roi([0.0, 0.0, 100.0, 100.0], roi), None);
+    }
+
+    #[test]
+    fn pose_keypoint_visibility_filters_confidence_and_non_finite_points() {
+        assert!(pose_keypoint_visible(10.0, 20.0, 0.25));
+        assert!(!pose_keypoint_visible(10.0, 20.0, 0.24));
+        assert!(!pose_keypoint_visible(f32::NAN, 20.0, 0.9));
     }
 }

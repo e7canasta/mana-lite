@@ -49,16 +49,16 @@ ramas deshabilitadas. Esos tiempos no son una medición de depth.
 - `InferenceResult` ahora conserva `depth: Option<DepthMap>` y lo extrae desde
   `Results` sin copiarlo.
 - Los modelos con `enabled = false` no se cargan ni se ejecutan.
-- `depth-standard` está definido como raíz de cascade, con el modelo small/320
-  FP16 habilitado y sin crop; detect/pose/face/seg están deshabilitados.
+- `depth-standard` está definido como raíz de cascade, con un modelo FP16 y ROI
+  fijo de `680x680`; no depende de detect y no entra en consolidación.
 - Depth se excluye de consolidación, tracking, zonas y FSM.
 - Las métricas separan píxeles válidos, rango de profundidad y mapas vacíos de
   `infer_empty` basado en detecciones.
 - JSONL emite eventos `type=depth` con dimensiones y estadísticas, sin incluir
   la matriz completa.
-- Rerun publica el mapa colorizado bajo
-  `/world/camera/depth/<model>/<metric|disparity>` y sus estadísticas bajo
-  `stats/`.
+- Rerun publica el mapa colorizado local bajo
+  `/world/camera/crops/<model>/depth/<metric|disparity>` y sus estadísticas bajo
+  `/world/camera/depth/<model>/stats/`.
 - Hay tests para serialización de eventos y métricas con píxeles inválidos,
   mapas vacíos y valores finitos.
 
@@ -68,17 +68,14 @@ ramas deshabilitadas. Esos tiempos no son una medición de depth.
 - Solo `depth-standard` está habilitado; detect, pose, face y seg se omiten al
   cargar.
 - Tracking, zonas, FSM, snapshots, frame RGB, boxes y máscaras están apagados.
-- La prueba RTSP procesó frames `1920x1080` con `2,073,600` píxeles válidos.
-- La latencia observada fue aproximadamente `64-76 ms` de backend y `73-86 ms`
-  de pipeline.
 - La prueba RTSP con ROI `680x680` procesó `462,400` píxeles válidos y registró
   `roi:[560,140 1240,820]`.
 
 ### Probe Reproducible Con Imagen
 
 El binario `depth-image-probe` usa el ONNX original FP32 de `inference`, aplica
-el ROI antes de `predict_image`, valida que el mapa vuelva al tamaño completo,
-genera el overlay con la misma fórmula de `annotate_image` y puede escribir un
+el ROI antes de `predict_image`, valida que el mapa permanezca local al ROI,
+genera el overlay sobre el crop y puede escribir un
 `.rrd` sin depender de que haya un viewer conectado:
 
 ```bash
@@ -90,9 +87,9 @@ cargo run --bin depth-image-probe -- \
   --roi 560 140 1240 820
 ```
 
-La ejecución produjo un snapshot `1920x1080`, bandas fuera del ROI negras y
-`valid_pixels=462400`; el `.rrd` contiene la imagen original, disparity,
-overlay anotado, estadísticas y el rectángulo ROI.
+La ejecución produce un snapshot `680x680` para el crop, `valid_pixels=462400`;
+el `.rrd` contiene la imagen original en BGR, disparity local, overlay del
+crop, estadísticas y el rectángulo ROI.
 
 ## Modelo Mental Del Pipeline
 
@@ -166,21 +163,12 @@ igual que el runtime trabaja actualmente con un batch de una imagen.
 
 ### 2. Geometría Y ROI
 
-La primera integración debe ejecutar depth sobre frame completo, sin `[crop]`.
-Así `DepthMap.data` ya tiene exactamente la geometría del frame y no hay que
-resolver offsets adicionales.
+`predict_image()` recibe el ROI y `DepthMap.data` conserva la geometría local
+del crop. `crop_rect`/`roi` es el origen global para consumidores que necesiten
+transformar una region de la camara. No se crea un buffer full-frame ni se
+rellena el exterior con ceros.
 
-Para una futura integración con crop:
-
-- `predict_image()` recibe una imagen recortada.
-- El mapa resultante puede estar en la geometría del crop, no en la del frame
-  original.
-- Hay que colocar el `Array2<f32>` en un buffer full-frame usando `crop_rect` y
-  dejar el exterior en cero como inválido.
-- Debe existir un test específico para offset, clipping y dimensiones.
-
-No mezclar esta decisión con la primera entrega. Depth completo permite validar
-el contrato, Rerun y coste sin introducir simultáneamente un problema espacial.
+El test de postprocess verifica dimensiones locales, offset y valores del mapa.
 
 ### 3. Catálogo Y Cascade
 
@@ -382,15 +370,15 @@ debe asumir aceleración. Medir el tiempo real del backend; la ejecución de
 
 ### Memoria
 
-Un mapa `1920x1080` en `f32` ocupa aproximadamente 8 MB, sin contar copias,
-colorización y buffers de Rerun. No guardar varios frames depth en memoria.
+Un mapa ROI `680x680` en `f32` ocupa aproximadamente 1.8 MB. El frame BGR
+completo se publica por separado; no duplicar el mapa depth para alinearlo.
 
 ### ROI
 
-Frame completo es la opción segura para empezar. Depth sobre un crop dinámico
-requiere colocar correctamente el mapa de vuelta al frame y marcar el exterior
-como inválido. No combinar depth con el crop de persona hasta que exista ese
-test geométrico.
+Depth trabaja en el crop fijo. Para reglas futuras, intersectar la region
+global solicitada con el ROI y convertirla a coordenadas locales antes de
+calcular estadisticas. La visualizacion usa un crop separado, no una mascara
+negra sobre el frame completo.
 
 ### Carga De Modelos Deshabilitados
 
@@ -408,8 +396,7 @@ inferencia. El `default_model` también debe estar habilitado.
 - Depth no crea `Detection`, `ConsolidatedObservation`, track, zona ni transición
   FSM.
 - JSONL publica estadísticas finitas y versionables.
-- Rerun muestra un mapa con las dimensiones del frame original bajo un path
-  dedicado.
+- Rerun muestra BGR completo y disparity local en un path de crop dedicado.
 - Los frames inválidos no provocan panic ni publican datos anteriores como si
   fueran nuevos.
 - La rama depth puede deshabilitarse sin cambiar el comportamiento de detect,

@@ -191,6 +191,7 @@ mod tests {
             class: class.into(),
             confidence: 0.9,
             bbox,
+            keypoints: None,
             mask: None,
         }
     }

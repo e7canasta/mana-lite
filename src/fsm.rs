@@ -49,7 +49,15 @@ impl FsmEngine {
 
         for t in transitions {
             if t.from == "*" {
-                if let Some(result) = try_transition(&mut self.dwell_timers, t, &self.state_entered_at, &self.catalog, zone_events, zone_engine, health) {
+                if let Some(result) = try_transition(
+                    &mut self.dwell_timers,
+                    t,
+                    &self.state_entered_at,
+                    &self.catalog,
+                    zone_events,
+                    zone_engine,
+                    health,
+                ) {
                     self.current_state.clone_from(&result.to);
                     self.state_entered_at = Instant::now();
                     self.dwell_timers.clear();
@@ -62,7 +70,15 @@ impl FsmEngine {
             if t.from != self.current_state {
                 continue;
             }
-            if let Some(result) = try_transition(&mut self.dwell_timers, t, &self.state_entered_at, &self.catalog, zone_events, zone_engine, health) {
+            if let Some(result) = try_transition(
+                &mut self.dwell_timers,
+                t,
+                &self.state_entered_at,
+                &self.catalog,
+                zone_events,
+                zone_engine,
+                health,
+            ) {
                 self.current_state.clone_from(&result.to);
                 self.state_entered_at = Instant::now();
                 self.dwell_timers.clear();
@@ -74,7 +90,9 @@ impl FsmEngine {
     }
 
     pub fn current_models(&self) -> Vec<String> {
-        self.catalog.fsm.states
+        self.catalog
+            .fsm
+            .states
             .get(&self.current_state)
             .map(|s| s.models.clone())
             .unwrap_or_default()
@@ -87,18 +105,32 @@ fn state_label(catalog: &FsmCatalog, state: &str) -> Option<String> {
 
 fn parse_dwell(s: &str) -> Option<u64> {
     let s = s.trim();
-    if s.is_empty() { return None; }
+    if s.is_empty() {
+        return None;
+    }
     if let Some(num_str) = s.strip_suffix("ms") {
         return num_str.trim().parse::<f64>().ok().map(|v| v as u64);
     }
     if let Some(num_str) = s.strip_suffix('s') {
-        return num_str.trim().parse::<f64>().ok().map(|v| (v * 1000.0) as u64);
+        return num_str
+            .trim()
+            .parse::<f64>()
+            .ok()
+            .map(|v| (v * 1000.0) as u64);
     }
     if let Some(num_str) = s.strip_suffix('m') {
-        return num_str.trim().parse::<f64>().ok().map(|v| (v * 60_000.0) as u64);
+        return num_str
+            .trim()
+            .parse::<f64>()
+            .ok()
+            .map(|v| (v * 60_000.0) as u64);
     }
     if let Some(num_str) = s.strip_suffix('h') {
-        return num_str.trim().parse::<f64>().ok().map(|v| (v * 3_600_000.0) as u64);
+        return num_str
+            .trim()
+            .parse::<f64>()
+            .ok()
+            .map(|v| (v * 3_600_000.0) as u64);
     }
     None
 }
@@ -122,18 +154,29 @@ fn try_transition(
 
     let trigger_key = format!("{}→{}", t.from, t.to);
 
-    let all_true = t.guards.iter().all(|g| eval_guard(g, zone_events, zone_engine, health));
+    let all_true = t
+        .guards
+        .iter()
+        .all(|g| eval_guard(g, zone_events, zone_engine, health));
 
     if !all_true {
         dwell_timers.remove(&trigger_key);
         return None;
     }
 
-    let min_dwell = t.guards.iter()
+    let min_dwell = t
+        .guards
+        .iter()
         .filter_map(|g| match g {
-            FsmGuard::ZoneOccupied { min_duration_ms, .. } => *min_duration_ms,
-            FsmGuard::ZoneVacated { min_duration_ms, .. } => *min_duration_ms,
-            FsmGuard::AllZonesVacant { min_duration_ms, .. } => *min_duration_ms,
+            FsmGuard::ZoneOccupied {
+                min_duration_ms, ..
+            } => *min_duration_ms,
+            FsmGuard::ZoneVacated {
+                min_duration_ms, ..
+            } => *min_duration_ms,
+            FsmGuard::AllZonesVacant {
+                min_duration_ms, ..
+            } => *min_duration_ms,
             _ => None,
         })
         .max()
@@ -149,7 +192,11 @@ fn try_transition(
         dwell_timers.remove(&trigger_key);
         Some(FsmTransitionResult {
             from: t.from.clone(),
-            from_label: if t.from == "*" { None } else { state_label(catalog, &t.from) },
+            from_label: if t.from == "*" {
+                None
+            } else {
+                state_label(catalog, &t.from)
+            },
             to: t.to.clone(),
             to_label: state_label(catalog, &t.to),
             trigger: trigger_key,
@@ -167,23 +214,23 @@ fn eval_guard(
     health: &Health,
 ) -> bool {
     match guard {
-        FsmGuard::ZoneOccupied { zone, min_confidence, .. } => {
-            zone_events.iter().any(|ev| match ev {
-                ZoneEvent::Occupied { zone: z, confidence, .. } => {
-                    z == zone && confidence >= min_confidence
-                }
-                _ => false,
-            })
-        }
-        FsmGuard::ZoneVacated { zone, .. } => {
-            zone_events.iter().any(|ev| matches!(ev, ZoneEvent::Vacated { zone: z, .. } if z == zone))
-        }
-        FsmGuard::AllZonesVacant { .. } => {
-            zone_engine.all_vacant()
-        }
-        FsmGuard::DataStale => {
-            health.is_blind()
-        }
+        FsmGuard::ZoneOccupied {
+            zone,
+            min_confidence,
+            ..
+        } => zone_events.iter().any(|ev| match ev {
+            ZoneEvent::Occupied {
+                zone: z,
+                confidence,
+                ..
+            } => z == zone && confidence >= min_confidence,
+            _ => false,
+        }),
+        FsmGuard::ZoneVacated { zone, .. } => zone_events
+            .iter()
+            .any(|ev| matches!(ev, ZoneEvent::Vacated { zone: z, .. } if z == zone)),
+        FsmGuard::AllZonesVacant { .. } => zone_engine.all_vacant(),
+        FsmGuard::DataStale => health.is_blind(),
     }
 }
 
@@ -193,18 +240,33 @@ mod tests {
     use crate::config::{FsmRoot, FsmState, FsmTransition};
     use crate::metrics::Health;
 
-    fn make_catalog(initial: &str, states: Vec<(&str, Vec<&str>)>, transitions: Vec<FsmTransition>) -> FsmCatalog {
-        make_catalog_dwell(initial, states.into_iter().map(|(n, m)| (n, m, None)).collect(), transitions)
+    fn make_catalog(
+        initial: &str,
+        states: Vec<(&str, Vec<&str>)>,
+        transitions: Vec<FsmTransition>,
+    ) -> FsmCatalog {
+        make_catalog_dwell(
+            initial,
+            states.into_iter().map(|(n, m)| (n, m, None)).collect(),
+            transitions,
+        )
     }
 
-    fn make_catalog_dwell(initial: &str, states: Vec<(&str, Vec<&str>, Option<u64>)>, transitions: Vec<FsmTransition>) -> FsmCatalog {
+    fn make_catalog_dwell(
+        initial: &str,
+        states: Vec<(&str, Vec<&str>, Option<u64>)>,
+        transitions: Vec<FsmTransition>,
+    ) -> FsmCatalog {
         let mut state_map = HashMap::new();
         for (name, models, dwell_ms) in states {
-            state_map.insert(name.to_string(), FsmState {
-                label: None,
-                models: models.iter().map(|s| s.to_string()).collect(),
-                dwell_min_ms: dwell_ms,
-            });
+            state_map.insert(
+                name.to_string(),
+                FsmState {
+                    label: None,
+                    models: models.iter().map(|s| s.to_string()).collect(),
+                    dwell_min_ms: dwell_ms,
+                },
+            );
         }
         FsmCatalog {
             fsm: FsmRoot {
@@ -221,13 +283,16 @@ mod tests {
             "idle",
             vec![("idle", vec![]), ("blind", vec![])],
             vec![FsmTransition {
-                from: "*".into(), to: "blind".into(),
+                from: "*".into(),
+                to: "blind".into(),
                 guards: vec![FsmGuard::DataStale],
                 dwell: None,
             }],
         );
         let mut engine = FsmEngine::from_catalog(&catalog);
-        let zones = ZoneEngine::from_catalog(&crate::config::ZoneCatalog { zones: HashMap::new() });
+        let zones = ZoneEngine::from_catalog(&crate::config::ZoneCatalog {
+            zones: HashMap::new(),
+        });
 
         let mut health = Health::new(100); // 100ms stale
         health.touch();
@@ -246,7 +311,8 @@ mod tests {
             "idle",
             vec![("idle", vec![]), ("watching", vec![])],
             vec![FsmTransition {
-                from: "idle".into(), to: "watching".into(),
+                from: "idle".into(),
+                to: "watching".into(),
                 guards: vec![FsmGuard::ZoneOccupied {
                     zone: "bed".into(),
                     min_confidence: 0.5,
@@ -256,10 +322,18 @@ mod tests {
             }],
         );
         let mut engine = FsmEngine::from_catalog(&catalog);
-        let zones = ZoneEngine::from_catalog(&crate::config::ZoneCatalog { zones: HashMap::new() });
+        let zones = ZoneEngine::from_catalog(&crate::config::ZoneCatalog {
+            zones: HashMap::new(),
+        });
         let health = Health::new(10_000);
 
-        let events = vec![ZoneEvent::Occupied { zone: "bed".into(), label: None, track_id: 1, class: "person".into(), confidence: 0.9 }];
+        let events = vec![ZoneEvent::Occupied {
+            zone: "bed".into(),
+            label: None,
+            track_id: 1,
+            class: "person".into(),
+            confidence: 0.9,
+        }];
         let result = engine.evaluate(&events, &zones, &health);
 
         assert!(result.is_some());
@@ -273,7 +347,8 @@ mod tests {
             "idle",
             vec![("idle", vec![]), ("watching", vec![])],
             vec![FsmTransition {
-                from: "idle".into(), to: "watching".into(),
+                from: "idle".into(),
+                to: "watching".into(),
                 guards: vec![FsmGuard::ZoneOccupied {
                     zone: "bed".into(),
                     min_confidence: 0.8,
@@ -283,10 +358,18 @@ mod tests {
             }],
         );
         let mut engine = FsmEngine::from_catalog(&catalog);
-        let zones = ZoneEngine::from_catalog(&crate::config::ZoneCatalog { zones: HashMap::new() });
+        let zones = ZoneEngine::from_catalog(&crate::config::ZoneCatalog {
+            zones: HashMap::new(),
+        });
         let health = Health::new(10_000);
 
-        let events = vec![ZoneEvent::Occupied { zone: "bed".into(), label: None, track_id: 1, class: "person".into(), confidence: 0.6 }];
+        let events = vec![ZoneEvent::Occupied {
+            zone: "bed".into(),
+            label: None,
+            track_id: 1,
+            class: "person".into(),
+            confidence: 0.6,
+        }];
         let result = engine.evaluate(&events, &zones, &health);
         assert!(result.is_none());
         assert_eq!(engine.current_state, "idle");
@@ -298,21 +381,36 @@ mod tests {
             "idle",
             vec![("idle", vec![]), ("watching", vec![])],
             vec![FsmTransition {
-                from: "idle".into(), to: "watching".into(),
+                from: "idle".into(),
+                to: "watching".into(),
                 guards: vec![
-                    FsmGuard::ZoneOccupied { zone: "bed".into(), min_confidence: 0.5, min_duration_ms: Some(0) },
-                    FsmGuard::ZoneOccupied { zone: "chair".into(), min_confidence: 0.5, min_duration_ms: Some(0) },
+                    FsmGuard::ZoneOccupied {
+                        zone: "bed".into(),
+                        min_confidence: 0.5,
+                        min_duration_ms: Some(0),
+                    },
+                    FsmGuard::ZoneOccupied {
+                        zone: "chair".into(),
+                        min_confidence: 0.5,
+                        min_duration_ms: Some(0),
+                    },
                 ],
                 dwell: None,
             }],
         );
         let mut engine = FsmEngine::from_catalog(&catalog);
-        let zones = ZoneEngine::from_catalog(&crate::config::ZoneCatalog { zones: HashMap::new() });
+        let zones = ZoneEngine::from_catalog(&crate::config::ZoneCatalog {
+            zones: HashMap::new(),
+        });
         let health = Health::new(10_000);
 
-        let events = vec![
-            ZoneEvent::Occupied { zone: "bed".into(), label: None, track_id: 1, class: "person".into(), confidence: 0.9 },
-        ];
+        let events = vec![ZoneEvent::Occupied {
+            zone: "bed".into(),
+            label: None,
+            track_id: 1,
+            class: "person".into(),
+            confidence: 0.9,
+        }];
         let result = engine.evaluate(&events, &zones, &health);
         assert!(result.is_none());
         assert_eq!(engine.current_state, "idle");
@@ -324,13 +422,16 @@ mod tests {
             "idle",
             vec![("idle", vec![], Some(500)), ("next", vec![], None)],
             vec![FsmTransition {
-                from: "idle".into(), to: "next".into(),
+                from: "idle".into(),
+                to: "next".into(),
                 guards: vec![FsmGuard::DataStale],
                 dwell: None,
             }],
         );
         let mut engine = FsmEngine::from_catalog(&catalog);
-        let zones = ZoneEngine::from_catalog(&crate::config::ZoneCatalog { zones: HashMap::new() });
+        let zones = ZoneEngine::from_catalog(&crate::config::ZoneCatalog {
+            zones: HashMap::new(),
+        });
         let mut health = Health::new(100);
         health.touch();
         std::thread::sleep(std::time::Duration::from_millis(200));
@@ -350,13 +451,16 @@ mod tests {
             "idle",
             vec![("idle", vec![]), ("blind", vec![])],
             vec![FsmTransition {
-                from: "idle".into(), to: "blind".into(),
+                from: "idle".into(),
+                to: "blind".into(),
                 guards: vec![],
                 dwell: Some("100ms".into()),
             }],
         );
         let mut engine = FsmEngine::from_catalog(&catalog);
-        let zones = ZoneEngine::from_catalog(&crate::config::ZoneCatalog { zones: HashMap::new() });
+        let zones = ZoneEngine::from_catalog(&crate::config::ZoneCatalog {
+            zones: HashMap::new(),
+        });
         let health = Health::new(10_000);
 
         assert!(engine.evaluate(&[], &zones, &health).is_none());

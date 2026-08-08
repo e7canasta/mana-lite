@@ -8,6 +8,8 @@ mental de ingenieria y en el flujo del codigo.
 
 El handoff/sprint preparado para integrar profundidad YOLO26 esta en
 [sprints/depth-integration.md](sprints/depth-integration.md).
+El blueprint y contrato operativo completo de depth esta en
+[specs/depth-standard.md](specs/depth-standard.md).
 
 ## Indice
 
@@ -18,6 +20,7 @@ El handoff/sprint preparado para integrar profundidad YOLO26 esta en
 5. [Escenarios de configuracion](#5-escenarios-de-configuracion)
 6. [Depuracion y metricas](#6-depuracion-y-metricas)
 7. [Checklist de puesta en marcha](#7-checklist-de-puesta-en-marcha)
+8. [Depth standard](specs/depth-standard.md)
 
 ---
 

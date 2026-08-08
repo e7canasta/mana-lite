@@ -15,6 +15,7 @@ requires_min_confidence = 0.50
 requires_min_area_ratio = 0.01
 requires_region = "bed"
 requires_region_coverage = 0.30
+same_frame = true
 
 [[rules]]
 model = "face-yolo"

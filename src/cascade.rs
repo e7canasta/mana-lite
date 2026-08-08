@@ -418,6 +418,7 @@ mod tests {
             class: "person".into(),
             confidence: 0.9,
             bbox: [0.0, 0.0, 100.0, 100.0],
+            keypoints: None,
             mask: None,
         }];
         let two_people = [
@@ -425,12 +426,14 @@ mod tests {
                 class: "person".into(),
                 confidence: 0.9,
                 bbox: [0.0, 0.0, 100.0, 100.0],
+                keypoints: None,
                 mask: None,
             },
             crate::infer::Detection {
                 class: "person".into(),
                 confidence: 0.9,
                 bbox: [120.0, 0.0, 220.0, 100.0],
+                keypoints: None,
                 mask: None,
             },
         ];

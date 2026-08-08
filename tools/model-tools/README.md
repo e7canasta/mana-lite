@@ -80,6 +80,11 @@ checkpoints are reported at the end and cause a non-zero exit status. Use
 `--dry-run` to inspect the matrix first, or restrict it with `--tasks`, `--models`,
 and `--sizes`.
 
+The runtime catalog registers the same matrix with keys such as
+`detect-s-320`, `pose-m-640`, `seg-l-320`, and `depth-x-640`. They are disabled
+by default in `config/models.toml`; enable one only after selecting it in the
+cascade and benchmarking its quality and latency.
+
 ## Promotion workflow
 
 Artifacts stay in `artifacts/` until they have been benchmarked and compared with

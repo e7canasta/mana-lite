@@ -1101,6 +1101,30 @@ mod tests {
     }
 
     #[test]
+    fn test_load_fp16_benchmark_matrix() {
+        let catalog = load_model_catalog(Path::new("config/models.toml")).unwrap();
+        let tasks = ["detect", "pose", "seg", "depth"];
+        let sizes = ["s", "m", "l", "x"];
+        let input_sizes = [320, 640];
+
+        for task in tasks {
+            for size in sizes {
+                for imgsz in input_sizes {
+                    let key = format!("{task}-{size}-{imgsz}");
+                    let entry = catalog
+                        .models
+                        .get(&key)
+                        .unwrap_or_else(|| panic!("missing FP16 matrix entry {key}"));
+                    assert!(!entry.enabled, "benchmark entry {key} must stay disabled");
+                    assert!(entry.half, "benchmark entry {key} must be FP16");
+                    assert_eq!(entry.imgsz, Some(imgsz));
+                    assert!(entry.is_valid());
+                }
+            }
+        }
+    }
+
+    #[test]
     fn test_load_zone_catalog() {
         let catalog = load_zone_catalog(Path::new("config/zones.toml")).unwrap();
         assert!(catalog.zones.contains_key("bed"));

@@ -34,9 +34,9 @@ region = [560, 140, 1240, 820]
 # imgsz = 640
 
 [models.pose-standard]
-enabled = false
+enabled = true
 # Baseline FP32 640: models/yolo26n-pose.onnx
-path = "models/yolo26s-pose-fp16-320.onnx"
+path = "tools/model-tools/artifacts/yolo26-fp16/yolo26s-pose-fp16-320.onnx"
 task = "pose"
 confidence = 0.3
 iou = 0.5
@@ -51,12 +51,12 @@ margin = 0.15
 [models.pose-standard.postprocess]
 allow_classes = ["person"]
 min_confidence = 0.1
-min_area_ratio = 0.2
-max_area_ratio = 0.8
+min_area_ratio = 0.01
+max_area_ratio = 1.0
 nms_iou = 0.50
 
 [models.face-yolo]
-enabled = false
+enabled = true
 path = "models/yolov12l-face.onnx"
 task = "detect"
 confidence = 0.10
@@ -82,7 +82,7 @@ nms_iou = 0.05
 max_detections = 1
 
 [models.seg-standard]
-enabled = false
+enabled = true
 # Baseline small FP16 320: models/yolo26s-seg-fp16-320.onnx
 path = "models/yolo26x-seg-fp16-640.onnx"
 task = "detect"
@@ -118,3 +118,296 @@ half = true
 [models.depth-standard.crop]
 type = "static"
 region = [560, 140, 1240, 820]
+
+# ── YOLO26 FP16 benchmark matrix ───────────────────────────
+# 4 tareas × 4 tamaños × 2 resoluciones. Estas entradas permanecen deshabilitadas
+# para que el runtime no cargue toda la matriz; para probar una variante hay que
+# habilitarla y apuntar la rama correspondiente del cascade a su clave.
+
+[models.detect-s-320]
+enabled = false
+path = "tools/model-tools/artifacts/yolo26-fp16/yolo26s-fp16-320.onnx"
+task = "detect"
+confidence = 0.20
+iou = 0.50
+imgsz = 320
+half = true
+
+[models.detect-s-640]
+enabled = false
+path = "tools/model-tools/artifacts/yolo26-fp16/yolo26s-fp16-640.onnx"
+task = "detect"
+confidence = 0.20
+iou = 0.50
+imgsz = 640
+half = true
+
+[models.detect-m-320]
+enabled = false
+path = "tools/model-tools/artifacts/yolo26-fp16/yolo26m-fp16-320.onnx"
+task = "detect"
+confidence = 0.20
+iou = 0.50
+imgsz = 320
+half = true
+
+[models.detect-m-640]
+enabled = false
+path = "tools/model-tools/artifacts/yolo26-fp16/yolo26m-fp16-640.onnx"
+task = "detect"
+confidence = 0.20
+iou = 0.50
+imgsz = 640
+half = true
+
+[models.detect-l-320]
+enabled = false
+path = "tools/model-tools/artifacts/yolo26-fp16/yolo26l-fp16-320.onnx"
+task = "detect"
+confidence = 0.20
+iou = 0.50
+imgsz = 320
+half = true
+
+[models.detect-l-640]
+enabled = false
+path = "tools/model-tools/artifacts/yolo26-fp16/yolo26l-fp16-640.onnx"
+task = "detect"
+confidence = 0.20
+iou = 0.50
+imgsz = 640
+half = true
+
+[models.detect-x-320]
+enabled = false
+path = "tools/model-tools/artifacts/yolo26-fp16/yolo26x-fp16-320.onnx"
+task = "detect"
+confidence = 0.20
+iou = 0.50
+imgsz = 320
+half = true
+
+[models.detect-x-640]
+enabled = false
+path = "tools/model-tools/artifacts/yolo26-fp16/yolo26x-fp16-640.onnx"
+task = "detect"
+confidence = 0.20
+iou = 0.50
+imgsz = 640
+half = true
+
+[models.pose-s-320]
+enabled = false
+path = "tools/model-tools/artifacts/yolo26-fp16/yolo26s-pose-fp16-320.onnx"
+task = "pose"
+confidence = 0.30
+iou = 0.50
+imgsz = 320
+half = true
+
+[models.pose-s-640]
+enabled = false
+path = "tools/model-tools/artifacts/yolo26-fp16/yolo26s-pose-fp16-640.onnx"
+task = "pose"
+confidence = 0.30
+iou = 0.50
+imgsz = 640
+half = true
+
+[models.pose-m-320]
+enabled = false
+path = "tools/model-tools/artifacts/yolo26-fp16/yolo26m-pose-fp16-320.onnx"
+task = "pose"
+confidence = 0.30
+iou = 0.50
+imgsz = 320
+half = true
+
+[models.pose-m-640]
+enabled = false
+path = "tools/model-tools/artifacts/yolo26-fp16/yolo26m-pose-fp16-640.onnx"
+task = "pose"
+confidence = 0.30
+iou = 0.50
+imgsz = 640
+half = true
+
+[models.pose-l-320]
+enabled = false
+path = "tools/model-tools/artifacts/yolo26-fp16/yolo26l-pose-fp16-320.onnx"
+task = "pose"
+confidence = 0.30
+iou = 0.50
+imgsz = 320
+half = true
+
+[models.pose-l-640]
+enabled = false
+path = "tools/model-tools/artifacts/yolo26-fp16/yolo26l-pose-fp16-640.onnx"
+task = "pose"
+confidence = 0.30
+iou = 0.50
+imgsz = 640
+half = true
+
+[models.pose-x-320]
+enabled = false
+path = "tools/model-tools/artifacts/yolo26-fp16/yolo26x-pose-fp16-320.onnx"
+task = "pose"
+confidence = 0.30
+iou = 0.50
+imgsz = 320
+half = true
+
+[models.pose-x-640]
+enabled = false
+path = "tools/model-tools/artifacts/yolo26-fp16/yolo26x-pose-fp16-640.onnx"
+task = "pose"
+confidence = 0.30
+iou = 0.50
+imgsz = 640
+half = true
+
+[models.seg-s-320]
+enabled = false
+path = "tools/model-tools/artifacts/yolo26-fp16/yolo26s-seg-fp16-320.onnx"
+task = "segment"
+confidence = 0.20
+iou = 0.10
+imgsz = 320
+half = true
+
+[models.seg-s-640]
+enabled = false
+path = "tools/model-tools/artifacts/yolo26-fp16/yolo26s-seg-fp16-640.onnx"
+task = "segment"
+confidence = 0.20
+iou = 0.10
+imgsz = 640
+half = true
+
+[models.seg-m-320]
+enabled = false
+path = "tools/model-tools/artifacts/yolo26-fp16/yolo26m-seg-fp16-320.onnx"
+task = "segment"
+confidence = 0.20
+iou = 0.10
+imgsz = 320
+half = true
+
+[models.seg-m-640]
+enabled = false
+path = "tools/model-tools/artifacts/yolo26-fp16/yolo26m-seg-fp16-640.onnx"
+task = "segment"
+confidence = 0.20
+iou = 0.10
+imgsz = 640
+half = true
+
+[models.seg-l-320]
+enabled = false
+path = "tools/model-tools/artifacts/yolo26-fp16/yolo26l-seg-fp16-320.onnx"
+task = "segment"
+confidence = 0.20
+iou = 0.10
+imgsz = 320
+half = true
+
+[models.seg-l-640]
+enabled = false
+path = "tools/model-tools/artifacts/yolo26-fp16/yolo26l-seg-fp16-640.onnx"
+task = "segment"
+confidence = 0.20
+iou = 0.10
+imgsz = 640
+half = true
+
+[models.seg-x-320]
+enabled = false
+path = "tools/model-tools/artifacts/yolo26-fp16/yolo26x-seg-fp16-320.onnx"
+task = "segment"
+confidence = 0.20
+iou = 0.10
+imgsz = 320
+half = true
+
+[models.seg-x-640]
+enabled = false
+path = "tools/model-tools/artifacts/yolo26-fp16/yolo26x-seg-fp16-640.onnx"
+task = "segment"
+confidence = 0.20
+iou = 0.10
+imgsz = 640
+half = true
+
+[models.depth-s-320]
+enabled = false
+path = "tools/model-tools/artifacts/yolo26-fp16/yolo26s-depth-fp16-320.onnx"
+task = "depth"
+confidence = 0.0
+iou = 0.50
+imgsz = 320
+half = true
+
+[models.depth-s-640]
+enabled = false
+path = "tools/model-tools/artifacts/yolo26-fp16/yolo26s-depth-fp16-640.onnx"
+task = "depth"
+confidence = 0.0
+iou = 0.50
+imgsz = 640
+half = true
+
+[models.depth-m-320]
+enabled = false
+path = "tools/model-tools/artifacts/yolo26-fp16/yolo26m-depth-fp16-320.onnx"
+task = "depth"
+confidence = 0.0
+iou = 0.50
+imgsz = 320
+half = true
+
+[models.depth-m-640]
+enabled = false
+path = "tools/model-tools/artifacts/yolo26-fp16/yolo26m-depth-fp16-640.onnx"
+task = "depth"
+confidence = 0.0
+iou = 0.50
+imgsz = 640
+half = true
+
+[models.depth-l-320]
+enabled = false
+path = "tools/model-tools/artifacts/yolo26-fp16/yolo26l-depth-fp16-320.onnx"
+task = "depth"
+confidence = 0.0
+iou = 0.50
+imgsz = 320
+half = true
+
+[models.depth-l-640]
+enabled = false
+path = "tools/model-tools/artifacts/yolo26-fp16/yolo26l-depth-fp16-640.onnx"
+task = "depth"
+confidence = 0.0
+iou = 0.50
+imgsz = 640
+half = true
+
+[models.depth-x-320]
+enabled = false
+path = "tools/model-tools/artifacts/yolo26-fp16/yolo26x-depth-fp16-320.onnx"
+task = "depth"
+confidence = 0.0
+iou = 0.50
+imgsz = 320
+half = true
+
+[models.depth-x-640]
+enabled = false
+path = "tools/model-tools/artifacts/yolo26-fp16/yolo26x-depth-fp16-640.onnx"
+task = "depth"
+confidence = 0.0
+iou = 0.50
+imgsz = 640
+half = true

@@ -71,6 +71,7 @@ pub struct Detection {
     pub class: String,
     pub confidence: f32,
     pub bbox: [f32; 4],
+    pub keypoints: Option<Vec<[f32; 3]>>,
     pub mask: Option<DetectionMask>,
 }
 
@@ -284,6 +285,9 @@ impl InferEngine {
             d.bbox[1] += offset_y;
             d.bbox[2] += offset_x;
             d.bbox[3] += offset_y;
+            if let Some(keypoints) = &mut d.keypoints {
+                translate_keypoints(keypoints, offset_x, offset_y);
+            }
             if let Some(mask) = &mut d.mask {
                 mask.origin = [offset_x as u32, offset_y as u32];
                 let fw = w.max(1) as f32;
@@ -309,10 +313,28 @@ impl InferEngine {
             0
         };
         let before_postprocess = detections.len();
+        let (postprocess_w, postprocess_h) = crop_rect.map_or((w, h), |rect| {
+            (
+                rect.x2.saturating_sub(rect.x1).max(1),
+                rect.y2.saturating_sub(rect.y1).max(1),
+            )
+        });
         detections.retain(|d| {
-            loaded
-                .postprocess
-                .accepts(&d.class, d.confidence, d.bbox, w, h)
+            let acceptance_bbox = crop_rect.map_or(d.bbox, |rect| {
+                [
+                    d.bbox[0] - rect.x1 as f32,
+                    d.bbox[1] - rect.y1 as f32,
+                    d.bbox[2] - rect.x1 as f32,
+                    d.bbox[3] - rect.y1 as f32,
+                ]
+            });
+            loaded.postprocess.accepts(
+                &d.class,
+                d.confidence,
+                acceptance_bbox,
+                postprocess_w,
+                postprocess_h,
+            )
         });
         let postprocess_rejected = roi_rejected + before_postprocess - detections.len();
         let (mut detections, mut post_nms_suppressed) = apply_nms(detections, loaded.nms_iou);
@@ -387,6 +409,28 @@ fn collect_detections(
             }
             let cls = cls_id_raw as usize;
             let bbox = [xyxy[[i, 0]], xyxy[[i, 1]], xyxy[[i, 2]], xyxy[[i, 3]]];
+            let keypoints = r.keypoints.as_ref().and_then(|keypoints| {
+                if i >= keypoints.data.shape()[0] {
+                    return None;
+                }
+                let count = keypoints.data.shape()[1];
+                let dims = keypoints.data.shape()[2];
+                Some(
+                    (0..count)
+                        .map(|k| {
+                            [
+                                keypoints.data[[i, k, 0]],
+                                keypoints.data[[i, k, 1]],
+                                if dims > 2 {
+                                    keypoints.data[[i, k, 2]]
+                                } else {
+                                    1.0
+                                },
+                            ]
+                        })
+                        .collect(),
+                )
+            });
             let mask = masks.as_ref().and_then(|(data, mask_h, mask_w)| {
                 let slice = data.slice(s![i, .., ..]);
                 build_detection_mask(
@@ -407,6 +451,7 @@ fn collect_detections(
                     .unwrap_or_else(|| "unknown".into()),
                 confidence: boxes.conf().get(i).copied().unwrap_or(0.0),
                 bbox,
+                keypoints,
                 mask,
             });
         }
@@ -417,6 +462,13 @@ fn collect_detections(
 
 fn take_depth(results: &mut [Results]) -> Option<DepthMap> {
     results.iter_mut().find_map(|result| result.depth.take())
+}
+
+fn translate_keypoints(keypoints: &mut [[f32; 3]], offset_x: f32, offset_y: f32) {
+    for keypoint in keypoints {
+        keypoint[0] += offset_x;
+        keypoint[1] += offset_y;
+    }
 }
 
 /// Binarize the model output mask for detection `i` and derive the compact
@@ -767,6 +819,7 @@ mod tests {
             class: "person".into(),
             confidence: 0.9,
             bbox: [x1, y1, x2, y2],
+            keypoints: None,
             mask: None,
         }
     }
@@ -1061,6 +1114,13 @@ mod tests {
     }
 
     #[test]
+    fn pose_keypoints_follow_dynamic_crop_offset() {
+        let mut keypoints = [[10.0, 20.0, 0.9], [30.0, 40.0, 0.8]];
+        translate_keypoints(&mut keypoints, 100.0, 50.0);
+        assert_eq!(keypoints, [[110.0, 70.0, 0.9], [130.0, 90.0, 0.8]]);
+    }
+
+    #[test]
     fn model_postprocess_filter_accepts_only_valid_detections() {
         let filters = PostprocessConfig {
             allow_classes: vec!["person".into()],
@@ -1086,6 +1146,7 @@ mod tests {
             class: "person".into(),
             confidence: 0.9,
             bbox: [550.0, 130.0, 1250.0, 830.0],
+            keypoints: None,
             mask: None,
         };
 
@@ -1108,6 +1169,7 @@ mod tests {
             class: "person".into(),
             confidence: 0.9,
             bbox: [0.0, 0.0, 100.0, 100.0],
+            keypoints: None,
             mask: None,
         };
 
@@ -1132,18 +1194,21 @@ mod tests {
                 class: "person".into(),
                 confidence: 0.9,
                 bbox: [0.0, 0.0, 100.0, 100.0],
+                keypoints: None,
                 mask: None,
             },
             Detection {
                 class: "person".into(),
                 confidence: 0.8,
                 bbox: [10.0, 10.0, 90.0, 90.0],
+                keypoints: None,
                 mask: None,
             },
             Detection {
                 class: "wheelchair".into(),
                 confidence: 0.7,
                 bbox: [10.0, 10.0, 90.0, 90.0],
+                keypoints: None,
                 mask: None,
             },
         ];
@@ -1161,12 +1226,14 @@ mod tests {
                 class: "face".into(),
                 confidence: 0.91,
                 bbox: [0.0, 0.0, 100.0, 100.0],
+                keypoints: None,
                 mask: None,
             },
             Detection {
                 class: "face".into(),
                 confidence: 0.72,
                 bbox: [80.0, 0.0, 180.0, 100.0],
+                keypoints: None,
                 mask: None,
             },
         ];
@@ -1183,12 +1250,14 @@ mod tests {
                 class: "face".into(),
                 confidence: 0.91,
                 bbox: [0.0, 0.0, 50.0, 50.0],
+                keypoints: None,
                 mask: None,
             },
             Detection {
                 class: "face".into(),
                 confidence: 0.72,
                 bbox: [100.0, 0.0, 150.0, 50.0],
+                keypoints: None,
                 mask: None,
             },
         ];

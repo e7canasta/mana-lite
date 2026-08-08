@@ -61,6 +61,7 @@ struct App {
     ingest: IngestEngine<RetinaReader>,
     metrics: MetricsEngine,
     health: Health,
+    depth_roi: Option<CropRect>,
     decoder: FrameDecoder,
     snapshots: SnapshotSaver,
     viz: VizBridge,
@@ -218,6 +219,14 @@ impl App {
             0,
         ));
 
+        let depth_roi = model_catalog
+            .models
+            .get("depth-standard")
+            .and_then(|entry| entry.crop.as_ref())
+            .filter(|crop| crop.crop_type == CropType::Static)
+            .and_then(|crop| crop.region)
+            .map(CropRect::from_array);
+
         let infer = InferEngine::from_catalog(&model_catalog)?;
         log::info!("inference: {} model(s) loaded", infer.model_count());
         ultralytics_inference::logging::set_verbose(false);
@@ -342,6 +351,7 @@ impl App {
             ingest,
             metrics,
             health,
+            depth_roi,
             decoder,
             snapshots,
             viz,
@@ -431,6 +441,7 @@ impl App {
     }
 
     fn run_inference(&mut self, fb: &FrameBuffer, config: &AppConfig) {
+        self.viz.clear_depth_context_boxes();
         let requested = self.resolve_models(config);
         let ordered = self.cascade.ordered(&requested);
         let mut pending: Vec<PendingModelOutput> = Vec::new();
@@ -634,12 +645,23 @@ impl App {
             self.viz.log_roi_boxes(model_key, rect);
         }
         self.viz.log_per_frame_class_stats(model_key, &per_class);
-        self.viz.log_model_detections(model_key, &output.detections);
+        self.viz
+            .log_model_detections(model_key, &output.detections, crop_rect);
+        self.viz.log_model_pose(model_key, &output.detections);
+        self.viz
+            .log_depth_context_boxes(model_key, &output.detections, self.depth_roi);
+        self.viz.log_depth_context_polygons(
+            model_key,
+            &output.detections,
+            self.depth_roi,
+            frame_w,
+            frame_h,
+        );
         if output.detections.iter().any(|d| d.mask.is_some()) {
             self.viz
                 .log_model_masks(model_key, &output.detections, frame_w, frame_h);
         }
-        if crop_rect.is_some() {
+        if crop_rect.is_some() && !(model_key == "face-yolo" && output.detections.is_empty()) {
             self.crop_frames_pending.push(CropFrameQueue {
                 model: model_key.to_string(),
                 crop_frame,

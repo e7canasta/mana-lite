@@ -3,9 +3,9 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use ffmpeg_next::util::frame::Video;
-use image::codecs::png::{CompressionType, FilterType, PngEncoder};
 use image::ExtendedColorType;
 use image::ImageEncoder;
+use image::codecs::png::{CompressionType, FilterType, PngEncoder};
 use mana_video::decoder::SoftwareDecoder;
 
 // ── Frame buffer ─────────────────────────────────────────────────
@@ -20,16 +20,23 @@ pub struct FrameBuffer {
 
 pub struct FrameDecoder {
     decoder: SoftwareDecoder,
-    scaler: Option<(ffmpeg_next::software::scaling::Context, u32, u32, ffmpeg_next::format::Pixel)>,
+    scaler: Option<(
+        ffmpeg_next::software::scaling::Context,
+        u32,
+        u32,
+        ffmpeg_next::format::Pixel,
+    )>,
 }
 
 impl FrameDecoder {
     pub fn new() -> std::io::Result<Self> {
-        ffmpeg_next::init()
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+        ffmpeg_next::init().map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
         let decoder = SoftwareDecoder::new(ffmpeg_next::codec::Id::H264)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
-        Ok(Self { decoder, scaler: None })
+        Ok(Self {
+            decoder,
+            scaler: None,
+        })
     }
 
     pub fn decode(&mut self, h264: &[u8]) -> Option<FrameBuffer> {
@@ -55,12 +62,14 @@ impl FrameDecoder {
     }
 }
 
-type CachedScaler = Option<(ffmpeg_next::software::scaling::Context, u32, u32, ffmpeg_next::format::Pixel)>;
+type CachedScaler = Option<(
+    ffmpeg_next::software::scaling::Context,
+    u32,
+    u32,
+    ffmpeg_next::format::Pixel,
+)>;
 
-fn yuv_to_rgb24(
-    frame: &Video,
-    cached: &mut CachedScaler,
-) -> std::io::Result<FrameBuffer> {
+fn yuv_to_rgb24(frame: &Video, cached: &mut CachedScaler) -> std::io::Result<FrameBuffer> {
     let w = frame.width();
     let h = frame.height();
     let fmt = frame.format();
@@ -72,8 +81,12 @@ fn yuv_to_rgb24(
 
     if needs_new {
         let s = ffmpeg_next::software::scaling::Context::get(
-            fmt, w, h,
-            ffmpeg_next::format::Pixel::RGB24, w, h,
+            fmt,
+            w,
+            h,
+            ffmpeg_next::format::Pixel::RGB24,
+            w,
+            h,
             ffmpeg_next::software::scaling::Flags::BILINEAR,
         )?;
         *cached = Some((s, w, h, fmt));
@@ -125,7 +138,11 @@ impl SnapshotSaver {
             log::info!(
                 "snapshot: {}/latest_frame.h264{}",
                 dir.display(),
-                if fb.is_some() { " + .png" } else { " (no png — decode pending)" }
+                if fb.is_some() {
+                    " + .png"
+                } else {
+                    " (no png — decode pending)"
+                }
             );
         }
     }
@@ -194,10 +211,16 @@ mod tests {
         let saver = SnapshotSaver::new(Some(dir.clone()), false).unwrap();
 
         saver.write_h264(&[1, 2, 3]);
-        assert_eq!(fs::read(dir.join("latest_frame.h264")).unwrap(), vec![1, 2, 3]);
+        assert_eq!(
+            fs::read(dir.join("latest_frame.h264")).unwrap(),
+            vec![1, 2, 3]
+        );
 
         saver.write_h264(&[4, 5, 6, 7]);
-        assert_eq!(fs::read(dir.join("latest_frame.h264")).unwrap(), vec![4, 5, 6, 7]);
+        assert_eq!(
+            fs::read(dir.join("latest_frame.h264")).unwrap(),
+            vec![4, 5, 6, 7]
+        );
 
         let _ = fs::remove_dir_all(&dir);
     }
@@ -226,7 +249,10 @@ mod tests {
         saver.save(b"raw_h264_bytes", None);
 
         assert!(dir.join("latest_frame.h264").exists(), "h264 always saved");
-        assert!(!dir.join("latest_frame.png").exists(), "png skipped without fb");
+        assert!(
+            !dir.join("latest_frame.png").exists(),
+            "png skipped without fb"
+        );
 
         let _ = fs::remove_dir_all(&dir);
     }
