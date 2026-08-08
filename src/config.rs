@@ -596,6 +596,19 @@ pub enum FsmGuard {
     },
     #[serde(rename = "data_stale")]
     DataStale,
+    /// Regla depth por nombre (spec depth-standard §9/§15). `triggered`
+    /// invierte la condicion (por defecto exige regla disparada). Sin
+    /// evidencia de la regla en el frame, el guard es falso.
+    #[serde(rename = "depth_rule")]
+    DepthRule {
+        rule: String,
+        #[serde(default = "default_guard_triggered")]
+        triggered: bool,
+    },
+}
+
+fn default_guard_triggered() -> bool {
+    true
 }
 
 fn default_guard_confidence() -> f32 {
@@ -1038,6 +1051,7 @@ pub fn validate_fsm(
     fsm: &FsmCatalog,
     models: &ModelCatalog,
     zones: &Option<ZoneCatalog>,
+    depth_rules: &Option<crate::depth::DepthRules>,
 ) -> Vec<String> {
     let mut errors = Vec::new();
 
@@ -1077,6 +1091,16 @@ pub fn validate_fsm(
                             errors.push(format!(
                                 "transition {}→{} references zone '{}' not found in zone catalog",
                                 t.from, t.to, zone
+                            ));
+                        }
+                    }
+                }
+                FsmGuard::DepthRule { rule, .. } => {
+                    if let Some(rules) = depth_rules {
+                        if !rules.rules.iter().any(|r| r.name == *rule) {
+                            errors.push(format!(
+                                "transition {}→{} references depth rule '{}' not found in depth-rules",
+                                t.from, t.to, rule
                             ));
                         }
                     }
@@ -1184,7 +1208,8 @@ mod tests {
     fn fsm_validation_catches_unknown_model() {
         let models = load_model_catalog(Path::new("config/models.toml")).unwrap();
         let fsm = load_fsm_catalog(Path::new("config/fsm.toml")).unwrap();
-        let errors = validate_fsm(&fsm, &models, &None);
+        let depth_rules = load_depth_rules(Path::new("config/depth-rules.toml")).unwrap();
+        let errors = validate_fsm(&fsm, &models, &None, &Some(depth_rules));
         assert!(
             errors.is_empty(),
             "config/fsm.toml should be valid: {:?}",
@@ -1202,7 +1227,29 @@ mod tests {
             guards: vec![],
             dwell: None,
         });
-        let errors = validate_fsm(&fsm, &models, &None);
+        let errors = validate_fsm(&fsm, &models, &None, &None);
         assert!(!errors.is_empty());
+    }
+
+    #[test]
+    fn fsm_validation_catches_unknown_depth_rule() {
+        let models = load_model_catalog(Path::new("config/models.toml")).unwrap();
+        let fsm = load_fsm_catalog(Path::new("config/fsm.toml")).unwrap();
+        let rules = load_depth_rules(Path::new("config/depth-rules.toml")).unwrap();
+        let mut broken = fsm.clone();
+        broken.fsm.transitions.push(FsmTransition {
+            from: "idle".into(),
+            to: "watching".into(),
+            guards: vec![FsmGuard::DepthRule {
+                rule: "ghost-rule".into(),
+                triggered: true,
+            }],
+            dwell: None,
+        });
+        let errors = validate_fsm(&broken, &models, &None, &Some(rules));
+        assert!(
+            errors.iter().any(|e| e.contains("depth rule 'ghost-rule'")),
+            "expected unknown depth rule error: {errors:?}"
+        );
     }
 }

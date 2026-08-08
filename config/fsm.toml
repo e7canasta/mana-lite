@@ -9,6 +9,10 @@ models = ["detect-fast"]
 label = "Person Present"
 models = ["detect-fast", "pose-standard"]
 
+[fsm.states.bed_approaching]
+label = "APPROACH: Bed Region Close"
+models = ["detect-fast", "pose-standard"]
+
 [fsm.states.bed_alert]
 label = "ALERT: Bed Exit Attempt"
 models = ["detect-fast", "pose-standard"]
@@ -45,6 +49,25 @@ guards = [{ type = "all_zones_vacant", min_duration_ms = 60_000 }]
 from = "watching"
 to = "bed_alert"
 guards = [{ type = "zone_vacated", zone = "bed", min_duration_ms = 3_000 }]
+
+# Watching -> Bed approaching: combines person identity/zone occupancy with
+# the calibrated depth rule. The depth threshold remains provisional until a
+# physical scene reference is measured (config/depth-rules.toml).
+
+[[fsm.transitions]]
+from = "watching"
+to = "bed_approaching"
+guards = [
+    { type = "zone_occupied", zone = "bed", min_confidence = 0.5 },
+    { type = "depth_rule", rule = "bed-approach" }
+]
+
+[[fsm.transitions]]
+from = "bed_approaching"
+to = "watching"
+guards = [
+    { type = "depth_rule", rule = "bed-approach", triggered = false }
+]
 
 # ── Bed Alert → Watching (recovery) ──
 

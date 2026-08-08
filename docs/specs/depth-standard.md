@@ -327,6 +327,8 @@ metric = "median"   # min | median | p10 | p90 | max
 op = "lt"           # lt | gt
 threshold_m = 1.5
 min_valid_ratio = 0.5
+# Opcional, despues de medir una referencia fisica en esta escena:
+# calibration = { reference_model_m = 2.0, reference_scene_m = 1.0 }
 ```
 
 Reglas:
@@ -337,6 +339,17 @@ Reglas:
    `min_valid_ratio` de valores validos.
 3. **No gatean** face, segmentacion ni ningun otro modelo.
 4. Los umbrales son provisionales hasta calibrar por camara y escena.
+5. `calibration` fija la escala con una referencia fisica de un punto:
+   `scene_value = model_value * reference_scene_m / reference_model_m`.
+   Con calibracion, `value` y `threshold_m` son unidades de escena; sin ella
+   permanecen en unidades relativas del modelo.
+6. Una calibracion solo puede afirmarse despues de medir la referencia fisica;
+   la salida sin referencia no debe presentarse como distancia metrica.
+
+El resultado de una regla valida alimenta el snapshot del frame para guards FSM
+`{ type = "depth_rule", rule = "..." }`. El guard no se cumple si la regla no
+tuvo evidencia en el frame. Asi se combinan profundidad y zonas dentro de la
+FSM sin hacer que depth gatee face o segmentacion.
 
 Implementacion: `src/depth.rs` (`DepthRules::validate`, `DepthRegionRule::evaluate`),
 compartida por runtime y probe.
@@ -373,12 +386,12 @@ reconstruir el frame completo.
 
 ### Evento De Regla (`depth_region`)
 
-Cada regla con evidencia valida emite un evento versionado (`version: 1`):
+Cada regla con evidencia valida emite un evento versionado (`version: 2`):
 
 ```json
 {
   "type": "depth_region",
-  "version": 1,
+  "version": 2,
   "frame_id": 123,
   "rule": "bed-approach",
   "region": [560, 140, 1240, 820],
@@ -387,13 +400,19 @@ Cada regla con evidencia valida emite un evento versionado (`version: 1`):
   "threshold_m": 1.5,
   "triggered": true,
   "valid_pixels": 23760,
-  "valid_ratio": 1.0
+  "valid_ratio": 1.0,
+  "calibration": {
+    "reference_model_m": 2.0,
+    "reference_scene_m": 1.0
+  }
 }
 ```
 
 `value` es la metrica de la region (nula si no hay profundidad valida),
-`triggered` indica si la comparacion con el umbral se cumple. La regla no
-depende de detecciones y no activa otros modelos.
+`triggered` indica si la comparacion con el umbral se cumple. `calibration` es
+`null` cuando la regla usa unidades relativas del modelo. La regla no depende
+de detecciones y no activa otros modelos; solo expone evidencia al snapshot
+FSM del mismo frame.
 
 ## 11. Rerun Y Blueprint Visual
 
@@ -503,6 +522,8 @@ el runtime RTSP.
 | DEP-013 | Regla con region fuera del ROI | sin evento `depth_region` para esa regla |
 | DEP-014 | Regla con `min_valid_ratio` no alcanzado | sin evento `depth_region` para esa regla |
 | DEP-015 | Regla duplicada o umbral invalido | bootstrap rechaza `depth-rules.toml` |
+| DEP-016 | Regla calibrada con referencia valida | `value` se escala antes de comparar y el evento conserva la referencia |
+| DEP-017 | FSM usa `depth_rule` sin evidencia | guard falso; con evidencia combina depth + zona y puede transicionar |
 
 ## 14. Promocion Y Rollback
 
@@ -537,9 +558,17 @@ las reglas funcionales sin una solicitud separada.
 
 ### Siguiente Etapa
 
-- Calibrar umbrales por camara y escena (los actuales son provisionales).
-- Persistir perfiles funcionales de regiones.
-- Integrar reglas depth con zonas/FSM sin mezclar identidad y percepcion.
+- Validar referencias fisicas y promover perfiles calibrados por camara/escena.
+- Medir casos clinicos de distancia a borde y aproximacion/alejamiento con video real.
+
+### Implementado En La Etapa 5
+
+- `DepthCalibration` de un punto con escala explicita y trazabilidad en
+  `depth_region` v2; sin referencia, la salida sigue siendo relativa al modelo.
+- Guard FSM `depth_rule`, con snapshot por frame y validacion de nombres contra
+  `config/depth-rules.toml`; ausencia de evidencia no dispara transiciones.
+- Ejemplo `watching -> bed_approaching` combina ocupacion de zona bed y la regla
+  `bed-approach`, sin gatear face ni segmentacion.
 
 ### No Hacer Aun
 

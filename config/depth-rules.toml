@@ -6,7 +6,10 @@
 #
 # ATENCION: los umbrales siguientes son PROVISIONALES y sin calibrar.
 # Calibrar por camara y escena antes de usar una regla en produccion (spec
-# §15). No afirmar distancia metrica calibrada sin referencia fisica.
+# §15). Una calibracion de un punto usa:
+# calibration = { reference_model_m = 2.0, reference_scene_m = 1.0 }
+# y escala value = model * (reference_scene_m / reference_model_m). La
+# referencia debe medirse fisicamente; sin ella no afirmar distancia metrica.
 
 [[rules]]
 name = "bed-approach"
@@ -15,3 +18,5 @@ metric = "median"
 op = "lt"
 threshold_m = 1.5
 min_valid_ratio = 0.5
+# Descomentar despues de medir una referencia fisica en esta escena:
+# calibration = { reference_model_m = 2.0, reference_scene_m = 1.0 }

@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::time::Instant;
 
 use crate::config::{FsmCatalog, FsmGuard};
+use crate::depth::DepthRuleSnapshot;
 use crate::metrics::Health;
 use crate::zones::{ZoneEngine, ZoneEvent};
 
@@ -37,6 +38,7 @@ impl FsmEngine {
         zone_events: &[ZoneEvent],
         zone_engine: &ZoneEngine,
         health: &Health,
+        depth: &DepthRuleSnapshot,
     ) -> Option<FsmTransitionResult> {
         let current = self.catalog.fsm.states.get(&self.current_state);
         if let Some(dwell_min) = current.and_then(|s| s.dwell_min_ms) {
@@ -57,6 +59,7 @@ impl FsmEngine {
                     zone_events,
                     zone_engine,
                     health,
+                    depth,
                 ) {
                     self.current_state.clone_from(&result.to);
                     self.state_entered_at = Instant::now();
@@ -78,6 +81,7 @@ impl FsmEngine {
                 zone_events,
                 zone_engine,
                 health,
+                depth,
             ) {
                 self.current_state.clone_from(&result.to);
                 self.state_entered_at = Instant::now();
@@ -143,6 +147,7 @@ fn try_transition(
     zone_events: &[ZoneEvent],
     zone_engine: &ZoneEngine,
     health: &Health,
+    depth: &DepthRuleSnapshot,
 ) -> Option<FsmTransitionResult> {
     if let Some(ref dwell_str) = t.dwell {
         if let Some(required_ms) = parse_dwell(dwell_str) {
@@ -157,7 +162,7 @@ fn try_transition(
     let all_true = t
         .guards
         .iter()
-        .all(|g| eval_guard(g, zone_events, zone_engine, health));
+        .all(|g| eval_guard(g, zone_events, zone_engine, health, depth));
 
     if !all_true {
         dwell_timers.remove(&trigger_key);
@@ -212,6 +217,7 @@ fn eval_guard(
     zone_events: &[ZoneEvent],
     zone_engine: &ZoneEngine,
     health: &Health,
+    depth: &DepthRuleSnapshot,
 ) -> bool {
     match guard {
         FsmGuard::ZoneOccupied {
@@ -231,6 +237,7 @@ fn eval_guard(
             .any(|ev| matches!(ev, ZoneEvent::Vacated { zone: z, .. } if z == zone)),
         FsmGuard::AllZonesVacant { .. } => zone_engine.all_vacant(),
         FsmGuard::DataStale => health.is_blind(),
+        FsmGuard::DepthRule { rule, triggered } => depth.is_triggered(rule) == Some(*triggered),
     }
 }
 
@@ -299,7 +306,7 @@ mod tests {
         std::thread::sleep(std::time::Duration::from_millis(200));
         let _ = health.evaluate(); // trigger blind
 
-        let result = engine.evaluate(&[], &zones, &health);
+        let result = engine.evaluate(&[], &zones, &health, &DepthRuleSnapshot::default());
         assert!(result.is_some());
         assert_eq!(result.unwrap().to, "blind");
         assert_eq!(engine.current_state, "blind");
@@ -334,7 +341,7 @@ mod tests {
             class: "person".into(),
             confidence: 0.9,
         }];
-        let result = engine.evaluate(&events, &zones, &health);
+        let result = engine.evaluate(&events, &zones, &health, &DepthRuleSnapshot::default());
 
         assert!(result.is_some());
         assert_eq!(result.unwrap().to, "watching");
@@ -370,7 +377,7 @@ mod tests {
             class: "person".into(),
             confidence: 0.6,
         }];
-        let result = engine.evaluate(&events, &zones, &health);
+        let result = engine.evaluate(&events, &zones, &health, &DepthRuleSnapshot::default());
         assert!(result.is_none());
         assert_eq!(engine.current_state, "idle");
     }
@@ -411,7 +418,7 @@ mod tests {
             class: "person".into(),
             confidence: 0.9,
         }];
-        let result = engine.evaluate(&events, &zones, &health);
+        let result = engine.evaluate(&events, &zones, &health, &DepthRuleSnapshot::default());
         assert!(result.is_none());
         assert_eq!(engine.current_state, "idle");
     }
@@ -437,11 +444,19 @@ mod tests {
         std::thread::sleep(std::time::Duration::from_millis(200));
         let _ = health.evaluate();
 
-        assert!(engine.evaluate(&[], &zones, &health).is_none());
+        assert!(
+            engine
+                .evaluate(&[], &zones, &health, &DepthRuleSnapshot::default())
+                .is_none()
+        );
         assert_eq!(engine.current_state, "idle");
 
         std::thread::sleep(std::time::Duration::from_millis(400));
-        assert!(engine.evaluate(&[], &zones, &health).is_some());
+        assert!(
+            engine
+                .evaluate(&[], &zones, &health, &DepthRuleSnapshot::default())
+                .is_some()
+        );
         assert_eq!(engine.current_state, "next");
     }
 
@@ -463,10 +478,129 @@ mod tests {
         });
         let health = Health::new(10_000);
 
-        assert!(engine.evaluate(&[], &zones, &health).is_none());
+        assert!(
+            engine
+                .evaluate(&[], &zones, &health, &DepthRuleSnapshot::default())
+                .is_none()
+        );
 
         std::thread::sleep(std::time::Duration::from_millis(200));
-        assert!(engine.evaluate(&[], &zones, &health).is_some());
+        assert!(
+            engine
+                .evaluate(&[], &zones, &health, &DepthRuleSnapshot::default())
+                .is_some()
+        );
         assert_eq!(engine.current_state, "blind");
+    }
+
+    #[test]
+    fn depth_rule_guard_fires_transition() {
+        let catalog = make_catalog(
+            "idle",
+            vec![("idle", vec![]), ("approaching", vec![])],
+            vec![FsmTransition {
+                from: "idle".into(),
+                to: "approaching".into(),
+                guards: vec![FsmGuard::DepthRule {
+                    rule: "bed-approach".into(),
+                    triggered: true,
+                }],
+                dwell: None,
+            }],
+        );
+        let mut engine = FsmEngine::from_catalog(&catalog);
+        let zones = ZoneEngine::from_catalog(&crate::config::ZoneCatalog {
+            zones: HashMap::new(),
+        });
+        let health = Health::new(10_000);
+
+        let triggered = make_snapshot("bed-approach", true);
+        let result = engine.evaluate(&[], &zones, &health, &triggered);
+        assert!(result.is_some());
+        assert_eq!(engine.current_state, "approaching");
+    }
+
+    #[test]
+    fn depth_rule_guard_requires_evidence() {
+        let catalog = make_catalog(
+            "idle",
+            vec![("idle", vec![]), ("approaching", vec![])],
+            vec![FsmTransition {
+                from: "idle".into(),
+                to: "approaching".into(),
+                guards: vec![FsmGuard::DepthRule {
+                    rule: "bed-approach".into(),
+                    triggered: true,
+                }],
+                dwell: None,
+            }],
+        );
+        let mut engine = FsmEngine::from_catalog(&catalog);
+        let zones = ZoneEngine::from_catalog(&crate::config::ZoneCatalog {
+            zones: HashMap::new(),
+        });
+        let health = Health::new(10_000);
+
+        // Sin evidencia de la regla (mapa, ROI o cobertura) -> guard falso.
+        let empty = DepthRuleSnapshot::default();
+        assert!(engine.evaluate(&[], &zones, &health, &empty).is_none());
+        assert_eq!(engine.current_state, "idle");
+
+        let not_triggered = make_snapshot("bed-approach", false);
+        assert!(
+            engine
+                .evaluate(&[], &zones, &health, &not_triggered)
+                .is_none()
+        );
+        assert_eq!(engine.current_state, "idle");
+    }
+
+    #[test]
+    fn depth_rule_guard_supports_inverted_trigger() {
+        let catalog = make_catalog(
+            "approaching",
+            vec![("approaching", vec![]), ("idle", vec![])],
+            vec![FsmTransition {
+                from: "approaching".into(),
+                to: "idle".into(),
+                guards: vec![FsmGuard::DepthRule {
+                    rule: "bed-approach".into(),
+                    triggered: false,
+                }],
+                dwell: None,
+            }],
+        );
+        let mut engine = FsmEngine::from_catalog(&catalog);
+        let zones = ZoneEngine::from_catalog(&crate::config::ZoneCatalog {
+            zones: HashMap::new(),
+        });
+        let health = Health::new(10_000);
+
+        assert!(
+            engine
+                .evaluate(&[], &zones, &health, &make_snapshot("bed-approach", true))
+                .is_none()
+        );
+        assert!(
+            engine
+                .evaluate(&[], &zones, &health, &make_snapshot("bed-approach", false))
+                .is_some()
+        );
+        assert_eq!(engine.current_state, "idle");
+    }
+
+    fn make_snapshot(rule: &str, triggered: bool) -> DepthRuleSnapshot {
+        use crate::depth::DepthRuleResult;
+        DepthRuleSnapshot::from_results(&[DepthRuleResult {
+            rule: rule.into(),
+            region: [0, 0, 2, 2],
+            metric: crate::depth::DepthMetric::Median,
+            threshold_m: 1.5,
+            value: Some(1.0),
+            triggered,
+            valid_pixels: 4,
+            valid_ratio: Some(1.0),
+            calibration: None,
+        }])
     }
 }

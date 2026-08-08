@@ -58,6 +58,7 @@ pub enum Event {
         triggered: bool,
         valid_pixels: u64,
         valid_ratio: Option<f32>,
+        calibration: Option<crate::depth::DepthCalibration>,
     },
     ConsolidatedDetection {
         frame_id: u64,
@@ -301,6 +302,7 @@ impl Event {
         triggered: bool,
         valid_pixels: u64,
         valid_ratio: Option<f32>,
+        calibration: Option<crate::depth::DepthCalibration>,
     ) -> Self {
         Event::DepthRegion {
             version: crate::depth::DEPTH_REGION_EVENT_VERSION,
@@ -313,6 +315,7 @@ impl Event {
             triggered,
             valid_pixels,
             valid_ratio,
+            calibration,
         }
     }
 

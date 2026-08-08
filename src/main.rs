@@ -66,6 +66,7 @@ struct App {
     health: Health,
     depth_roi: Option<CropRect>,
     depth_rules: depth::DepthRules,
+    depth_rule_snapshot: depth::DepthRuleSnapshot,
     decoder: FrameDecoder,
     snapshots: SnapshotSaver,
     viz: VizBridge,
@@ -200,7 +201,7 @@ impl App {
                 f.fsm.states.len(),
                 f.fsm.transitions.len()
             );
-            let errors = validate_fsm(f, &model_catalog, &zones);
+            let errors = validate_fsm(f, &model_catalog, &zones, &Some(depth_rules.clone()));
             for e in &errors {
                 log::error!("fsm validation: {e}");
             }
@@ -370,6 +371,7 @@ impl App {
             health,
             depth_roi,
             depth_rules,
+            depth_rule_snapshot: depth::DepthRuleSnapshot::default(),
             decoder,
             snapshots,
             viz,
@@ -440,6 +442,8 @@ impl App {
 
         let Some(ref fb) = frame_buf else { return };
 
+        // Depth guards require evidence from this frame, never a stale result.
+        self.depth_rule_snapshot = depth::DepthRuleSnapshot::default();
         if config.pipeline.infer {
             self.run_inference(fb, config);
         }
@@ -745,7 +749,9 @@ impl App {
         let Some(roi) = crop_rect.or(self.depth_roi).map(|rect| rect.to_array()) else {
             return;
         };
-        for result in self.depth_rules.evaluate(depth, roi) {
+        let results = self.depth_rules.evaluate(depth, roi);
+        self.depth_rule_snapshot = depth::DepthRuleSnapshot::from_results(&results);
+        for result in results {
             self.log.emit(Event::depth_region(
                 self.state.frame_number(),
                 &result.rule,
@@ -756,6 +762,7 @@ impl App {
                 result.triggered,
                 result.valid_pixels,
                 result.valid_ratio,
+                result.calibration,
             ));
         }
     }
@@ -808,7 +815,14 @@ impl App {
         };
 
         if config.pipeline.fsm {
-            Self::try_advance_fsm(fsm, &zone_events, zone, &self.health, &mut self.log);
+            Self::try_advance_fsm(
+                fsm,
+                &zone_events,
+                zone,
+                &self.health,
+                &self.depth_rule_snapshot,
+                &mut self.log,
+            );
         }
     }
 
@@ -817,9 +831,10 @@ impl App {
         zone_events: &[zones::ZoneEvent],
         zone: &ZoneEngine,
         health: &Health,
+        depth: &depth::DepthRuleSnapshot,
         log: &mut Logger,
     ) {
-        if let Some(tr) = fsm.evaluate(zone_events, zone, health) {
+        if let Some(tr) = fsm.evaluate(zone_events, zone, health, depth) {
             log.emit(Event::fsm_transition(
                 &tr.from,
                 tr.from_label.as_deref(),
@@ -869,7 +884,8 @@ impl App {
         if let (Some(ref mut fsm), Some(ref zone)) =
             (self.fsm_engine.as_mut(), self.zone_engine.as_ref())
         {
-            Self::try_advance_fsm(fsm, &[], zone, &self.health, &mut self.log);
+            let depth = self.depth_rule_snapshot.clone();
+            Self::try_advance_fsm(fsm, &[], zone, &self.health, &depth, &mut self.log);
         }
     }
 }

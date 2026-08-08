@@ -266,6 +266,7 @@ pub fn write_event(event: &Event, ts: &str, buf: &mut Vec<u8>) {
             triggered,
             valid_pixels,
             valid_ratio,
+            calibration,
         } => {
             buf.extend_from_slice(b"\"type\":\"depth_region\",\"version\":");
             write_u64(*version as u64, buf);
@@ -298,6 +299,16 @@ pub fn write_event(event: &Event, ts: &str, buf: &mut Vec<u8>) {
             buf.extend_from_slice(b",\"valid_ratio\":");
             if let Some(value) = valid_ratio {
                 write_f32(*value, buf);
+            } else {
+                buf.extend_from_slice(b"null");
+            }
+            buf.extend_from_slice(b",\"calibration\":");
+            if let Some(calibration) = calibration {
+                buf.extend_from_slice(b"{\"reference_model_m\":");
+                write_f32(calibration.reference_model_m, buf);
+                buf.extend_from_slice(b",\"reference_scene_m\":");
+                write_f32(calibration.reference_scene_m, buf);
+                buf.push(b'}');
             } else {
                 buf.extend_from_slice(b"null");
             }

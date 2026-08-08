@@ -243,10 +243,11 @@ mod tests {
             true,
             462400,
             Some(1.0),
+            None,
         ));
         let out = collect(&mut log);
         assert!(out.contains("\"type\":\"depth_region\""));
-        assert!(out.contains("\"version\":1"));
+        assert!(out.contains("\"version\":2"));
         assert!(out.contains("\"rule\":\"bed-approach\""));
         assert!(out.contains("\"region\":[560,140,1240,820]"));
         assert!(out.contains("\"metric\":\"median\""));
@@ -270,11 +271,35 @@ mod tests {
             false,
             0,
             None,
+            None,
         ));
         let out = collect(&mut log);
         assert!(out.contains("\"value\":null"));
         assert!(out.contains("\"triggered\":false"));
         assert!(out.contains("\"valid_ratio\":null"));
+    }
+
+    #[test]
+    fn depth_region_event_serializes_calibration() {
+        let mut log = test_logger();
+        log.emit(Event::depth_region(
+            7,
+            "bed-approach",
+            [560, 140, 1240, 820],
+            "median",
+            Some(1.0),
+            1.2,
+            true,
+            462400,
+            Some(1.0),
+            Some(crate::depth::DepthCalibration {
+                reference_model_m: 2.0,
+                reference_scene_m: 1.0,
+            }),
+        ));
+        let out = collect(&mut log);
+        assert!(out.contains("\"version\":2"));
+        assert!(out.contains("\"calibration\":{\"reference_model_m\":2,\"reference_scene_m\":1}"));
     }
 
     #[test]

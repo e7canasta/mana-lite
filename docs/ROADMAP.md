@@ -62,7 +62,7 @@ Priorizadas. Cada etapa cambia un solo contrato o habilita un solo rol.
 - `DepthRegionRule` sin dependencia de modelos: consulta una región global
   contra el mapa local del ROI y compara métrica robusta (`min|median|p10|
   p90|max`, `lt|gt`) con umbral (spec §9).
-- Emite evento versionado `depth_region` (`version: 1`) con evidencia
+- Emite evento versionado `depth_region` (`version: 2`) con evidencia
   numérica; `min_valid_ratio` suprime reglas sin cobertura.
 - Config en `config/depth-rules.toml`, validada en bootstrap (nombres únicos,
   umbrales finitos, regiones válidas).
@@ -81,11 +81,16 @@ Priorizadas. Cada etapa cambia un solo contrato o habilita un solo rol.
   parcial, frecuencias distintas entre modelos) — requiere cámara RTSP.
 - Recién después: zones/FSM end-to-end y eventos `entity` como salida estándar.
 
-### 5. Reglas clínicas con calibración
+### 5. Reglas clínicas con calibración ✅ (2026-08-08)
 
-- Combinar depth + zonas + FSM en casos de uso clínicos (distancia a borde,
-  aproximación/alejamiento) con calibración de escena, sin afirmar distancia
-  métrica sin referencia física.
+- `DepthCalibration` de un punto escala valores de reglas con una referencia
+  física explícita; sin referencia, la evidencia se mantiene relativa al
+  modelo y no se afirma distancia métrica.
+- Guard FSM `depth_rule` consume un snapshot por frame y se valida contra el
+  catálogo de reglas depth.
+- Configuración de ejemplo: `watching -> bed_approaching` combina zona `bed`
+  ocupada y `bed-approach`; la validación con video clínico real y referencias
+  físicas sigue pendiente de cámara.
 
 ---
 
@@ -117,6 +122,7 @@ Priorizadas. Cada etapa cambia un solo contrato o habilita un solo rol.
 | [022](adrs/022-mask-overlay-rgba.md) | Overlay de máscaras RGBA en Rerun | ✅ Accepted |
 | [023](adrs/023-face-roi-may-exceed-parent.md) | ROI hijo face puede exceder el ROI padre | ✅ Accepted |
 | [024](adrs/024-depth-roi-local.md) | Depth: mapa local al ROI, sin full-frame | ✅ Accepted |
+| [025](adrs/025-depth-clinical-rules.md) | Depth clinical rules and scene calibration | ✅ Accepted |
 
 ## Deuda Técnica
 

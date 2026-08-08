@@ -1,8 +1,31 @@
+use std::collections::HashMap;
+
 use serde::Deserialize;
 use ultralytics_inference::DepthMap;
 
 /// Version del esquema del evento `depth_region`.
-pub const DEPTH_REGION_EVENT_VERSION: u8 = 1;
+pub const DEPTH_REGION_EVENT_VERSION: u8 = 2;
+
+/// Calibracion de escena para una regla (spec §9/§15).
+///
+/// El modelo depth emite metros relativos al entrenamiento; sin referencia
+/// fisica no se debe afirmar distancia metrica calibrada. Una referencia de
+/// un solo punto fija la escala: `scene = model * (reference_scene_m /
+/// reference_model_m)`. Sin calibracion la escala es identidad (unidades del
+/// modelo).
+#[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
+pub struct DepthCalibration {
+    pub reference_model_m: f32,
+    pub reference_scene_m: f32,
+}
+
+impl DepthCalibration {
+    /// Factor de escala `scene/model`; identidad si no hay calibracion.
+    #[must_use]
+    pub fn scale(self) -> f32 {
+        self.reference_scene_m / self.reference_model_m
+    }
+}
 
 /// Metrica de `DepthRoiStats` sobre la que evalúa una regla.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -39,7 +62,8 @@ pub enum DepthOp {
 ///
 /// Consulta una region global contra el mapa local del ROI y compara una
 /// metrica robusta con un umbral, emitiendo evidencia numerica sin gatear
-/// otros modelos.
+/// otros modelos. Con `calibration` opcional, `threshold_m` y `value` se
+/// expresan en unidades de escena (escala por referencia de un punto).
 #[derive(Debug, Clone, Deserialize)]
 pub struct DepthRegionRule {
     pub name: String,
@@ -51,6 +75,8 @@ pub struct DepthRegionRule {
     pub threshold_m: f32,
     #[serde(default = "default_min_valid_ratio")]
     pub min_valid_ratio: f32,
+    #[serde(default)]
+    pub calibration: Option<DepthCalibration>,
 }
 
 const fn default_metric() -> DepthMetric {
@@ -76,6 +102,7 @@ pub struct DepthRuleResult {
     pub triggered: bool,
     pub valid_pixels: u64,
     pub valid_ratio: Option<f32>,
+    pub calibration: Option<DepthCalibration>,
 }
 
 impl DepthRegionRule {
@@ -95,11 +122,26 @@ impl DepthRegionRule {
         if !(0.0..=1.0).contains(&self.min_valid_ratio) {
             return Some(format!("rule '{}' has invalid min_valid_ratio", self.name));
         }
+        if let Some(cal) = self.calibration
+            && (!cal.reference_model_m.is_finite()
+                || !cal.reference_scene_m.is_finite()
+                || cal.reference_model_m <= 0.0
+                || cal.reference_scene_m <= 0.0
+                || !cal.scale().is_finite())
+        {
+            return Some(format!(
+                "rule '{}' has invalid calibration references (must be finite and > 0)",
+                self.name
+            ));
+        }
         None
     }
 
     /// Evalua la regla contra el mapa local al `roi`. `None` si la region no
     /// interseca el ROI o no alcanza `min_valid_ratio` de valores validos.
+    ///
+    /// Con calibracion, `value` y `threshold_m` estan en unidades de escena;
+    /// sin calibracion, en unidades del modelo (identidad).
     #[must_use]
     pub fn evaluate(&self, depth: &DepthMap, roi: [u32; 4]) -> Option<DepthRuleResult> {
         let stats = region_stats(depth, roi, self.region)?;
@@ -109,7 +151,10 @@ impl DepthRegionRule {
         {
             return None;
         }
-        let value = self.metric.value(&stats);
+        let value = self
+            .metric
+            .value(&stats)
+            .map(|raw| self.calibration.map_or(raw, |cal| raw * cal.scale()));
         let triggered = value.is_some_and(|value| match self.op {
             DepthOp::Lt => value < self.threshold_m,
             DepthOp::Gt => value > self.threshold_m,
@@ -123,6 +168,7 @@ impl DepthRegionRule {
             triggered,
             valid_pixels: stats.valid_pixels,
             valid_ratio: stats.valid_ratio,
+            calibration: self.calibration,
         })
     }
 }
@@ -160,6 +206,35 @@ impl DepthRules {
             .iter()
             .filter_map(|rule| rule.evaluate(depth, roi))
             .collect()
+    }
+}
+
+/// Estado de las reglas depth del ultimo frame con evidencia, para que los
+/// guards FSM consulten sin mezclar percepcion con identidad (spec §15).
+///
+/// `is_triggered` devuelve `None` cuando la regla no tuvo evidencia en el
+/// frame (sin mapa, region fuera del ROI o cobertura insuficiente); los
+/// guards deben tratar `None` como falso (no hay evidencia -> no se afirma).
+#[derive(Debug, Clone, Default)]
+pub struct DepthRuleSnapshot {
+    results: HashMap<String, DepthRuleResult>,
+}
+
+impl DepthRuleSnapshot {
+    #[must_use]
+    pub fn from_results(results: &[DepthRuleResult]) -> Self {
+        Self {
+            results: results
+                .iter()
+                .map(|result| (result.rule.clone(), result.clone()))
+                .collect(),
+        }
+    }
+
+    /// `Some(true/false)` si la regla tuvo evidencia; `None` sin evidencia.
+    #[must_use]
+    pub fn is_triggered(&self, rule: &str) -> Option<bool> {
+        self.results.get(rule).map(|result| result.triggered)
     }
 }
 
@@ -270,6 +345,7 @@ mod tests {
     use super::*;
     use ndarray::Array2;
 
+    #[allow(clippy::cast_possible_truncation)]
     fn map_from_rows(rows: &[&[f32]]) -> DepthMap {
         let data = Array2::from_shape_fn((rows.len(), rows[0].len()), |(y, x)| rows[y][x]);
         DepthMap::new(data, (rows.len() as u32, rows[0].len() as u32))
@@ -349,6 +425,7 @@ mod tests {
             op,
             threshold_m: threshold,
             min_valid_ratio: 0.0,
+            calibration: None,
         }
     }
 
@@ -454,5 +531,81 @@ mod tests {
         assert_eq!(rules.rules[0].name, "bed-approach");
         assert_eq!(rules.rules[0].metric, DepthMetric::Median);
         assert_eq!(rules.rules[0].op, DepthOp::Lt);
+    }
+
+    #[test]
+    fn calibration_scales_value_before_comparison() {
+        let roi = [0, 0, 2, 2];
+        let map = map_from_rows(&[&[2.0, 2.0], &[2.0, 2.0]]);
+        let mut depth_rule = rule(
+            "calibrated",
+            [0, 0, 2, 2],
+            DepthMetric::Median,
+            DepthOp::Lt,
+            1.2,
+        );
+        // Modelo lee 2.0 m; la escena mide 1.0 m -> k = 0.5 -> value = 1.0.
+        depth_rule.calibration = Some(DepthCalibration {
+            reference_model_m: 2.0,
+            reference_scene_m: 1.0,
+        });
+        let result = depth_rule.evaluate(&map, roi).expect("rule evaluated");
+        assert_eq!(result.value, Some(1.0));
+        assert!(result.triggered);
+        assert_eq!(
+            result.calibration,
+            Some(DepthCalibration {
+                reference_model_m: 2.0,
+                reference_scene_m: 1.0
+            })
+        );
+    }
+
+    #[test]
+    fn calibration_rejects_invalid_references() {
+        let mut depth_rule = rule("cal", [0, 0, 1, 1], DepthMetric::Median, DepthOp::Lt, 1.0);
+        depth_rule.calibration = Some(DepthCalibration {
+            reference_model_m: 0.0,
+            reference_scene_m: 1.0,
+        });
+        assert!(depth_rule.validate().is_some());
+        depth_rule.calibration = Some(DepthCalibration {
+            reference_model_m: 2.0,
+            reference_scene_m: -1.0,
+        });
+        assert!(depth_rule.validate().is_some());
+    }
+
+    #[test]
+    fn snapshot_tracks_triggered_and_evidence() {
+        let results = vec![
+            DepthRuleResult {
+                rule: "close".into(),
+                region: [0, 0, 2, 2],
+                metric: DepthMetric::Median,
+                threshold_m: 2.0,
+                value: Some(1.0),
+                triggered: true,
+                valid_pixels: 4,
+                valid_ratio: Some(1.0),
+                calibration: None,
+            },
+            DepthRuleResult {
+                rule: "far".into(),
+                region: [0, 0, 2, 2],
+                metric: DepthMetric::Median,
+                threshold_m: 2.0,
+                value: Some(3.0),
+                triggered: false,
+                valid_pixels: 4,
+                valid_ratio: Some(1.0),
+                calibration: None,
+            },
+        ];
+        let snapshot = DepthRuleSnapshot::from_results(&results);
+        assert_eq!(snapshot.is_triggered("close"), Some(true));
+        assert_eq!(snapshot.is_triggered("far"), Some(false));
+        assert_eq!(snapshot.is_triggered("no-evidence"), None);
+        assert!(DepthRuleSnapshot::default().is_triggered("close").is_none());
     }
 }
