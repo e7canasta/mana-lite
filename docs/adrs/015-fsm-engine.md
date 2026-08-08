@@ -1,6 +1,6 @@
 # ADR-015: FSM Engine — Guard Evaluation, Dwell Timers, Ton/Tof
 
-**Status:** Draft
+**Status:** Accepted
 **Date:** 2026-08-04
 
 ## Context

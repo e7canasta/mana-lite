@@ -1,6 +1,6 @@
 # ADR-016: Cascade Scheduler — Interval-Based Model Gating
 
-**Status:** Draft
+**Status:** Accepted
 **Date:** 2026-08-04
 
 > Estado de implementación: esta iteración implementa dependencias, filtros

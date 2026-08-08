@@ -4,9 +4,7 @@
 
 ```
 mana-lite --config mana.toml
-mana-lite --config mana.toml --model detect-fast
-mana-lite --config mana.toml --output-dir ./logs
-mana-lite replay --mp4 recording.mp4 --config mana.toml
+mana-lite mana.toml
 mana-lite --version
 ```
 
@@ -28,7 +26,6 @@ default_model = "detect-fast"
 cascade_file = "config/cascade.toml"
 zones_file = "config/zones.toml"
 fsm_file = "config/fsm.toml"
-disabled_tasks = []
 
 [tracking]
 min_hits = 2
@@ -64,6 +61,7 @@ iou = 0.5
 max_det = 100
 imgsz = 320
 device = "cpu"
+half = false            # FP16 inference
 
 [models.detect-fast.postprocess]
 allow_classes = ["person", "wheelchair"]
@@ -71,48 +69,35 @@ min_confidence = 0.25
 min_area_ratio = 0.001
 max_area_ratio = 1.0
 
-[models.detect-large]
-path = "models/yolo26x.onnx"
-task = "detect"
-confidence = 0.3
-iou = 0.5
-imgsz = 640
-
-[models.detect-v2]
-path = "models/yolo27n.onnx"
-task = "detect"
-confidence = 0.3
-imgsz = 320
-
 [models.pose-standard]
-path = "models/yolo26n-pose.onnx"
+path = "tools/model-tools/artifacts/yolo26-fp16/yolo26s-pose-fp16-320.onnx"
 task = "pose"
 confidence = 0.3
 iou = 0.5
-imgsz = 640
-
-[models.face-v11]
-path = "models/yolov11n-face.onnx"
-task = "detect"
-confidence = 0.6
 imgsz = 320
+half = true
 
-[models.face-v12]
-path = "models/yolov12n-face.onnx"
+[models.face-yolo]
+path = "models/yolov12l-face.onnx"
 task = "detect"
-confidence = 0.5
-imgsz = 320
+confidence = 0.1
 
-[models.segment-large]
-path = "models/yolo26x-seg.onnx"
-task = "segment"
-confidence = 0.3
-imgsz = 640
+[models.seg-standard]
+path = "models/yolo26x-seg-fp16-640.onnx"
+task = "detect"
+confidence = 0.2
+half = true
 
-[models.depth-small]
-path = "models/depth-anything-small.onnx"
+[models.depth-standard]
+path = "tools/model-tools/artifacts/yolo26-fp16/yolo26x-depth-fp16-320.onnx"
 task = "depth"
-imgsz = 384
+confidence = 0.0
+imgsz = 320
+half = true
+
+[models.depth-standard.crop]
+type = "static"
+region = [560, 140, 1240, 820]
 ```
 
 **Fields:**
@@ -129,12 +114,16 @@ imgsz = 384
 | `device` | string | no | `"cpu"` | `cpu`, `rocm:0`, `openvino` |
 | `half` | bool | no | false | FP16 inference |
 | `rect` | bool | no | true | Rectangular (aspect-preserving) preprocessing |
+| `polygon_simplify` | float | no | 0.75 | Simplificación RDP de polígonos de máscara |
 | `postprocess.allow_classes` | string[] | no | `[]` | Classes published by this model; empty allows all |
 | `postprocess.min_confidence` | float | no | 0.0 | Additional output confidence threshold |
 | `postprocess.min_area_ratio` | float | no | 0.0 | Minimum bbox area relative to original frame |
 | `postprocess.max_area_ratio` | float | no | 1.0 | Maximum bbox area relative to original frame |
 | `postprocess.min_component_area_ratio` | float | no | 0.0 | Minimum connected mask-component area relative to the detection mask crop |
 | `postprocess.mask_threshold` | float | no | 0.5 | Foreground threshold for segmentation masks |
+| `postprocess.nms_iou` | float | no | 0.5 | Explicit mana-lite NMS IoU after class/conf/area filters |
+| `postprocess.max_detections` | int | no | — | Keep top-K by confidence after NMS |
+| `crop` | table | no | — | Static or `largest_class` crop (ver [roi.md](roi.md)) |
 
 The model-level `confidence` and `iou` values configure the inference engine
 and its intra-model NMS. Each model can define its own postprocessing filters;
@@ -182,6 +171,9 @@ label = "Bed A"
 model = "detect-fast"
 
 [[rules]]
+model = "depth-standard"          # root independiente: sin requires
+
+[[rules]]
 model = "pose-standard"
 requires = "detect-fast"
 requires_class = "person"
@@ -189,15 +181,29 @@ requires_min_confidence = 0.50
 requires_min_area_ratio = 0.01
 requires_region = "bed"
 requires_region_coverage = 0.30
+same_frame = true
+
+[[rules]]
+model = "face-yolo"
+requires = "detect-fast"
+requires_class = "person"
+requires_exact_count = 1
+same_frame = true
 ```
 
-`requires_region_coverage` is the intersection area between the track bbox and
-the semantic region divided by the track bbox area. It is not IoU, so a small
-person inside a larger region can still satisfy the rule.
+`same_frame = true` usa las detecciones del parent del mismo frame, sin
+necesitar un track confirmado. `requires_region_coverage` es la intersección
+entre el bbox del track y la región semántica dividida por el área del bbox;
+no es IoU, así una persona pequeña dentro de una región grande puede cumplir
+la regla.
 
-The model crop remains independent from semantic eligibility. For example,
-`pose-standard.crop` can crop to the confirmed person's bbox after the cascade
-has accepted that track.
+El modelo crop permanece independiente de la elegibilidad semántica. Por
+ejemplo, `pose-standard.crop` puede recortar al bbox de la persona aceptada
+después de que el cascade aprobó ese track.
+
+`depth-standard` es un root deliberado: corre aunque no haya detecciones, no
+entra en consolidación, tracking, zonas ni FSM. Su validación es
+`valid_pixels`, no detecciones (ver [specs/depth-standard.md](specs/depth-standard.md)).
 
 ### Detection Consolidation
 
@@ -226,6 +232,22 @@ when they describe the same subject in one frame.
 
 Independent freshness and TTL for secondary evidence are planned for the
 tracking stage. They are not part of the current stateless consolidation mode.
+
+### Depth (ROI-local)
+
+`depth-standard` es un root de cascada con crop estático. El contrato espacial:
+
+- `DepthMap.data` tiene la geometría **local** del ROI (ej. 680x680), nunca
+  un buffer full-frame (ADR-024).
+- `crop_rect`/`roi` es el origen global. Para consultar una región global
+  `[gx1,gy1,gx2,gy2]`: intersectar con el ROI y restar el origen — la fórmula
+  está en [specs/depth-standard.md](specs/depth-standard.md) §7.
+- Un valor es válido si es finito y mayor que cero. Las reglas no deben
+  basarse en un solo pixel.
+- El evento JSONL `type=depth` emite estadísticas (valid_pixels, min/max), no
+  la matriz completa. `map_space = "roi"` está planificado (spec §10).
+- Depth no crea personas, no asigna identidad, no entra en consolidación y no
+  debe disparar otros modelos.
 
 ### `zones.toml` — Spatial Zones
 
@@ -333,7 +355,6 @@ guards = [
 | `zone_vacated` | `zone`, `min_duration_ms` | Zone was occupied and has been empty for duration |
 | `all_zones_vacant` | `min_duration_ms` | All defined zones empty for duration |
 | `data_stale` | — | No frame received within `health.data_stale_ms` |
-| `model_not_loaded` | `model` | Referenced model failed to load |
 
 **Dwell semantics:** A guard must evaluate true consistently for `min_duration_ms` before the transition fires. Counter resets on any false evaluation.
 
@@ -364,6 +385,7 @@ Every line is a complete JSON object terminated by `\n`. All timestamps are ISO 
 {"t":"2026-08-03T20:15:00.450Z","type":"frame","f":1,"kf":true,"dec_ms":18}
 {"t":"2026-08-03T20:15:00.520Z","type":"detection","f":1,"m":"detect-fast","inf_ms":52,"pipeline_ms":58,"post_rejected":2,"post_nms_suppressed":1,"det":[{"c":"person","conf":0.87,"bb":[100,200,300,500]}]}
 {"t":"2026-08-03T20:15:00.525Z","type":"consolidated_detection","frame_id":1,"class":"person","confidence":0.87,"bbox":[100,200,300,500],"primary_model":"detect-fast","sources":["detect-fast"]}
+{"t":"2026-08-03T20:15:00.528Z","type":"depth","frame_id":1,"model":"depth-standard","infer_ms":268,"pipeline_ms":281,"width":680,"height":680,"valid_pixels":462400,"min_depth_m":2.19,"max_depth_m":5.16}
 {"t":"2026-08-03T20:15:00.530Z","type":"entity","track_id":7,"class":"person","bbox":[100,200,300,500],"sources":["detect-fast"]}
 {"t":"2026-08-03T20:15:00.535Z","type":"zone","z":"bed","e":"occupied","cls":"person","f":1}
 {"t":"2026-08-03T20:15:00.540Z","type":"fsm","from":"idle","to":"watching","tr":"bed_occupied","dwell":0}

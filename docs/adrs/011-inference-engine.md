@@ -1,6 +1,6 @@
 # ADR-011: Inference Engine Design
 
-**Status:** Draft
+**Status:** Accepted
 **Date:** 2026-08-04
 
 ## Context

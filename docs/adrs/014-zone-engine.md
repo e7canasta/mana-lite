@@ -1,6 +1,6 @@
 # ADR-014: Zone Engine — Spatial Evaluation with Hysteresis
 
-**Status:** Draft
+**Status:** Accepted
 **Date:** 2026-08-04
 
 ## Context

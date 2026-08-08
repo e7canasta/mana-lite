@@ -145,6 +145,15 @@ ingest: 1.0 Hz — 5 keyframes processed (7 seen) in 5s | decode 14ms avg | cycl
   inferencia estaba ocupada.
 - `timeouts`: polling sin un frame nuevo; no implica por si solo fallo RTSP.
 
+### Flags De Alarma De Ingesta
+
+| Flag | Significado | Que hacer |
+|------|-------------|-----------|
+| `dup:N` | Mismos bytes H264 repetidos | Camara congelada enviando el mismo frame. Verificar fuente. |
+| `reconnect:N` | Reconexion RTSP | Se cayo la camara o red. `reconnect>2` en 5s es grave. |
+| `ssrc:N` | Cambio de SSRC | El stream se reinicio (camara reboot, cambio de encoder). |
+| `rtp:N` | Errores de paquete RTP | Red con perdida de paquetes. Si >10 reconsiderar TCP. |
+
 ### Inferencia
 
 ```text
@@ -252,12 +261,21 @@ pose-standard: 0.0 Hz | 0 calls | ... | skip
 Para probar pose primero se debe habilitar tracking o configurar una ejecucion
 root independiente que no dependa de un track.
 
-### Cascada Experimental De Face
+### Cascada Actual
 
-La configuracion actual incluye `face-yolo` usando
-`models/yolov12n-face.onnx`. No es un modelo root: tiene `same_frame = true` y
-solo se ejecuta cuando `detect-fast` produce exactamente una deteccion de
-clase `person` en el mismo frame.
+La topologia de `config/cascade.toml` es:
+
+```text
+detect-fast (root)
+  ├── pose-standard   same_frame, requiere person en region bed
+  ├── face-yolo       same_frame, requiere exactamente 1 person
+  └── seg-standard    same_frame, requiere person
+depth-standard (root independiente, ROI fijo [560,140 1240,820])
+```
+
+`face-yolo` usa `models/yolov12l-face.onnx`. No es un modelo root: tiene
+`same_frame = true` y solo se ejecuta cuando `detect-fast` produce
+exactamente una deteccion de clase `person` en el mismo frame.
 
 La deteccion `face` tiene un contrato distinto al de una deteccion primaria:
 
@@ -268,6 +286,13 @@ La deteccion `face` tiene un contrato distinto al de una deteccion primaria:
   primaria; queda disponible en el evento `detection` crudo para diagnostico.
 - Con cero o dos personas, `face-yolo` aparece como `skip` y no consume
   inferencia.
+- El crop de face es un cuadrado centrado en la mitad superior de la persona
+  que puede sobresalir del ROI fijo de `detect-fast` (comportamiento oficial,
+  ADR-023).
+
+`depth-standard` no entra en consolidacion, tracking, zonas ni FSM; su
+validacion es `valid_pixels` y estadisticas, no detecciones. Blueprint
+completo en [specs/depth-standard.md](specs/depth-standard.md).
 
 ## 5. JSONL
 
@@ -287,6 +312,7 @@ Eventos relevantes:
 |---|---|---|
 | `detection` | No | Diagnostico por modelo |
 | `consolidated_detection` | No | Resultado stateless del frame |
+| `depth` | No | Estadisticas del mapa depth (valid_pixels, min/max) |
 | `entity` | Si, `track_id` | Tracking temporal |
 | `meta` con `track_*` | Si el tracking esta activo | Lifecycle del tracker |
 
@@ -322,6 +348,13 @@ inferencia. Los paths de datos los escribe `src/viz.rs`:
 | `/world/camera/entities` | Boxes con identidad | Solo `track = true` |
 | `/world/camera/rois/<model>` | Crop ROI | Si `roi_rects = true` |
 | `/world/camera/crops/<model>/bgr` | Imagen del crop | Si `crop_frames = true` |
+| `/world/camera/crops/<model>/detections` | Detecciones en espacio local del crop | Si `boxes = true` |
+| `/world/camera/crops/<model>/mask` | Overlay de mascara del crop | Si `masks = true` |
+| `/world/camera/detections/<model>` | Detecciones crudas en espacio frame | Si `boxes = true` |
+| `/world/camera/detections/<model>/pose` | Keypoints + skeleton de pose | Si `boxes = true` |
+| `/world/camera/masks/<model>` | Overlay de mascaras | Si `masks = true` |
+| `/world/camera/crops/depth-standard/depth/{disparity,annotated}` | Mapa depth local | Si `crop_frames`/`frames` habilitan el flujo |
+| `/world/camera/depth/depth-standard/stats/valid_pixels` | Pixeles validos del mapa | Con depth activo |
 | `/ingest/keyframes/source_hz` | Hz estimado de keyframes vistos | Si `keyframe_rate = true` |
 | `/ingest/keyframes/processed_hz` | Hz de keyframes procesados | Si `keyframe_rate = true` |
 | `/ingest/keyframes/dropped` | Keyframes reemplazados por uno mas nuevo | Si `keyframe_drops = true` |

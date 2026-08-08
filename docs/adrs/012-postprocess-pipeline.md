@@ -1,6 +1,6 @@
 # ADR-012: Postprocess Pipeline & Unified Detection Type
 
-**Status:** Draft
+**Status:** Accepted
 **Date:** 2026-08-04
 
 ## Context

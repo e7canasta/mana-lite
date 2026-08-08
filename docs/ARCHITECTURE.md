@@ -1,6 +1,6 @@
 # Mana Lite Architecture
 
-*Última actualización: 2026-08-06 — consolidación de detecciones implementada*
+*Última actualización: 2026-08-07 — depth ROI-local + pose + máscaras*
 
 ---
 
@@ -60,18 +60,19 @@
       ▼                                               └──────────────┘
  FrameBuffer { w, h, rgb }
       │
-      ├─▶ PreprocessCache  ──▶ imgsz=320 tensor  ──▶ detect-fast
-      │   (cache por imgsz)  ──▶ imgsz=640 tensor  ──▶ pose-standard
-      │                                                   face-v12
-      │
-      ▼
- InferEngine (ORT session pool)
-      │  Vec<ort::Value> (tensores crudos)
-      ▼
-  InferEngine (NMS + filtros por modelo + escala)
-       │  Vec<Detection> { class, conf, bbox, keypoints, mask }
-       │
+       ├─▶ PreprocessCache  ──▶ imgsz=320 tensor  ──▶ detect-fast
+       │   (cache por imgsz)  ──▶ imgsz=640 tensor  ──▶ pose-standard
+       │                                                   face-v12
+       │                        ──▶ crop depth 680x680 ───▶ depth-standard
        ▼
+  InferEngine (ORT session pool)
+       │  Vec<ort::Value> (tensores crudos)
+       ▼
+   InferEngine (NMS + filtros por modelo + escala)
+        │  Vec<Detection> { class, conf, bbox, keypoints, mask }
+        │  DepthMap { data: Array2<f32> }  (local al ROI, ADR-024)
+        │
+        ▼
   DetectionConsolidator (fusion + enrichment, stateless)
        │  ConsolidatedObservation { bbox canónico, evidence, components }
        ▼
@@ -184,11 +185,20 @@ declarar `requires` + `requires_class` en `config/cascade.toml`. La topología a
 
 ```
 detect-fast (root, siempre corre)
-  ├── pose-standard   (requires=detect-fast, requires_class=person, crop largest_class)
-  ├── face-yolo       (requires=detect-fast, requires_class=person, crop square upper-body)
+  ├── pose-standard   (requires=detect-fast, requires_class=person, same_frame,
+  │                    crop largest_class)
+  ├── face-yolo       (requires=detect-fast, requires_class=person,
+  │                    requires_exact_count=1, same_frame, crop square upper-body;
+  │                    el ROI hijo puede exceder el ROI del padre — ADR-023)
   └── seg-standard    (requires=detect-fast, requires_class=person, same_frame=true,
-                        crop largest_class margin 0.15)   ← rama v0.3 (ADR-019..022)
+                       crop largest_class margin 0.15)   ← rama v0.3 (ADR-019..022)
+depth-standard (root independiente, sin requires, crop static [560,140 1240,820])
+                       ← rama v0.4 (ADR-024, docs/specs/depth-standard.md)
 ```
+
+`depth-standard` corre siempre sobre su ROI fijo, produce un mapa local 680x680,
+publica estadísticas y no entra en consolidación, tracking, zonas ni FSM.
+
 
 Ramas hermanas: `seg-standard` no depende de pose/face y viceversa — si una falla,
 las otras siguen. Tres formas de excluir un modelo del ciclo:

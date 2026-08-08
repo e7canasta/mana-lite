@@ -96,6 +96,7 @@ per_model_lines = true
 
 [metrics.text.flags]
 ingest_pframes = true
+ingest_dup = true
 ingest_keyframe_drops = true
 ingest_timeouts = true
 ingest_reconnect = true
@@ -190,6 +191,18 @@ frame, sin memoria ni `track_id`:
  "primary_model":"detect-fast","sources":["detect-fast"]}
 ```
 
+**Depth event** — estadisticas del mapa depth local al ROI, nunca la matriz:
+
+```json
+{"type":"depth","frame_id":10,"model":"depth-standard","infer_ms":268,
+ "pipeline_ms":281,"width":680,"height":680,"valid_pixels":462400,
+ "min_depth_m":2.19,"max_depth_m":5.16}
+```
+
+`valid_pixels` valida depth: `0 dets` en detect no significa depth invalido.
+El espacio es local al ROI; para convertir una region global a local ver
+[specs/depth-standard.md](specs/depth-standard.md) §7.
+
 ### Consultas forenses con jq
 
 ```bash
@@ -272,6 +285,21 @@ Solo las entidades que Rerun recibe actualmente:
     bgr                              ─ imagen RGB (Image archetype)
     observations/{i}                  ─ Boxes2D consolidadas, frame-locales
     entities/{track_id}               ─ Boxes2D trackeadas, solo con tracking
+    detections/{model}                ─ boxes crudas por modelo (space frame)
+    detections/{model}/pose/{i}/{keypoints,skeleton}  ─ pose (boxes=true)
+    masks/{model}                     ─ overlay RGBA de mascaras
+    rois/{model}                      ─ rectangulo del crop aplicado
+    crops/{model}/bgr                 ─ imagen exacta que recibio el modelo
+    crops/{model}/detections          ─ boxes en espacio local del crop
+    crops/{model}/mask                ─ overlay de mascara del crop
+    crops/depth-standard/depth/
+      disparity                       ─ mapa depth colorizado (RGBA, local)
+      annotated                       ─ overlay sobre el crop
+      context/{detect-fast,face-yolo} ─ boxes de personas en espacio depth
+      context/seg-standard/polygon    ─ poligonos de mascara en espacio depth
+    depth/depth-standard/stats/
+      valid_pixels                    ─ pixeles finitos > 0
+      min_depth_m, max_depth_m        ─ rango del mapa
 
 /ingest/
   normal/
@@ -296,6 +324,15 @@ Solo las entidades que Rerun recibe actualmente:
       area/{class}/min               ─ area minima de esta clase este frame
       area/{class}/max               ─ area maxima de esta clase este frame
 ```
+
+Notas:
+
+- Los boxes de contexto depth (`detect-fast`, `face-yolo`, `seg-standard`) se
+  traducen y recortan al espacio del ROI depth antes de publicarse
+  (`bbox_in_roi` / `polygon_in_roi` en `src/viz.rs`). Ver
+  [specs/depth-standard.md](specs/depth-standard.md) §11.
+- El mapa depth se publica local al ROI (680x680), nunca expandido a
+  full-frame (ADR-024). El alpha fuera del ROI es `0`.
 
 ---
 
@@ -397,14 +434,19 @@ detection_events = true
 
 ## 8. Referencia rapida de toggles
 
-### viz.toml (13 toggles)
+### viz.toml (19 toggles)
 
 | Toggle | Default | Rerun entity |
 |---|---|---|
 | `frames` | true | `/world/camera/bgr` |
-| `boxes` | true | `/world/camera/observations/{i}`; entities si tracking |
+| `boxes` | true | `/world/camera/observations/{i}`; detections, pose y crops con boxes |
 | `crop_frames` | true | `/world/camera/crops/{model}/bgr` |
+| `masks` | true | `/world/camera/masks/{model}` |
+| `mask_debug` | false | imagenes de depuracion de mascara |
+| `mask_polygons` | true | poligonos de contorno + context depth |
 | `roi_rects` | true | `/world/camera/rois/{model}/roi/0` |
+| `depth` | true | `/world/camera/crops/depth-standard/depth/*` |
+| `depth_stats` | true | `/world/camera/depth/depth-standard/stats/*` |
 | `infer_latency` | true | `/pipeline/infer/{model}/{latency_us,pipeline_us}` |
 | `infer_rate` | true | `/pipeline/infer/{model}/hz` |
 | `decode_latency` | true | `/pipeline/decode/latency_us` |
@@ -414,6 +456,11 @@ detection_events = true
 | `keyframe_gap` | true | `/ingest/normal/gap_ms` |
 | `keyframe_rate` | true | `/ingest/keyframes/{source_hz,processed_hz}` |
 | `keyframe_drops` | true | `/ingest/keyframes/dropped` |
+
+Los toggles de clase y keyframe tienen default `true` en el schema, pero el
+archivo operativo puede apagarlos; los valores de `config/viz.toml` gobiernan
+la instancia. `depth_viz` selecciona la vista del mapa (`"disparity"` |
+`"metric"`).
 
 ### metrics.toml — text
 
@@ -436,6 +483,7 @@ Los eventos opcionales se filtran antes de entrar al buffer JSONL. Los eventos
 | `frame_events` | true | frame_id, decode_ms, **gap_ms** |
 | `detection_events` | true | model, infer_ms, pipeline_ms, det[], **per_class{}** |
 | `consolidated_detection` | `jsonl_level=debug` | frame, class, bbox, primary_model, sources |
+| `depth_events` | true | model, infer_ms, pipeline_ms, width, height, valid_pixels, min/max_depth_m |
 | `zone_events` | true | zone, event, class, confidence |
 | `fsm_events` | true | from, to, trigger, dwell_ms |
 | `metrics_event` | true | window aggregates (5s) |

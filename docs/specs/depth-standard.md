@@ -455,7 +455,7 @@ las reglas funcionales sin una solicitud separada.
 
 | Tema | Fuente |
 |---|---|
-| Integracion depth | `docs/sprints/depth-integration.md` |
+| Integracion depth | `docs/adrs/024-depth-roi-local.md` |
 | Catalogo y cascada | `config/models.toml`, `config/cascade.toml` |
 | Pipeline | `src/infer.rs`, `src/main.rs` |
 | Metricas y JSONL | `src/metrics.rs`, `src/logger/event.rs` |

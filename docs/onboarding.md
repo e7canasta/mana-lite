@@ -6,10 +6,9 @@ Para operacion diaria, configuracion administrativa, lectura de logs y Rerun,
 ver [operations.md](operations.md). Este documento se concentra en el modelo
 mental de ingenieria y en el flujo del codigo.
 
-El handoff/sprint preparado para integrar profundidad YOLO26 esta en
-[sprints/depth-integration.md](sprints/depth-integration.md).
 El blueprint y contrato operativo completo de depth esta en
-[specs/depth-standard.md](specs/depth-standard.md).
+[specs/depth-standard.md](specs/depth-standard.md). Las especificaciones de
+mascaras y de la rama de segmentacion estan en [specs/](specs/).
 
 ## Indice
 
@@ -42,12 +41,18 @@ mana-lite/
 │   ├── yolo26n.onnx        # detect-fast: rapido, buena confianza
 │   ├── yolo26s.onnx        # detect-v2: balance velocidad/precision
 │   ├── yolo26x.onnx        # detect-large: lento, maxima precision
-│   └── yolo26n-pose.onnx   # pose-standard: keypoints, requiere persona
+│   ├── yolo26n-pose.onnx   # pose-standard: keypoints, requiere persona
+│   ├── yolov12l-face.onnx  # face-yolo: face sobre persona (same_frame)
+│   └── yolo26*-seg/depth   # seg-standard / depth-standard (FP16)
 ├── docs/
 │   ├── onboarding.md       # este archivo
 │   ├── operations.md       # guia para administradores y operadores
-│   ├── observability.md   # guia completa de metricas + viz + rerun
-│   └── roi.md             # crops por modelo — static y dinamico
+│   ├── observability.md    # guia completa de metricas + viz + rerun
+│   ├── roi.md              # crops por modelo — static y dinamico
+│   ├── ARCHITECTURE.md     # modulos, ownership y ciclo principal
+│   ├── ROADMAP.md          # estado actual y proximas etapas
+│   ├── adrs/               # decisiones de diseno (001-024)
+│   └── specs/              # blueprints y contratos (depth, seg, mask)
 └── logs/
     └── mana-YYYYMMDDTHH.jsonl
 ```
@@ -73,38 +78,48 @@ Cada archivo TOML tiene una responsabilidad unica:
 RTSP Stream
     │
     ▼
-┌──────────┐    ┌──────────┐    ┌──────────┐    ┌──────────┐
-│  Ingest  │───▶│  Decode  │───▶│  Infer   │───▶│Consolid. │
-│ (retina) │    │ H264→RGB │    │ (cascade)│    │(stateless)│
-└──────────┘    └──────────┘    └──────────┘    └──────────┘
-                                       │
-                                       ▼
-                                  ┌──────────┐       tracking=true
-                                  │  Track   │──────────────┐
-                                  │ optional │              │
-                                  └──────────┘              ▼
-                                  ┌──────────┐    ┌──────────┐
-                                  │  Zones   │◀───│  Entity  │
-                                  │ (optional)    │ (tracked) │
-                                  └──────────┘    └──────────┘
-                                      │
-                                      ▼
-                                 ┌──────────┐
-                                 │   FSM    │
-                                 │ (states) │
-                                 └──────────┘
-                                      │
-                                      ▼
-                              modelos activos
-                              para el proximo frame
+┌──────────┐    ┌──────────┐    ┌────────────────────────┐
+│  Ingest  │───▶│  Decode  │───▶│  Infer (cascade)       │
+│ (retina) │    │ H264→RGB │    │  detect-fast (root)    │
+└──────────┘    └──────────┘    │   ├── pose-standard    │
+                                │   ├── face-yolo        │
+                                │   └── seg-standard     │
+                                │  depth-standard (root) │ ← ROI local
+                                └────────────────────────┘
+                                        │
+                                        ▼
+                                   ┌──────────┐
+                                   │Consolid. │  (depth NO entra)
+                                   │(stateless)│
+                                   └──────────┘
+                                        │
+                                        ▼
+                                   ┌──────────┐       tracking=true
+                                   │  Track   │──────────────┐
+                                   │ optional │              │
+                                   └──────────┘              ▼
+                                   ┌──────────┐    ┌──────────┐
+                                   │  Zones   │◀───│  Entity  │
+                                   │ (optional)    │ (tracked) │
+                                   └──────────┘    └──────────┘
+                                        │
+                                        ▼
+                                   ┌──────────┐
+                                   │   FSM    │
+                                   │ (states) │
+                                   └──────────┘
+                                        │
+                                        ▼
+                                modelos activos
+                                para el proximo frame
 ```
 
 **Ciclo principal** (~cada keyframe, tipicamente 0.3-1.0 Hz):
 
 1. **Ingest**: Retina recibe frames RTP/RTSP. Filtra solo keyframes (IDR). Deduplica.
 2. **Decode**: H.264 → RGB via ffmpeg (swscaler). ~10-15ms tipico.
-3. **Infer**: El cascade decide que modelos correr y en que orden. Cada modelo recibe el frame RGB.
-4. **Consolidate**: `Detection` de cada modelo se fusiona, sin memoria temporal, en `ConsolidatedObservation` y sus evidencias se asocian por relación espacial.
+3. **Infer**: El cascade decide que modelos correr y en que orden. Cada modelo recibe el frame RGB (o su crop). `depth-standard` recibe el crop de su ROI fijo y produce el mapa depth local; no depende de detecciones.
+4. **Consolidate**: `Detection` de cada modelo se fusiona, sin memoria temporal, en `ConsolidatedObservation` y sus evidencias se asocian por relación espacial. Depth no entra aquí.
 5. **Publish observations**: JSONL emite `consolidated_detection` y Rerun dibuja `/world/camera/observations`.
 6. **Track (opcional)**: con `pipeline.track = true`, el tracker asigna IDs y mantiene `TrackedEntity` entre frames.
 7. **Zones/FSM (opcionales)**: consumen tracks y solo son útiles cuando el tracking está habilitado.
@@ -173,45 +188,43 @@ model = "detect-fast"           # root: siempre corre
 
 ### Orden de ejecucion
 
-Dado el cascade actual:
+Dado el cascade actual (`config/cascade.toml`):
 
 ```toml
 [[rules]]
 model = "detect-fast"           # root 1
 
 [[rules]]
-model = "detect-v2"             # root 2
-
-[[rules]]
-model = "detect-large"          # root 3
+model = "depth-standard"        # root 2 — independiente
 
 [[rules]]
 model = "pose-standard"
 requires = "detect-fast"
 requires_class = "person"       # child
-requires_min_confidence = 0.5
+requires_min_confidence = 0.50
 requires_min_area_ratio = 0.01
 requires_region = "bed"
 requires_region_coverage = 0.30
+same_frame = true
+
+[[rules]]
+model = "face-yolo"
+requires = "detect-fast"
+requires_class = "person"
+requires_exact_count = 1        # solo exactamente una persona
+same_frame = true
+
+[[rules]]
+model = "seg-standard"
+requires = "detect-fast"
+requires_class = "person"
+same_frame = true
 ```
 
-Si los 4 modelos estan activos (sin FSM), `ordered()` produce:
-
-```
-Frame N:
-  1. detect-fast   → detecta "person" (conf 0.82), "chair" (conf 0.65)
-  2. detect-v2     → detecta "person" (conf 0.74)
-  3. detect-large  → detecta "person" (conf 0.91), "bed" (conf 0.70)
-  4. pose-standard → CORRE: detect-fast vio "person" ✓
-
-Frame N+1:
-  1. detect-fast   → detecta "chair" (conf 0.71)    ← no "person"
-  2. detect-v2     → detecta "chair" (conf 0.55)
-  3. detect-large  → detecta "bed" (conf 0.77)
-  4. pose-standard → SKIP: detect-fast no vio "person" ✗
-```
-
-Los roots corren primero. Los children solo si el parent detecto la clase requerida.
+Los roots corren primero, en orden declarado. Los children solo si el parent
+detecto la clase requerida. `depth-standard` es un root deliberado: corre
+aunque no haya detecciones, no entra en consolidación y sus estadisticas se
+validan con `valid_pixels`, no con detecciones.
 
 ### Consolidación de entidades
 
@@ -233,20 +246,24 @@ no se fusiona con la persona automáticamente: son entidades distintas.
 Si un modelo secundario corre a menor frecuencia, su evidencia conserva un
 `last_seen` propio y puede incorporarse al mismo track cuando llegue.
 
-### Deshabilitar modelos por task
+### Deshabilitar modelos (flag `enabled`)
 
-En `mana.toml`, el campo `disabled_tasks` filtra modelos completos:
+En `models.toml`, el campo `enabled` filtra un modelo completo antes del
+cascade (ADR-020):
 
 ```toml
-[inference]
-disabled_tasks = ["pose", "segment"]   # desactiva todos los modelos con task="pose" o "segment"
+[models.seg-standard]
+enabled = false     # desactiva la rama: no se carga ni se infiere
 ```
 
-Esto filtra ANTES de pasar al cascade. Si deshabilitas `"pose"`, `pose-standard` nunca aparece en `ordered()` — el cascade ni lo evalua.
+Esto filtra ANTES de pasar al cascade. Si deshabilitas `seg-standard`, nunca
+aparece en `ordered()` — el cascade ni lo evalua. Es el mecanismo actual para
+controlar coste por rama (sustituye al viejo `disabled_tasks`, que operaba por
+`task` y podía apagar la raíz).
 
-El filtro por task es complementario al cascade:
+El toggle es complementario al cascade:
 - **Cascade**: controla dependencias (pose necesita persona detectada)
-- **disabled_tasks**: control de capacidad (si el HW no da, desactivas familias enteras)
+- **`enabled`**: control de capacidad (si el HW no da, desactivas ramas enteras)
 
 ---
 
@@ -528,29 +545,39 @@ Pipeline: 1 modelo, 1 inferencia por frame. Sin overhead de cascade ni FSM.
 
 ### Escenario B: Cascade multi-modelo (actual)
 
-Detecta presencia y activa pose solo cuando hay personas.
+Detecta presencia y activa hijos solo cuando hay personas; depth corre como
+root independiente.
 
 ```toml
-# models.toml — 4 modelos activos
+# models.toml — ramas activas del baseline
 [models.detect-fast]
 path = "models/yolo26n.onnx"
 task = "detect"
 confidence = 0.5
 
-[models.detect-v2]
-path = "models/yolo26s.onnx"
-task = "detect"
-confidence = 0.3
-
-[models.detect-large]
-path = "models/yolo26x.onnx"
-task = "detect"
-confidence = 0.3
-
 [models.pose-standard]
-path = "models/yolo26n-pose.onnx"
+path = "tools/model-tools/artifacts/yolo26-fp16/yolo26s-pose-fp16-320.onnx"
 task = "pose"
 confidence = 0.3
+half = true
+
+[models.face-yolo]
+path = "models/yolov12l-face.onnx"
+task = "detect"
+confidence = 0.10
+
+[models.seg-standard]
+path = "models/yolo26x-seg-fp16-640.onnx"
+task = "detect"
+half = true
+
+[models.depth-standard]
+path = "tools/model-tools/artifacts/yolo26-fp16/yolo26x-depth-fp16-320.onnx"
+task = "depth"
+half = true
+[models.depth-standard.crop]
+type = "static"
+region = [560, 140, 1240, 820]
 ```
 
 ```toml
@@ -559,25 +586,34 @@ confidence = 0.3
 model = "detect-fast"
 
 [[rules]]
-model = "detect-v2"
-
-[[rules]]
-model = "detect-large"
+model = "depth-standard"          # root independiente, ROI fijo
 
 [[rules]]
 model = "pose-standard"
 requires = "detect-fast"
 requires_class = "person"
+same_frame = true
+
+[[rules]]
+model = "face-yolo"
+requires = "detect-fast"
+requires_class = "person"
+requires_exact_count = 1
+same_frame = true
+
+[[rules]]
+model = "seg-standard"
+requires = "detect-fast"
+requires_class = "person"
+same_frame = true
 ```
 
 **Que esperar en Rerun:**
 
 ```
-/infer/detect_fast/active/hz    = 0.5     ← siempre corre
-/infer/detect_v2/active/hz      = 0.5     ← siempre corre
-/infer/detect_large/active/hz   = 0.5     ← siempre corre (mas lento)
-/infer/pose_standard/active/hz  = 0.3     ← solo cuando hay persona
-/infer/pose_standard/warnings/skips = 1   ← frames sin persona
+/world/camera/detections/detect-fast   ← boxes de persona
+/world/camera/crops/depth-standard/depth/disparity ← mapa depth del ROI
+/world/camera/detections/face-yolo     ← solo con exactamente 1 persona
 ```
 
 **En logs cada 5s:**
@@ -586,7 +622,9 @@ requires_class = "person"
 infer:  2.0 Hz — 10 calls in 5s | 52ms avg | 4 dets
 ```
 
-Con persona: 5 frames × 4 modelos = 20 calls, pero cascade skipea pose cuando no hay persona → ~10-15 calls efectivas.
+`face-yolo` y `seg-standard` solo consumen inferencia cuando `detect-fast`
+detecta `person` en el mismo frame (`same_frame = true`). `depth-standard`
+siempre corre sobre su ROI.
 
 ---
 
@@ -645,9 +683,6 @@ Desactivar modelos pesados, bajar resolucion, subir intervalo de reporte.
 
 ```toml
 # mana.toml
-[inference]
-disabled_tasks = ["pose"]       # no necesitas keypoints en edge
-
 [health]
 report_interval_s = 30          # reportar cada 30s en vez de 5s
 data_stale_ms = 30000           # tolerar 30s sin frame
@@ -666,6 +701,9 @@ path = "models/yolo26n.onnx"
 task = "detect"
 confidence = 0.4               # mas permisivo
 imgsz = 416                    # resolucion reducida → mas rapido
+
+[models.pose-standard]
+enabled = false                # no necesitas keypoints en edge (ADR-020)
 ```
 
 ---
@@ -758,7 +796,7 @@ jq -c 'select(.type=="detection") | {f: .frame_id, m: .model, c: [.det[]?.class]
 - [ ] `mana.toml` > `[inference]` > `cascade_file` apunta al archivo correcto
 - [ ] Los modelos ONNX existen en `models/` y son compatibles con tu build de `ultralytics-inference`
 - [ ] `[pipeline]` > `fsm = false` para empezar simple; activar FSM despues
-- [ ] `disabled_tasks = []` o solo las tasks que queres desactivar
+- [ ] `enabled = false` en las ramas que no necesitas (pose, face, seg, depth)
 - [ ] Rerun viewer corriendo en `127.0.0.1:9876` si `[viz] enabled = true`
 - [ ] `[health] report_interval_s = 5` para desarrollo; subir a 30-60 en produccion
 - [ ] Primer run: mira el log por 30s. Confirma que `ingest: X.X Hz` coincide con el GOP de la camara
