@@ -1,5 +1,6 @@
 mod cascade;
 mod config;
+mod depth;
 mod detection;
 mod error;
 mod fsm;
@@ -16,8 +17,8 @@ mod zones;
 use cascade::{CascadeRule, CascadeScheduler, CascadeTarget};
 use config::{
     AppConfig, CropType, MetricsLogConfig, RerunBlueprintConfig, load_app_config, load_config,
-    load_fsm_catalog, load_metrics_log, load_model_catalog, load_rerun_blueprint, load_viz_data,
-    load_zone_catalog, validate_fsm,
+    load_depth_rules, load_fsm_catalog, load_metrics_log, load_model_catalog, load_rerun_blueprint,
+    load_viz_data, load_zone_catalog, validate_fsm,
 };
 use detection::{ConsolidatedObservation, DetectionConsolidator, DetectionRole, ModelDetections};
 use error::{ConfigError, ManaError, Result};
@@ -62,6 +63,7 @@ struct App {
     metrics: MetricsEngine,
     health: Health,
     depth_roi: Option<CropRect>,
+    depth_rules: depth::DepthRules,
     decoder: FrameDecoder,
     snapshots: SnapshotSaver,
     viz: VizBridge,
@@ -138,6 +140,19 @@ impl App {
             .as_ref()
             .map(|p| load_fsm_catalog(p))
             .transpose()?;
+        let depth_rules = config
+            .inference
+            .depth_rules_file
+            .as_ref()
+            .map(|p| load_depth_rules(p))
+            .transpose()?
+            .unwrap_or_default();
+        let depth_rule_errors = depth_rules.validate();
+        if !depth_rule_errors.is_empty() {
+            return Err(ManaError::Config(ConfigError::ValidationError(
+                depth_rule_errors.join("; "),
+            )));
+        }
 
         let viz_data = config
             .viz_file
@@ -352,6 +367,7 @@ impl App {
             metrics,
             health,
             depth_roi,
+            depth_rules,
             decoder,
             snapshots,
             viz,
@@ -717,6 +733,29 @@ impl App {
             min_depth_m,
             max_depth_m,
         ));
+        self.evaluate_depth_rules(output, crop_rect);
+    }
+
+    fn evaluate_depth_rules(&mut self, output: &InferenceResult, crop_rect: Option<CropRect>) {
+        let Some(depth) = output.depth.as_ref() else {
+            return;
+        };
+        let Some(roi) = crop_rect.or(self.depth_roi).map(|rect| rect.to_array()) else {
+            return;
+        };
+        for result in self.depth_rules.evaluate(depth, roi) {
+            self.log.emit(Event::depth_region(
+                self.state.frame_number(),
+                &result.rule,
+                result.region,
+                &format!("{:?}", result.metric).to_lowercase(),
+                result.value,
+                result.threshold_m,
+                result.triggered,
+                result.valid_pixels,
+                result.valid_ratio,
+            ));
+        }
     }
 
     fn run_tracking(&mut self, observations: &[ConsolidatedObservation]) {
@@ -851,7 +890,7 @@ fn depth_summary(
     let Some(depth) = depth else {
         return (fallback_width, fallback_height, 0, None, None);
     };
-    let (width, height) = mana_lite::depth::map_dims(depth);
+    let (width, height) = crate::depth::map_dims(depth);
     let mut valid_pixels = 0;
     let mut min_depth = f32::INFINITY;
     let mut max_depth: f32 = 0.0;

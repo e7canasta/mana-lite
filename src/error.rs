@@ -44,6 +44,9 @@ pub enum ConfigError {
 
     #[error("validation: {field}: {msg}")]
     InvalidValue { field: String, msg: String },
+
+    #[error("validation: {0}")]
+    ValidationError(String),
 }
 
 pub type Result<T> = std::result::Result<T, ManaError>;

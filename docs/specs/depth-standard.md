@@ -309,9 +309,37 @@ same_frame = true
 model = "depth-standard"
 ```
 
-Depth puede ejecutarse aunque no haya detecciones. En el futuro, una regla
-funcional puede consumir `DepthRegionStats`, pero no debe convertir esa
-informacion en una dependencia de modelo.
+Depth puede ejecutarse aunque no haya detecciones. Las reglas funcionales
+(`DepthRegionRule`) consumen `DepthRegionStats` y emiten evidencia numerica;
+no se convierten en una dependencia de modelo.
+
+### Reglas Funcionales (`DepthRegionRule`)
+
+Definidas en `config/depth-rules.toml` (referenciado desde `mana.toml`
+`[inference].depth_rules_file`). Una regla consulta una region global contra
+el mapa local del ROI y compara una metrica robusta con un umbral:
+
+```toml
+[[rules]]
+name = "bed-approach"
+region = [560, 140, 1240, 820]
+metric = "median"   # min | median | p10 | p90 | max
+op = "lt"           # lt | gt
+threshold_m = 1.5
+min_valid_ratio = 0.5
+```
+
+Reglas:
+
+1. Emiten el evento `depth_region` con evidencia numerica (`value`,
+   `threshold_m`, `triggered`, `valid_pixels`, `valid_ratio`).
+2. No evaluan si la region no interseca el ROI o no alcanza
+   `min_valid_ratio` de valores validos.
+3. **No gatean** face, segmentacion ni ningun otro modelo.
+4. Los umbrales son provisionales hasta calibrar por camara y escena.
+
+Implementacion: `src/depth.rs` (`DepthRules::validate`, `DepthRegionRule::evaluate`),
+compartida por runtime y probe.
 
 ## 10. Publicacion JSONL
 
@@ -342,6 +370,30 @@ vuelve a ser las coordenadas globales del mapa (inferidas del crop del
 modelo) y `map_width`/`map_height` las dimensiones del mapa local. Con eso se
 puede transformar cualquier coordenada global a local (interseccion §7) sin
 reconstruir el frame completo.
+
+### Evento De Regla (`depth_region`)
+
+Cada regla con evidencia valida emite un evento versionado (`version: 1`):
+
+```json
+{
+  "type": "depth_region",
+  "version": 1,
+  "frame_id": 123,
+  "rule": "bed-approach",
+  "region": [560, 140, 1240, 820],
+  "metric": "median",
+  "value": 1.42,
+  "threshold_m": 1.5,
+  "triggered": true,
+  "valid_pixels": 23760,
+  "valid_ratio": 1.0
+}
+```
+
+`value` es la metrica de la region (nula si no hay profundidad valida),
+`triggered` indica si la comparacion con el umbral se cumple. La regla no
+depende de detecciones y no activa otros modelos.
 
 ## 11. Rerun Y Blueprint Visual
 
@@ -447,6 +499,10 @@ el runtime RTSP.
 | DEP-009 | Rerun activo | BGR visible, overlay parcial y exterior transparente |
 | DEP-010 | Rerun apagado | no se materializa buffer visual innecesario |
 | DEP-011 | Modelo cambia de tamano | path, `imgsz`, digest y latencia registrados |
+| DEP-012 | Regla con region dentro del ROI | evento `depth_region` con `value` y `triggered` correctos |
+| DEP-013 | Regla con region fuera del ROI | sin evento `depth_region` para esa regla |
+| DEP-014 | Regla con `min_valid_ratio` no alcanzado | sin evento `depth_region` para esa regla |
+| DEP-015 | Regla duplicada o umbral invalido | bootstrap rechaza `depth-rules.toml` |
 
 ## 14. Promocion Y Rollback
 
@@ -478,12 +534,10 @@ las reglas funcionales sin una solicitud separada.
 ### Proximo Incremento
 
 - Evitar materializar full-frame depth incluso en el adaptador Rerun.
-- Reglas `DepthRegionRule` funcionales (§9).
 
 ### Siguiente Etapa
 
-- Definir `DepthRegionRule` sin dependencia de modelos.
-- Calibrar umbrales por camara y escena.
+- Calibrar umbrales por camara y escena (los actuales son provisionales).
 - Persistir perfiles funcionales de regiones.
 - Integrar reglas depth con zonas/FSM sin mezclar identidad y percepcion.
 

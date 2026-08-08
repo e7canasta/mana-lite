@@ -209,6 +209,8 @@ pub struct InferenceConfig {
     #[serde(default)]
     pub fsm_file: Option<PathBuf>,
     #[serde(default)]
+    pub depth_rules_file: Option<PathBuf>,
+    #[serde(default)]
     pub disabled_tasks: Vec<String>,
 }
 
@@ -1027,6 +1029,7 @@ macro_rules! config_loader {
 config_loader!(load_model_catalog -> ModelCatalog);
 config_loader!(load_zone_catalog -> ZoneCatalog);
 config_loader!(load_fsm_catalog -> FsmCatalog);
+config_loader!(load_depth_rules -> crate::depth::DepthRules);
 config_loader!(load_viz_data -> VizDataConfig);
 config_loader!(load_metrics_log -> MetricsLogConfig);
 config_loader!(load_rerun_blueprint -> RerunBlueprintConfig);

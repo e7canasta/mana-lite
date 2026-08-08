@@ -47,6 +47,18 @@ pub enum Event {
         min_depth_m: Option<f32>,
         max_depth_m: Option<f32>,
     },
+    DepthRegion {
+        version: u8,
+        frame_id: u64,
+        rule: String,
+        region: [u32; 4],
+        metric: String,
+        value: Option<f32>,
+        threshold_m: f32,
+        triggered: bool,
+        valid_pixels: u64,
+        valid_ratio: Option<f32>,
+    },
     ConsolidatedDetection {
         frame_id: u64,
         class: String,
@@ -113,6 +125,7 @@ impl Event {
             Event::Frame { .. } => JsonlLevel::Debug,
             Event::Detection { .. } => JsonlLevel::Debug,
             Event::Depth { .. } => JsonlLevel::Debug,
+            Event::DepthRegion { .. } => JsonlLevel::Debug,
             Event::ConsolidatedDetection { .. } => JsonlLevel::Debug,
             Event::Entity { .. } => JsonlLevel::Debug,
             Event::Zone { .. } => JsonlLevel::Debug,
@@ -275,6 +288,31 @@ impl Event {
             valid_ratio,
             min_depth_m,
             max_depth_m,
+        }
+    }
+
+    pub fn depth_region(
+        frame_id: u64,
+        rule: &str,
+        region: [u32; 4],
+        metric: &str,
+        value: Option<f32>,
+        threshold_m: f32,
+        triggered: bool,
+        valid_pixels: u64,
+        valid_ratio: Option<f32>,
+    ) -> Self {
+        Event::DepthRegion {
+            version: crate::depth::DEPTH_REGION_EVENT_VERSION,
+            frame_id,
+            rule: rule.into(),
+            region,
+            metric: metric.into(),
+            value,
+            threshold_m,
+            triggered,
+            valid_pixels,
+            valid_ratio,
         }
     }
 

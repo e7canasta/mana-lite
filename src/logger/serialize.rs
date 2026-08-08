@@ -255,6 +255,53 @@ pub fn write_event(event: &Event, ts: &str, buf: &mut Vec<u8>) {
                 buf.extend_from_slice(b"null");
             }
         }
+        Event::DepthRegion {
+            version,
+            frame_id,
+            rule,
+            region,
+            metric,
+            value,
+            threshold_m,
+            triggered,
+            valid_pixels,
+            valid_ratio,
+        } => {
+            buf.extend_from_slice(b"\"type\":\"depth_region\",\"version\":");
+            write_u64(*version as u64, buf);
+            buf.extend_from_slice(b",\"frame_id\":");
+            write_u64(*frame_id, buf);
+            buf.extend_from_slice(b",\"rule\":\"");
+            write_json_string(rule, buf);
+            buf.extend_from_slice(b"\",\"region\":[");
+            write_u64(u64::from(region[0]), buf);
+            buf.extend_from_slice(b",");
+            write_u64(u64::from(region[1]), buf);
+            buf.extend_from_slice(b",");
+            write_u64(u64::from(region[2]), buf);
+            buf.extend_from_slice(b",");
+            write_u64(u64::from(region[3]), buf);
+            buf.extend_from_slice(b"],\"metric\":\"");
+            write_json_string(metric, buf);
+            buf.extend_from_slice(b"\",\"value\":");
+            if let Some(value) = value {
+                write_f32(*value, buf);
+            } else {
+                buf.extend_from_slice(b"null");
+            }
+            buf.extend_from_slice(b",\"threshold_m\":");
+            write_f32(*threshold_m, buf);
+            buf.extend_from_slice(b",\"triggered\":");
+            buf.extend_from_slice(if *triggered { b"true" } else { b"false" });
+            buf.extend_from_slice(b",\"valid_pixels\":");
+            write_u64(*valid_pixels, buf);
+            buf.extend_from_slice(b",\"valid_ratio\":");
+            if let Some(value) = valid_ratio {
+                write_f32(*value, buf);
+            } else {
+                buf.extend_from_slice(b"null");
+            }
+        }
         Event::ConsolidatedDetection {
             frame_id,
             class,

@@ -57,12 +57,17 @@ Priorizadas. Cada etapa cambia un solo contrato o habilita un solo rol.
   (`--region`) sobre escena real: `local=[208,180,340,360]` (spec §7).
 - Conserva el contrato ROI-local (ADR-024).
 
-### 3. Reglas depth funcionales (`DepthRegionRule`)
+### 3. Reglas depth funcionales (`DepthRegionRule`) ✅ (2026-08-07)
 
-- Reglas sin dependencia de modelos: consumen `DepthRegionStats` de una región
-  y emiten evidencia numérica.
-- No debe hacer que depth gatee face o segmentación (spec §15).
-- Calibrar umbrales por cámara y escena antes de integrar con zonas/FSM.
+- `DepthRegionRule` sin dependencia de modelos: consulta una región global
+  contra el mapa local del ROI y compara métrica robusta (`min|median|p10|
+  p90|max`, `lt|gt`) con umbral (spec §9).
+- Emite evento versionado `depth_region` (`version: 1`) con evidencia
+  numérica; `min_valid_ratio` suprime reglas sin cobertura.
+- Config en `config/depth-rules.toml`, validada en bootstrap (nombres únicos,
+  umbrales finitos, regiones válidas).
+- No gatea face ni segmentación (spec §15). Umbrales provisionales: calibrar
+  por cámara y escena antes de integrar con zonas/FSM.
 
 ### 4. Tracking: completar SORT y validar
 

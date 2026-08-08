@@ -22,6 +22,7 @@ reconnect_backoff_max_ms = 30000
 model_catalog = "config/models.toml"
 default_model = "detect-fast"
 cascade_file = "config/cascade.toml"
+depth_rules_file = "config/depth-rules.toml"
 # zones_file = "config/zones.toml"
 # fsm_file = "config/fsm.toml"
 

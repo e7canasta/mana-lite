@@ -1,0 +1,17 @@
+# Reglas funcionales de profundidad (spec depth-standard §9).
+#
+# Una regla consulta una region global contra el mapa local del ROI y compara
+# una metrica robusta con un umbral de distancia en metros. Emite evidencia
+# numerica (evento `depth_region`); NO gatea ningun otro modelo.
+#
+# ATENCION: los umbrales siguientes son PROVISIONALES y sin calibrar.
+# Calibrar por camara y escena antes de usar una regla en produccion (spec
+# §15). No afirmar distancia metrica calibrada sin referencia fisica.
+
+[[rules]]
+name = "bed-approach"
+region = [560, 140, 1240, 820]
+metric = "median"
+op = "lt"
+threshold_m = 1.5
+min_valid_ratio = 0.5

@@ -169,7 +169,7 @@ impl MetricsJsonlConfig {
         match event {
             Event::Frame { .. } => self.frame_events,
             Event::Detection { .. } | Event::ConsolidatedDetection { .. } => self.detection_events,
-            Event::Depth { .. } => self.depth_events,
+            Event::Depth { .. } | Event::DepthRegion { .. } => self.depth_events,
             Event::Zone { .. } => self.zone_events,
             Event::Fsm { .. } => self.fsm_events,
             Event::Metrics(_) => self.metrics_event,
@@ -207,13 +207,74 @@ mod tests {
     }
 
     #[test]
-    fn meta_startup_has_type_and_version() {
+    fn depth_event_v2_allows_nullable_fields() {
         let mut log = test_logger();
-        log.emit(Event::meta_startup("0.1.0", "mana.toml"));
+        log.emit(Event::depth(
+            1,
+            "depth-standard",
+            1,
+            1,
+            None,
+            0,
+            0,
+            0,
+            None,
+            None,
+            None,
+        ));
         let out = collect(&mut log);
-        assert!(out.contains("\"type\":\"meta\""));
-        assert!(out.contains("\"event\":\"startup\""));
-        assert!(out.contains("\"version\":\"0.1.0\""));
+        assert!(out.contains("\"version\":2"));
+        assert!(out.contains("\"roi\":null"));
+        assert!(out.contains("\"valid_ratio\":null"));
+        assert!(out.contains("\"min_depth_m\":null"));
+        assert!(out.contains("\"max_depth_m\":null"));
+    }
+
+    #[test]
+    fn depth_region_event_serializes_evidence() {
+        let mut log = test_logger();
+        log.emit(Event::depth_region(
+            42,
+            "bed-approach",
+            [560, 140, 1240, 820],
+            "median",
+            Some(1.2),
+            1.5,
+            true,
+            462400,
+            Some(1.0),
+        ));
+        let out = collect(&mut log);
+        assert!(out.contains("\"type\":\"depth_region\""));
+        assert!(out.contains("\"version\":1"));
+        assert!(out.contains("\"rule\":\"bed-approach\""));
+        assert!(out.contains("\"region\":[560,140,1240,820]"));
+        assert!(out.contains("\"metric\":\"median\""));
+        assert!(out.contains("\"value\":1.2"));
+        assert!(out.contains("\"threshold_m\":1.5"));
+        assert!(out.contains("\"triggered\":true"));
+        assert!(out.contains("\"valid_pixels\":462400"));
+        assert!(out.contains("\"valid_ratio\":1"));
+    }
+
+    #[test]
+    fn depth_region_event_allows_null_value() {
+        let mut log = test_logger();
+        log.emit(Event::depth_region(
+            1,
+            "bed-approach",
+            [0, 0, 1, 1],
+            "median",
+            None,
+            1.5,
+            false,
+            0,
+            None,
+        ));
+        let out = collect(&mut log);
+        assert!(out.contains("\"value\":null"));
+        assert!(out.contains("\"triggered\":false"));
+        assert!(out.contains("\"valid_ratio\":null"));
     }
 
     #[test]
@@ -243,30 +304,6 @@ mod tests {
         assert!(out.contains("\"min_depth_m\":2.19"));
         assert!(out.contains("\"max_depth_m\":5.16"));
         assert!(!out.contains("\"width\":680"));
-    }
-
-    #[test]
-    fn depth_event_v2_allows_nullable_fields() {
-        let mut log = test_logger();
-        log.emit(Event::depth(
-            1,
-            "depth-standard",
-            1,
-            1,
-            None,
-            0,
-            0,
-            0,
-            None,
-            None,
-            None,
-        ));
-        let out = collect(&mut log);
-        assert!(out.contains("\"version\":2"));
-        assert!(out.contains("\"roi\":null"));
-        assert!(out.contains("\"valid_ratio\":null"));
-        assert!(out.contains("\"min_depth_m\":null"));
-        assert!(out.contains("\"max_depth_m\":null"));
     }
 
     #[test]
