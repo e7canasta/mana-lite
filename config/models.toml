@@ -107,9 +107,10 @@ mask_threshold = 0.5
 nms_iou = 0.10
 
 [models.depth-standard]
-# Experimental full-frame depth-only test branch.
+# Benchmark 2026-08-07: l/320 (172ms) recomendado — x/320 era un outlier
+# estructural; m/640 (492ms) es la opcion de calidad si el presupuesto permite.
 enabled = true
-path = "models/yolo26x-depth-fp16-320.onnx"
+path = "models/yolo26l-depth-fp16-320.onnx"
 task = "depth"
 confidence = 0.0
 imgsz = 320

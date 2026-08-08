@@ -119,7 +119,7 @@ Configuracion base:
 ```toml
 [models.depth-standard]
 enabled = true
-path = "models/yolo26x-depth-fp16-320.onnx"
+path = "models/yolo26l-depth-fp16-320.onnx"
 task = "depth"
 confidence = 0.0
 imgsz = 320
@@ -145,18 +145,49 @@ yolo26l-depth-fp16-{320,640}.onnx
 yolo26x-depth-fp16-{320,640}.onnx
 ```
 
-La variante small/320 es el baseline funcional. La variante xlarge/320 fue
-cargada correctamente en runtime, con una latencia aproximada de `250-350 ms`
-en CPU durante la prueba realizada.
+### Benchmark Medido (2026-08-07)
+
+Medido con `depth-image-probe` (CPU, FP16, `--threads 0`, ROI `[560,140 1240,820]`,
+warmup 1 + 3 repeticiones) sobre dos escenas: `bus-1920x1080.jpg` (imagen fija
+canonica) y un frame real `1920x1080` del clip de camara `clip1_minuto.mp4`.
+
+| Variante | Latencia bus | Latencia escena real | Rango bus (m) | Rango escena (m) | Nota |
+|---|---|---|---|---|---|
+| s/320 | 80 ms | 70 ms | 1.64-6.53 | 0.82-2.70 | barata, estructura aceptable en escena real |
+| m/320 | 139 ms | 154 ms | 2.54-11.0 | 2.12-5.58 | buena estructura, rango metrico sobrestimado |
+| l/320 | 166 ms | 172 ms | 2.75-7.07 | 1.96-3.44 | **baseline runtime** (bajo y consistente) |
+| x/320 | 279 ms | 328 ms | 1.09-10.7 | 2.23-5.25 | **outlier estructural — no recomendado** |
+| s/640 | 268 ms | 236 ms | 1.03-2.65 | 0.59-1.49 | rango metrico mas plausible |
+| m/640 | 496 ms | 492 ms | 1.26-5.29 | 0.77-2.15 | opcion de calidad, rango plausible |
+| l/640 | 584 ms | 631 ms | 1.29-3.89 | 0.96-2.48 | calidad, coste alto |
+| x/640 | 1110 ms | 1170 ms | 1.16-5.16 | 0.80-1.86 | maxima calidad, no viable 24/7 en CPU |
+
+Observaciones:
+
+1. **x/320 es un outlier estructural**: su mapa correlaciona 0.41-0.64 con
+   todas las demas variantes en ambas escenas (mientras s/m/l y la familia 640
+   correlacionan 0.8-0.99 entre si). El baseline anterior (x/320) era la
+   variante con la estructura menos representativa de la familia.
+2. **La familia 320 sobrestima el rango metrico** (max depth ~2x respecto a
+   640 en la misma escena). Para reglas clinicas de distancia, `640` da rangos
+   mas plausibles; la calibracion de escena sigue siendo obligatoria (no
+   afirmar distancia metrica sin referencia fisica).
+3. **l/320 es el compromiso elegido**: 172 ms en escena real (2x mas rapido
+   que el x/320 anterior), estructura consistente con la familia, rango
+   metrico mas ajustado que m/320.
+4. **m/640 es la opcion de calidad** si el presupuesto de latencia lo permite
+   (492 ms: evaluar contra el GOP de la camara y el ciclo completo del
+   pipeline antes de activarla).
 
 ### Seleccion De Variante
 
 | Variante | Uso | Decision |
 |---|---|---|
-| small/320 | baseline y calibracion rapida | preferida para desarrollo |
-| medium/320 | comparacion de calidad/coste | laboratorio |
-| large/320 | mayor capacidad dentro del ROI | laboratorio |
-| xlarge/320 | calidad maxima con coste alto | prueba controlada |
+| s/320 | presupuesto minimo | solo si la latencia es critica |
+| m/320 | comparacion de calidad/coste | laboratorio |
+| l/320 | baseline runtime (2026-08-07) | preferida para desarrollo |
+| m/640 | calidad metrica | probar si el presupuesto de latencia lo permite |
+| x/320 | — | no usar: outlier estructural medido |
 | * / 640 | mayor detalle de entrada | solo si la latencia lo permite |
 
 Cambiar el modelo requiere cambiar `path` e `imgsz` en el mismo bloque y
@@ -374,15 +405,19 @@ Y en JSONL:
 ### Diagnostico Basico
 
 ```bash
-uv run model-tools inspect --input models/yolo26x-depth-fp16-320.onnx
+uv run model-tools inspect --input models/yolo26l-depth-fp16-320.onnx
 cargo test --workspace
 cargo run --bin depth-image-probe -- \
-  models/yolo26x-depth-fp16-320.onnx \
+  models/yolo26l-depth-fp16-320.onnx \
   ../inference/runs/depth/predict8/bus-1920x1080.jpg \
-  /tmp/depth-x-320.png \
+  /tmp/depth-l-320.png \
   --roi 560 140 1240 820 \
-  --rrd /tmp/depth-x-320.rrd
+  --imgsz 320 --half \
+  --rrd /tmp/depth-l-320.rrd
 ```
+
+Para medir latencia estable (benchmark de variantes) agregar `--warmup N
+--repeats N`; el probe imprime `load` y `latency=mean/min/max` por ejecucion.
 
 El probe debe confirmar mapa, ROI, `valid_pixels` y snapshot antes de cambiar
 el runtime RTSP.

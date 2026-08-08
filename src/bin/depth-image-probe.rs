@@ -1,5 +1,6 @@
 use std::error::Error;
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 
 use image::{DynamicImage, GenericImageView, Rgb, RgbImage};
 use imageproc::drawing::draw_hollow_rect_mut;
@@ -7,18 +8,27 @@ use imageproc::rect::Rect;
 use ultralytics_inference::visualizer::color::{Colormap, DepthViz};
 use ultralytics_inference::{InferenceConfig, YOLOModel};
 
+#[derive(Debug, Default)]
+struct BenchOpts {
+    imgsz: Option<u32>,
+    half: bool,
+    threads: usize,
+    warmup: u32,
+    repeats: u32,
+}
+
 fn main() -> Result<(), Box<dyn Error>> {
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 4 {
         return Err(
-            "usage: depth-image-probe <model.onnx> <image> <annotated.png> [--rerun addr|--rrd file] [--roi x1 y1 x2 y2]".into(),
+            "usage: depth-image-probe <model.onnx> <image> <annotated.png> [--rerun addr|--rrd file] [--roi x1 y1 x2 y2] [--imgsz N] [--half] [--threads N] [--warmup N] [--repeats N]".into(),
         );
     }
 
     let model_path = &args[1];
     let image_path = &args[2];
     let output_path = PathBuf::from(&args[3]);
-    let (rerun_addr, rrd_path, roi) = parse_options(&args[4..])?;
+    let (rerun_addr, rrd_path, roi, bench) = parse_options(&args[4..])?;
 
     let image = image::open(image_path)?;
     let (width, height) = image.dimensions();
@@ -26,7 +36,31 @@ fn main() -> Result<(), Box<dyn Error>> {
     if let Some([x1, y1, x2, y2]) = roi {
         config = config.with_roi(x1, y1, x2, y2);
     }
+    if let Some(size) = bench.imgsz {
+        config = config.with_imgsz(size as usize, size as usize);
+    }
+    if bench.half {
+        config = config.with_half(true);
+    }
+    if bench.threads > 0 {
+        config = config.with_threads(bench.threads);
+    }
+    config = config.with_save(false);
+
+    let load_start = Instant::now();
     let mut model = YOLOModel::load_with_config(model_path, config)?;
+    let load_ms = load_start.elapsed().as_secs_f64() * 1000.0;
+
+    let mut latencies_ms: Vec<f64> = Vec::new();
+    for _ in 0..bench.warmup {
+        model.predict_image(&image, image_path.clone())?;
+    }
+    for _ in 0..bench.repeats {
+        let call_start = Instant::now();
+        model.predict_image(&image, image_path.clone())?;
+        latencies_ms.push(call_start.elapsed().as_secs_f64() * 1000.0);
+    }
+
     let results = model.predict_image(&image, image_path.clone())?;
     let result = results.first().ok_or("inference returned no results")?;
     let depth = result.depth.as_ref().ok_or("inference returned no depth map")?;
@@ -60,8 +94,27 @@ fn main() -> Result<(), Box<dyn Error>> {
         .iter()
         .filter(|&&value| value.is_finite() && value > 0.0)
         .count();
+
+    let latency_summary = match latencies_ms.len() {
+        0 => "no_repeats".to_string(),
+        count => {
+            let sum: f64 = latencies_ms.iter().sum();
+            let mean = sum / count as f64;
+            let min = latencies_ms
+                .iter()
+                .copied()
+                .reduce(f64::min)
+                .unwrap_or(0.0);
+            let max = latencies_ms
+                .iter()
+                .copied()
+                .reduce(f64::max)
+                .unwrap_or(0.0);
+            format!("mean={mean:.1}ms min={min:.1}ms max={max:.1}ms n={count}")
+        }
+    };
     println!(
-        "model={} image={} output={} depth_output={} image={}x{} map={:?} valid_pixels={} min_depth_m={:?} max_depth_m={:?} roi={:?}",
+        "model={} image={} output={} depth_output={} image={}x{} map={:?} valid_pixels={} min_depth_m={:?} max_depth_m={:?} roi={:?} imgsz={:?} half={} threads={} load={load_ms:.0}ms latency={latency_summary}",
         model_path,
         image_path,
         output_path.display(),
@@ -73,6 +126,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         finite_min(depth),
         finite_max(depth),
         result.roi,
+        bench.imgsz,
+        bench.half,
+        bench.threads,
     );
 
     if let Some(addr) = rerun_addr {
@@ -89,10 +145,14 @@ fn main() -> Result<(), Box<dyn Error>> {
 
 fn parse_options(
     options: &[String],
-) -> Result<(Option<&str>, Option<&str>, Option<[u32; 4]>), Box<dyn Error>> {
+) -> Result<
+    (Option<&str>, Option<&str>, Option<[u32; 4]>, BenchOpts),
+    Box<dyn Error>,
+> {
     let mut rerun_addr = None;
     let mut rrd_path = None;
     let mut roi = None;
+    let mut bench = BenchOpts::default();
     let mut index = 0;
     while index < options.len() {
         match options[index].as_str() {
@@ -128,11 +188,44 @@ fn parse_options(
                 roi = Some(values);
                 index += 4;
             }
+            "--imgsz" => {
+                index += 1;
+                let value = options
+                    .get(index)
+                    .ok_or("--imgsz requires a value")?
+                    .parse::<u32>()?;
+                if value == 0 {
+                    return Err("--imgsz must be positive".into());
+                }
+                bench.imgsz = Some(value);
+            }
+            "--half" => bench.half = true,
+            "--threads" => {
+                index += 1;
+                bench.threads = options
+                    .get(index)
+                    .ok_or("--threads requires a value")?
+                    .parse::<usize>()?;
+            }
+            "--warmup" => {
+                index += 1;
+                bench.warmup = options
+                    .get(index)
+                    .ok_or("--warmup requires a value")?
+                    .parse::<u32>()?;
+            }
+            "--repeats" => {
+                index += 1;
+                bench.repeats = options
+                    .get(index)
+                    .ok_or("--repeats requires a value")?
+                    .parse::<u32>()?;
+            }
             unknown => return Err(format!("unknown option: {unknown}").into()),
         }
         index += 1;
     }
-    Ok((rerun_addr, rrd_path, roi))
+    Ok((rerun_addr, rrd_path, roi, bench))
 }
 
 fn rgb_image_from_pixels(
