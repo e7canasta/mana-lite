@@ -132,13 +132,15 @@ infer:  2.0 Hz — 10 calls in 5s | 38ms avg | 2-145ms | 12 dets | skips:2, empt
 
 Controlado por `config/metrics.toml` seccion `[metrics.jsonl]`. Para depurar
 una transicion aislada se puede usar `config/metrics-room-transition.toml`,
-que deja solo el evento `presence` por evaluacion.
+que deja solo el evento `presence` por evaluacion. Para analizar las dos
+maquinas juntas se puede usar `config/metrics-face-dwell-transition.toml`.
 
 ```toml
 [metrics.jsonl]
 frame_events = true              # {"type":"frame", frame_id, decode_ms, gap_ms}
 detection_events = true          # {"type":"detection", model, infer_ms, pipeline_ms, det, per_class}
 presence_events = true           # {"type":"presence", state, second_person, counts}
+face_dwell_events = true         # {"type":"face_dwell", state, timers, face evidence}
 zone_events = true               # {"type":"zone", zone, event, class, confidence}
 fsm_events = true                # {"type":"fsm", from, to, trigger, dwell_ms}
 metrics_event = true             # {"type":"metrics", ...} — reporte de ventana
@@ -163,7 +165,7 @@ el analisis forense de latest-frame-wins.
 **Detection event** — uno por modelo por frame, con per_class inline:
 ```json
 {"type":"detection","frame_id":10,"model":"detect-fast","infer_ms":37,"pipeline_ms":42,
- "det":[{"class":"person","confidence":0.73,"bbox":[875,149,1187,726]}],
+ "det":[{"class":"person","confidence":0.73,"area_px":180024,"area_ratio":0.0868,"bbox":[875,149,1187,726]}],
  "per_class":{"person":{"count":1,"conf_min":0.73,"conf_max":0.73,
                          "area_min":228096.0,"area_max":228096.0}}}
 ```
@@ -179,6 +181,15 @@ En Rerun, las detecciones crudas se publican bajo
 `/world/camera/detections/face-yolo`; las cajas rojas son las caras detectadas
 por el modelo, mientras que `/world/camera/observations` muestra la observacion
 consolidada de la persona.
+
+Las etiquetas de las cajas muestran `conf`, `area` en pixeles y `ratio` sobre
+el frame completo. `ratio` es la misma magnitud usada por
+`requires_min_area_ratio` en las reglas de cascada.
+
+Las ROI estaticas se publican siempre que Rerun esta conectado, aunque el
+modelo este salteado por la cascada, bajo
+`/world/camera/rois/fixed/<model>`. Las ROI dinamicas de un ciclo siguen bajo
+`/world/camera/rois/<model>`.
 
 El `iou` del catalogo y el `postprocess.nms_iou` son controles distintos: el
 primero pertenece al NMS del backend y el segundo al NMS explicito posterior de
@@ -206,6 +217,25 @@ bbox:
  "poi_empty_ticks":0,"single_timer_ms":0,"empty_timer_ms":0,
  "multiple_candidate_timer_ms":500,"multiple_exit_timer_ms":0}
 ```
+
+**Face dwell event** — snapshot de la FSM facial y de sus timers por
+evaluacion. `source` distingue la evaluacion asociada a un keyframe de una
+transicion global `from = "*"`; las transiciones faciales de escena solo se
+evalúan con evidencia fresca de keyframe:
+
+```json
+{"type":"face_dwell","frame_id":10,"source":"keyframe","state":"searching",
+ "state_label":"Buscando cara","state_dwell_ms":500,"state_dwell_required_ms":null,
+ "cardinality":"single","person_present":true,"face_present":true,
+ "face_confidence":0.87,"face_in_dwell":true,"at_edge":false,
+ "face_was_inside":false,"face_model_ran":true,
+ "active_timers":[{"trigger":"searching→in_bed","elapsed_ms":500,"required_ms":1000}]}
+```
+
+`active_timers` muestra el progreso real de una transicion antes de que
+cumpla su dwell. `face_model_ran` evita confundir una cara ausente con un
+modelo facial que no fue ejecutado. El evento `fsm` sigue siendo el registro
+de la transicion confirmada; `face_dwell` no duplica ni reemplaza esa maquina.
 
 **Depth event** — estadisticas del mapa depth local al ROI, nunca la matriz:
 
@@ -292,8 +322,8 @@ pura del stream cuando hubo drops. Para una lectura de salud comun, usar
 **Room state** — la timeline muestra la cardinalidad de la habitacion:
 `empty`, `single` o `multiple`. En el perfil 24/7, `single` puede conservarse
 durante un dropout corto por la politica POI; en `detect-room-raw` y
-`detect-room-face` se calibra con el conteo raw y los timers de room, sin
-retencion del child face.
+`detect-room-face` se combina con la FSM facial y el tracking para validar
+continuidad, borde, cama y salida.
 Los lanes `second_person` y `signal` explican si la maquina esta esperando
 confirmacion o si el frame no era valido.
 
@@ -312,7 +342,8 @@ Solo las entidades que Rerun recibe actualmente:
     detections/{model}                ─ boxes crudas por modelo (space frame)
     detections/{model}/pose/{i}/{keypoints,skeleton}  ─ pose (boxes=true)
     masks/{model}                     ─ overlay RGBA de mascaras
-    rois/{model}                      ─ rectangulo del crop aplicado
+    rois/{model}                      ─ rectangulo del crop aplicado por frame
+    rois/fixed/{model}                ─ ROI fija persistente, aunque haya skip
     crops/{model}/bgr                 ─ imagen exacta que recibio el modelo
     crops/{model}/detections          ─ boxes en espacio local del crop
     crops/{model}/mask                ─ overlay de mascara del crop
@@ -334,6 +365,7 @@ Solo las entidades que Rerun recibe actualmente:
     dropped                          ─ keyframes reemplazados
 
 /pipeline/
+  state/face                          ─ timeline de la FSM facial
   infer/{model}/latency_us           ─ tiempo de inferencia
   infer/{model}/pipeline_us          ─ tiempo wall-clock del modelo
   infer/{model}/hz                   ─ frecuencia de llamadas del modelo
@@ -512,6 +544,7 @@ Los eventos opcionales se filtran antes de entrar al buffer JSONL. Los eventos
 | `frame_events` | true | frame_id, decode_ms, **gap_ms** |
 | `detection_events` | true | model, infer_ms, pipeline_ms, det[], **per_class{}** |
 | `presence_events` | true | cardinality, second-person evidence and temporal counters |
+| `face_dwell_events` | true | facial state, face evidence and active dwell timers |
 | `consolidated_detection` | `jsonl_level=debug` | frame, class, bbox, primary_model, sources |
 | `depth_events` | true | model, infer_ms, pipeline_ms, width, height, valid_pixels, min/max_depth_m |
 | `zone_events` | true | zone, event, class, confidence |

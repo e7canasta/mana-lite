@@ -30,7 +30,8 @@ mana-lite/
 ├── mana-lite            # binario
 ├── config/
 │   ├── mana.toml        # configuracion principal (fuente, inferencia, salud, output)
-│   ├── models.toml      # catalogo de modelos (path, task, parametros)
+│   ├── models.toml      # manifest publico del catalogo
+│   ├── models/           # base, defaults, perfiles y un archivo por task
 │   ├── cascade.toml     # reglas de cascada: que modelo depende de cual
 │   ├── fsm.toml         # maquina de estados (opcional — restringe modelos por estado)
 │   ├── zones.toml       # zonas de interes (opcional — ROIs para FSM/tracking)
@@ -62,8 +63,10 @@ Cada archivo TOML tiene una responsabilidad unica:
 | Archivo | Responsabilidad | Obligatorio |
 |---------|----------------|-------------|
 | `mana.toml` | Streaming, salud, output, paths a demas configs | Si |
-| `models.toml` | Que modelos ONNX cargar y con que parametros | Si |
+| `models.toml` | Manifest publico de modelos y archivos incluidos | Si |
+| `models/*.toml` | Defaults, perfiles y overrides por task | Si |
 | `blueprints/<name>/blueprint.toml` | Perfil seleccionado: modelos activos, root y gates | Recomendado |
+| `blueprints/<name>/models.toml` | Overrides opcionales del catálogo para ese blueprint | Opcional |
 | `[presence.poi]` en `mana.toml` | Histeresis de la persona de interes | Recomendado en 24/7 |
 | `[presence.occupancy]` en `mana.toml` | Confirmacion de empty/single/multiple | Recomendado en calibracion |
 | `cascade.toml` | Orden y dependencias entre modelos | No (usa default) |
@@ -395,9 +398,11 @@ fallback = "full"                    # "skip" (default) o "full"
 
 ---
 
-### Independencia por modelo
+### Perfiles y overrides por modelo
 
-Cada entry en `models.toml` define su propio `[models.<name>.crop]`. No se heredan, no se comparten. Tres modelos, tres politicas distintas:
+Cada modelo puede declarar un perfil y sobrescribir sus campos específicos. La
+resolución combina defaults comunes, defaults del task, perfil y override local.
+Tres modelos pueden compartir una política sin duplicar todo el TOML:
 
 ```toml
 [models.detect-fast]              # root — sin crop, frame completo
@@ -534,7 +539,8 @@ Ambas vistas aparecen en pestañas separadas del blueprint. Los bboxes del model
 ### Escenario A: Minimo — un solo modelo, sin cascade
 
 ```toml
-# models.toml
+# config/models/detect.toml (incluido por models.toml)
+task = "detect"
 [models.detect-fast]
 path = "models/yolo26n.onnx"
 task = "detect"
@@ -565,12 +571,15 @@ Detecta presencia y activa hijos solo cuando hay personas; depth corre como
 root independiente.
 
 ```toml
-# models.toml — ramas activas del baseline
+# Archivos incluidos por config/models.toml. Cada archivo declara un task.
+# config/models/detect.toml
+task = "detect"
 [models.detect-fast]
 path = "models/yolo26n.onnx"
 task = "detect"
 confidence = 0.5
 
+# config/models/pose.toml
 [models.pose-standard]
 path = "tools/model-tools/artifacts/yolo26-fp16/yolo26s-pose-fp16-320.onnx"
 task = "pose"
@@ -582,11 +591,13 @@ path = "models/yolov12l-face.onnx"
 task = "detect"
 confidence = 0.10
 
+# config/models/segment.toml
 [models.seg-standard]
 path = "models/yolo26x-seg-fp16-640.onnx"
-task = "detect"
+task = "segment"
 half = true
 
+# config/models/depth.toml
 [models.depth-standard]
 path = "tools/model-tools/artifacts/yolo26-fp16/yolo26x-depth-fp16-320.onnx"
 task = "depth"

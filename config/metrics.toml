@@ -21,6 +21,7 @@ infer_empty = true
 frame_events = false
 detection_events = true
 presence_events = true
+face_dwell_events = false
 zone_events = false
 fsm_events = false
 metrics_event = false

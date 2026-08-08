@@ -32,10 +32,18 @@ pub struct VizBridge {
     inner: Inner,
     addr: String,
     toggles: VizSendToggles,
+    fixed_rois: Vec<FixedRoi>,
     last_infer_at: HashMap<String, Instant>,
     last_occupancy_state: Option<RoomCardinality>,
     last_second_person_state: Option<SecondPersonState>,
     last_signal_state: Option<bool>,
+    last_face_state: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct FixedRoi {
+    pub model: String,
+    pub rect: CropRect,
 }
 
 const DEPTH_OVERLAY_ALPHA: u8 = 150;
@@ -53,6 +61,42 @@ fn sanitize_entity_name(name: &str) -> String {
             }
         })
         .collect()
+}
+
+fn bbox_area_px(bbox: [f32; 4]) -> f32 {
+    ((bbox[2] - bbox[0]) * (bbox[3] - bbox[1])).max(0.0)
+}
+
+fn bbox_area_ratio(bbox: [f32; 4], frame_w: u32, frame_h: u32) -> f32 {
+    let frame_area = (frame_w as f32) * (frame_h as f32);
+    if frame_area > 0.0 {
+        bbox_area_px(bbox) / frame_area
+    } else {
+        0.0
+    }
+}
+
+fn detection_label(
+    class: &str,
+    confidence: f32,
+    bbox: [f32; 4],
+    frame_w: u32,
+    frame_h: u32,
+) -> String {
+    format!(
+        "{class} conf={confidence:.2} area={:.0}px ratio={:.4}",
+        bbox_area_px(bbox),
+        bbox_area_ratio(bbox, frame_w, frame_h),
+    )
+}
+
+fn bbox_in_crop(bbox: [f32; 4], rect: CropRect) -> [f32; 4] {
+    [
+        bbox[0] - rect.x1 as f32,
+        bbox[1] - rect.y1 as f32,
+        bbox[2] - rect.x1 as f32,
+        bbox[3] - rect.y1 as f32,
+    ]
 }
 
 fn pose_keypoint_visible(x: f32, y: f32, confidence: f32) -> bool {
@@ -75,7 +119,12 @@ const PALETTE: [[u8; 3]; 8] = [
 ];
 
 impl VizBridge {
-    pub fn new(rerun_addr: &str, toggles: &VizSendToggles, _blueprint: &RerunRoot) -> Self {
+    pub fn new(
+        rerun_addr: &str,
+        toggles: &VizSendToggles,
+        _blueprint: &RerunRoot,
+        fixed_rois: Vec<FixedRoi>,
+    ) -> Self {
         Self {
             inner: Inner::Disconnected {
                 next_retry: Instant::now(),
@@ -84,10 +133,12 @@ impl VizBridge {
             },
             addr: rerun_addr.to_string(),
             toggles: toggles.clone(),
+            fixed_rois,
             last_infer_at: HashMap::new(),
             last_occupancy_state: None,
             last_second_person_state: None,
             last_signal_state: None,
+            last_face_state: None,
         }
     }
 
@@ -96,10 +147,12 @@ impl VizBridge {
             inner: Inner::Disabled,
             addr: String::new(),
             toggles: VizSendToggles::default(),
+            fixed_rois: Vec::new(),
             last_infer_at: HashMap::new(),
             last_occupancy_state: None,
             last_second_person_state: None,
             last_signal_state: None,
+            last_face_state: None,
         }
     }
 
@@ -117,9 +170,11 @@ impl VizBridge {
                 rec.set_log_time_enabled(true);
                 Self::send_default_blueprint(&rec);
                 Self::send_presence_state_configuration(&rec);
+                Self::send_fixed_rois(&rec, &self.fixed_rois);
                 self.last_occupancy_state = None;
                 self.last_second_person_state = None;
                 self.last_signal_state = None;
+                self.last_face_state = None;
                 log::info!("viz: connected to {}", self.addr);
                 self.inner = Inner::Connected {
                     rec,
@@ -203,14 +258,18 @@ impl VizBridge {
         let room_state = StateTimelineView::new("Room state")
             .with_origin("/pipeline/state/room")
             .with_contents(["+ $origin/**"]);
+        let face_state = StateTimelineView::new("Face state")
+            .with_origin("/pipeline/state/face")
+            .with_contents(["+ $origin"]);
         let metrics_tab = Vertical::new(vec![
             stream_view.into(),
             inference_view.into(),
             depth_stats.into(),
             class_stats.into(),
             room_state.into(),
+            face_state.into(),
         ])
-        .with_row_shares([1.0, 1.0, 1.0, 1.0, 1.5]);
+        .with_row_shares([1.0, 1.0, 1.0, 1.0, 1.5, 1.5]);
 
         let viewport = Tabs::new(vec![
             ContainerLike::from(camera_tab),
@@ -255,10 +314,70 @@ impl VizBridge {
                     .with_labels(["Valid inference", "Invalid inference"])
                     .with_colors([0x4CAF50FF, 0xF44336FF]),
             ),
+            (
+                "/pipeline/state/face",
+                rerun::StateConfiguration::new()
+                    .with_values([
+                        "idle",
+                        "searching",
+                        "detected",
+                        "other",
+                        "in_bed",
+                        "edge",
+                        "exiting",
+                    ])
+                    .with_labels([
+                        "Idle",
+                        "Buscando cara",
+                        "Cara detectada",
+                        "Otra posición",
+                        "En cama",
+                        "En borde",
+                        "Saliendo",
+                    ])
+                    .with_colors([
+                        0x607D8BFF, 0x2196F3FF, 0x4CAF50FF, 0x9E9E9EFF, 0x9C27B0FF, 0xFF9800FF,
+                        0xF44336FF,
+                    ]),
+            ),
         ];
         for (path, config) in configs {
             if let Err(e) = rec.log_static(path, &config) {
                 log::warn!("viz presence state configuration {path} failed: {e}");
+            }
+        }
+    }
+
+    fn send_fixed_rois(rec: &rerun::RecordingStream, fixed_rois: &[FixedRoi]) {
+        for fixed in fixed_rois {
+            let model = sanitize_entity_name(&fixed.model);
+            let path = format!("/world/camera/rois/fixed/{model}/roi");
+            let [x1, y1, x2, y2] = fixed.rect.to_array();
+            let x1 = x1 as f32;
+            let y1 = y1 as f32;
+            let x2 = x2 as f32;
+            let y2 = y2 as f32;
+            let cx = (x1 + x2) / 2.0;
+            let cy = (y1 + y2) / 2.0;
+            let hw = (x2 - x1).abs() / 2.0;
+            let hh = (y2 - y1).abs() / 2.0;
+            let label = format!("fixed {model} [{:.0},{:.0} {:.0},{:.0}]", x1, y1, x2, y2);
+            let color = if model.contains("face") {
+                rerun::Color::from_unmultiplied_rgba(255, 0, 255, 255)
+            } else if model.contains("depth") {
+                rerun::Color::from_unmultiplied_rgba(0, 200, 255, 255)
+            } else {
+                rerun::Color::from_unmultiplied_rgba(255, 200, 0, 255)
+            };
+            let bbox = rerun::Boxes2D::from_centers_and_half_sizes(
+                [rerun::datatypes::Vec2D([cx, cy])],
+                [rerun::datatypes::Vec2D([hw, hh])],
+            )
+            .with_labels([label.as_str()])
+            .with_colors([color])
+            .with_radii([2.0]);
+            if let Err(e) = rec.log_static(path.as_str(), &bbox) {
+                log::warn!("viz fixed ROI {model} failed: {e}");
             }
         }
     }
@@ -331,6 +450,20 @@ impl VizBridge {
             }
             self.last_signal_state = Some(signal_valid);
         }
+    }
+
+    pub fn log_face_state(&mut self, state: &str) {
+        if self.last_face_state.as_deref() == Some(state) {
+            return;
+        }
+        let rec = match &self.inner {
+            Inner::Connected { rec, .. } => rec,
+            _ => return,
+        };
+        if let Err(e) = rec.log("/pipeline/state/face", &rerun::StateChange::single(state)) {
+            log::warn!("viz face state failed: {e}");
+        }
+        self.last_face_state = Some(state.to_owned());
     }
 
     pub fn log_frame(&self, header: &RawFrameV1, rgb: &[u8]) {
@@ -509,7 +642,12 @@ impl VizBridge {
         }
     }
 
-    pub fn log_consolidated_observations(&self, observations: &[ConsolidatedObservation]) {
+    pub fn log_consolidated_observations(
+        &self,
+        observations: &[ConsolidatedObservation],
+        frame_w: u32,
+        frame_h: u32,
+    ) {
         if !self.toggles.boxes {
             return;
         }
@@ -523,8 +661,15 @@ impl VizBridge {
         for (index, observation) in observations.iter().enumerate() {
             let [x1, y1, x2, y2] = observation.bbox;
             let label = format!(
-                "{} {:.2} {}",
-                observation.class, observation.confidence, observation.primary_model,
+                "{} model={}",
+                detection_label(
+                    &observation.class,
+                    observation.confidence,
+                    observation.bbox,
+                    frame_w,
+                    frame_h,
+                ),
+                observation.primary_model,
             );
             let bbox = rerun::Boxes2D::from_centers_and_half_sizes(
                 [rerun::datatypes::Vec2D([(x1 + x2) / 2.0, (y1 + y2) / 2.0])],
@@ -548,6 +693,8 @@ impl VizBridge {
         model: &str,
         detections: &[Detection],
         crop_rect: Option<CropRect>,
+        frame_w: u32,
+        frame_h: u32,
     ) {
         if !self.toggles.boxes {
             return;
@@ -565,7 +712,13 @@ impl VizBridge {
         }
 
         for (index, detection) in detections.iter().enumerate() {
-            let label = format!("{} {:.2}", detection.class, detection.confidence);
+            let label = detection_label(
+                &detection.class,
+                detection.confidence,
+                detection.bbox,
+                frame_w,
+                frame_h,
+            );
             let log_box = |entity: String, [x1, y1, x2, y2]: [f32; 4]| {
                 let bbox = rerun::Boxes2D::from_centers_and_half_sizes(
                     [rerun::datatypes::Vec2D([(x1 + x2) / 2.0, (y1 + y2) / 2.0])],
@@ -583,13 +736,10 @@ impl VizBridge {
             };
             log_box(format!("{path}/{index}"), detection.bbox);
             if let Some(rect) = crop_rect {
-                let local_bbox = [
-                    detection.bbox[0] - rect.x1 as f32,
-                    detection.bbox[1] - rect.y1 as f32,
-                    detection.bbox[2] - rect.x1 as f32,
-                    detection.bbox[3] - rect.y1 as f32,
-                ];
-                log_box(format!("{crop_path}/{index}"), local_bbox);
+                log_box(
+                    format!("{crop_path}/{index}"),
+                    bbox_in_crop(detection.bbox, rect),
+                );
             }
         }
     }
@@ -675,12 +825,12 @@ impl VizBridge {
         &self,
         model: &str,
         detections: &[Detection],
-        depth_roi: Option<CropRect>,
+        depth_context_roi: Option<CropRect>,
     ) {
         if !self.toggles.boxes || !matches!(model, "detect-fast" | "face-yolo") {
             return;
         }
-        let Some(depth_roi) = depth_roi else {
+        let Some(depth_context_roi) = depth_context_roi else {
             return;
         };
         let rec = match &self.inner {
@@ -701,7 +851,7 @@ impl VizBridge {
         let label_prefix = if model == "face-yolo" { "face" } else { "body" };
 
         for (index, detection) in detections.iter().enumerate() {
-            let Some([x1, y1, x2, y2]) = bbox_in_roi(detection.bbox, depth_roi) else {
+            let Some([x1, y1, x2, y2]) = bbox_in_roi(detection.bbox, depth_context_roi) else {
                 continue;
             };
             let label = format!(
@@ -744,14 +894,14 @@ impl VizBridge {
         &self,
         model: &str,
         detections: &[Detection],
-        depth_roi: Option<CropRect>,
+        depth_context_roi: Option<CropRect>,
         frame_w: u32,
         frame_h: u32,
     ) {
         if !self.toggles.mask_polygons || model != "seg-standard" {
             return;
         }
-        let Some(depth_roi) = depth_roi else {
+        let Some(depth_context_roi) = depth_context_roi else {
             return;
         };
         let rec = match &self.inner {
@@ -771,7 +921,7 @@ impl VizBridge {
                 continue;
             };
             for (polygon_index, polygon) in mask.polygons.as_ref().iter().enumerate() {
-                let points = polygon_in_roi(polygon, fw, fh, depth_roi);
+                let points = polygon_in_roi(polygon, fw, fh, depth_context_roi);
                 if points.len() < 2 {
                     continue;
                 }
@@ -1056,6 +1206,81 @@ mod tests {
     use std::time::Instant;
 
     #[test]
+    fn detection_labels_include_area_and_frame_ratio() {
+        let label = detection_label("person", 0.87, [100.0, 200.0, 300.0, 500.0], 1_000, 1_000);
+        assert!(label.contains("conf=0.87"));
+        assert!(label.contains("area=60000px"));
+        assert!(label.contains("ratio=0.0600"));
+    }
+
+    #[test]
+    fn crop_bbox_uses_local_coordinates() {
+        let rect = CropRect {
+            x1: 312,
+            y1: 40,
+            x2: 1608,
+            y2: 540,
+        };
+        assert_eq!(
+            bbox_in_crop([500.0, 100.0, 620.0, 220.0], rect),
+            [188.0, 60.0, 308.0, 180.0]
+        );
+    }
+
+    #[test]
+    fn fixed_rois_use_stable_static_entities() {
+        let (rec, storage) = rerun::RecordingStreamBuilder::new("mana-viz-fixed-roi-test")
+            .batcher_config(rerun::log::ChunkBatcherConfig::NEVER)
+            .memory()
+            .expect("memory recording");
+        VizBridge::send_fixed_rois(
+            &rec,
+            &[
+                FixedRoi {
+                    model: "detect-fast".into(),
+                    rect: CropRect {
+                        x1: 528,
+                        y1: 0,
+                        x2: 1392,
+                        y2: 540,
+                    },
+                },
+                FixedRoi {
+                    model: "face-dwell".into(),
+                    rect: CropRect {
+                        x1: 760,
+                        y1: 0,
+                        x2: 1160,
+                        y2: 300,
+                    },
+                },
+            ],
+        );
+
+        let paths = storage
+            .take()
+            .into_iter()
+            .filter_map(|msg| match msg {
+                rerun::log::LogMsg::ArrowMsg(_, msg) => {
+                    Some(rerun::log::Chunk::from_arrow_msg(&msg).expect("valid chunk"))
+                }
+                _ => None,
+            })
+            .map(|chunk| chunk.entity_path().to_string())
+            .collect::<Vec<_>>();
+        assert!(
+            paths
+                .iter()
+                .any(|path| { path == "/world/camera/rois/fixed/detect-fast/roi" })
+        );
+        assert!(
+            paths
+                .iter()
+                .any(|path| { path == "/world/camera/rois/fixed/face-dwell/roi" })
+        );
+    }
+
+    #[test]
     fn occupancy_state_has_sequence_timestamp_and_log_time_timelines() {
         let (rec, storage) = rerun::RecordingStreamBuilder::new("mana-viz-test")
             .batcher_config(rerun::log::ChunkBatcherConfig::NEVER)
@@ -1069,10 +1294,12 @@ mod tests {
             },
             addr: String::new(),
             toggles: VizSendToggles::default(),
+            fixed_rois: Vec::new(),
             last_infer_at: HashMap::new(),
             last_occupancy_state: None,
             last_second_person_state: None,
             last_signal_state: None,
+            last_face_state: None,
         };
 
         bridge.set_frame_time(1, 1_000);

@@ -42,6 +42,46 @@ pub struct CropFrameInfo {
     pub h: u32,
 }
 
+fn extract_crop_frame(
+    rgb: &[u8],
+    frame_w: u32,
+    frame_h: u32,
+    rect: CropRect,
+) -> Option<CropFrameInfo> {
+    let crop_w = rect.x2.checked_sub(rect.x1)?;
+    let crop_h = rect.y2.checked_sub(rect.y1)?;
+    if crop_w == 0
+        || crop_h == 0
+        || rect.x2 > frame_w
+        || rect.y2 > frame_h
+        || rgb.len()
+            < (frame_w as usize)
+                .checked_mul(frame_h as usize)?
+                .checked_mul(3)?
+    {
+        return None;
+    }
+
+    let mut cropped = vec![
+        0u8;
+        (crop_w as usize)
+            .checked_mul(crop_h as usize)?
+            .checked_mul(3)?
+    ];
+    for row in rect.y1..rect.y2 {
+        let src_off = ((row as usize) * frame_w as usize + rect.x1 as usize) * 3;
+        let dst_off = ((row - rect.y1) as usize * crop_w as usize) * 3;
+        let row_len = crop_w as usize * 3;
+        cropped[dst_off..dst_off + row_len].copy_from_slice(&rgb[src_off..src_off + row_len]);
+    }
+
+    Some(CropFrameInfo {
+        rgb: cropped,
+        w: crop_w,
+        h: crop_h,
+    })
+}
+
 pub struct InferenceResult {
     pub detections: Vec<Detection>,
     pub depth: Option<DepthMap>,
@@ -73,6 +113,21 @@ pub struct Detection {
     pub bbox: [f32; 4],
     pub keypoints: Option<Vec<[f32; 3]>>,
     pub mask: Option<DetectionMask>,
+}
+
+impl Detection {
+    pub fn area_px(&self) -> f32 {
+        ((self.bbox[2] - self.bbox[0]) * (self.bbox[3] - self.bbox[1])).max(0.0)
+    }
+
+    pub fn area_ratio(&self, frame_w: u32, frame_h: u32) -> f32 {
+        let frame_area = (frame_w as f32) * (frame_h as f32);
+        if frame_area > 0.0 {
+            self.area_px() / frame_area
+        } else {
+            0.0
+        }
+    }
 }
 
 /// Instance mask attached to a detection.
@@ -131,13 +186,15 @@ impl DetectionMask {
     }
 }
 
-impl From<&Detection> for DetRecord {
-    fn from(d: &Detection) -> Self {
+impl Detection {
+    pub fn to_det_record(&self, frame_w: u32, frame_h: u32) -> DetRecord {
         DetRecord {
-            class: d.class.clone(),
-            confidence: d.confidence,
-            bbox: d.bbox,
-            mask: d.mask.as_ref().map(DetectionMask::to_wire_record),
+            class: self.class.clone(),
+            confidence: self.confidence,
+            bbox: self.bbox,
+            area_px: self.area_px(),
+            area_ratio: self.area_ratio(frame_w, frame_h),
+            mask: self.mask.as_ref().map(DetectionMask::to_wire_record),
         }
     }
 }
@@ -178,6 +235,14 @@ impl InferEngine {
 
             match YOLOModel::load_with_config(&entry.path, conf) {
                 Ok(model) => {
+                    let actual_task = model.task().as_str();
+                    if actual_task != entry.task.as_str() {
+                        failures.push(format!(
+                            "model {key}: catalog task '{}' does not match ONNX task '{actual_task}'",
+                            entry.task
+                        ));
+                        continue;
+                    }
                     log::info!("model {key}: loaded ({})", model.task());
                     log::info!(
                         "model {key}: postprocess classes={:?} confidence>={:.2} area=[{:.4},{:.4}] component_area>={:.4} mask_threshold>={:.2} nms_iou<={:.2} max_detections={}",
@@ -231,31 +296,19 @@ impl InferEngine {
     ) -> Option<InferenceResult> {
         let started_at = Instant::now();
         let loaded = self.models.get_mut(model_key)?;
+        let static_roi = loaded.static_roi;
 
         let (img, offset_x, offset_y, crop_frame) = if let Some(r) = crop_rect {
-            let crop_w = r.x2 - r.x1;
-            let crop_h = r.y2 - r.y1;
-            if crop_w == 0 || crop_h == 0 {
-                return None;
-            }
-            let mut cropped = vec![0u8; (crop_w * crop_h * 3) as usize];
-            for row in r.y1..r.y2 {
-                let src_off = (row * w + r.x1) as usize * 3;
-                let dst_off = ((row - r.y1) * crop_w) as usize * 3;
-                cropped[dst_off..dst_off + (crop_w as usize * 3)]
-                    .copy_from_slice(&rgb[src_off..src_off + (crop_w as usize * 3)]);
-            }
-            let crop_rgb = cropped.clone();
-            let img = DynamicImage::ImageRgb8(RgbImage::from_raw(crop_w, crop_h, cropped)?);
-            let info = Some(CropFrameInfo {
-                rgb: crop_rgb,
-                w: crop_w,
-                h: crop_h,
-            });
-            (img, r.x1 as f32, r.y1 as f32, info)
+            let info = extract_crop_frame(rgb, w, h, r)?;
+            let img =
+                DynamicImage::ImageRgb8(RgbImage::from_raw(info.w, info.h, info.rgb.clone())?);
+            (img, r.x1 as f32, r.y1 as f32, Some(info))
         } else {
             let img = DynamicImage::ImageRgb8(RgbImage::from_raw(w, h, rgb.to_vec())?);
-            (img, 0.0, 0.0, None)
+            // Static model ROIs are applied inside ultralytics-inference. Build
+            // the matching local image for Rerun without applying the ROI twice.
+            let crop_frame = static_roi.and_then(|roi| extract_crop_frame(rgb, w, h, roi));
+            (img, 0.0, 0.0, crop_frame)
         };
 
         let mut results = loaded.model.predict_image(&img, String::new()).ok()?;
@@ -306,7 +359,22 @@ impl InferEngine {
             let before_roi = detections.len();
             detections = detections
                 .into_iter()
-                .filter_map(|d| clip_detection_to_roi(d, roi))
+                .filter_map(|d| {
+                    let bbox = d.bbox;
+                    let class = d.class.clone();
+                    let confidence = d.confidence;
+                    let clipped = clip_detection_to_roi(d, roi);
+                    if clipped.is_none() {
+                        log::info!(
+                            "model {model_key}: static ROI rejected class={} confidence={:.4} bbox={:?} roi={:?}",
+                            class,
+                            confidence,
+                            bbox,
+                            roi.to_array(),
+                        );
+                    }
+                    clipped
+                })
                 .collect();
             before_roi - detections.len()
         } else {
@@ -328,13 +396,33 @@ impl InferEngine {
                     d.bbox[3] - rect.y1 as f32,
                 ]
             });
-            loaded.postprocess.accepts(
+            let reason = loaded.postprocess.rejection_reason(
                 &d.class,
                 d.confidence,
                 acceptance_bbox,
                 postprocess_w,
                 postprocess_h,
-            )
+            );
+            if let Some(reason) = reason {
+                if model_key == "face-yolo" {
+                    log::info!(
+                        "model face-yolo: postprocess rejected reason={} class={} confidence={:.4} bbox={:?} acceptance_bbox={:?} frame={}x{} thresholds=area[{:.6},{:.6}] confidence>={:.4}",
+                        reason,
+                        d.class,
+                        d.confidence,
+                        d.bbox,
+                        acceptance_bbox,
+                        postprocess_w,
+                        postprocess_h,
+                        loaded.postprocess.min_area_ratio,
+                        loaded.postprocess.max_area_ratio,
+                        loaded.postprocess.min_confidence,
+                    );
+                }
+                false
+            } else {
+                true
+            }
         });
         let postprocess_rejected = roi_rejected + before_postprocess - detections.len();
         let (mut detections, mut post_nms_suppressed) = apply_nms(detections, loaded.nms_iou);
@@ -763,6 +851,7 @@ pub fn compute_upper_square_roi(
 )]
 mod tests {
     use super::*;
+    use crate::config::ModelTask;
 
     #[test]
     fn depth_is_extracted_without_detection_boxes() {
@@ -790,7 +879,7 @@ mod tests {
     fn enabled_missing_model_fails_catalog_load() {
         let entry = ModelEntry {
             path: std::path::PathBuf::from("/definitely/missing/model.onnx"),
-            task: "depth".into(),
+            task: ModelTask::Depth,
             enabled: true,
             confidence: 0.0,
             iou: 0.5,
@@ -814,6 +903,47 @@ mod tests {
         assert!(error.to_string().contains("file not found"));
     }
 
+    #[test]
+    fn crop_frame_extracts_static_roi_in_local_pixel_order() {
+        let rgb = (0u8..36).collect::<Vec<_>>();
+        let crop = extract_crop_frame(
+            &rgb,
+            4,
+            3,
+            CropRect {
+                x1: 1,
+                y1: 1,
+                x2: 3,
+                y2: 3,
+            },
+        )
+        .expect("valid crop");
+
+        assert_eq!((crop.w, crop.h), (2, 2));
+        assert_eq!(
+            crop.rgb,
+            vec![15, 16, 17, 18, 19, 20, 27, 28, 29, 30, 31, 32]
+        );
+    }
+
+    #[test]
+    fn crop_frame_rejects_roi_outside_frame() {
+        assert!(
+            extract_crop_frame(
+                &[0; 12],
+                2,
+                2,
+                CropRect {
+                    x1: 1,
+                    y1: 1,
+                    x2: 3,
+                    y2: 2,
+                },
+            )
+            .is_none()
+        );
+    }
+
     fn person(x1: f32, y1: f32, x2: f32, y2: f32) -> Detection {
         Detection {
             class: "person".into(),
@@ -822,6 +952,16 @@ mod tests {
             keypoints: None,
             mask: None,
         }
+    }
+
+    #[test]
+    fn detection_area_and_ratio_use_frame_coordinates() {
+        let detection = person(10.0, 20.0, 110.0, 220.0);
+        assert_eq!(detection.area_px(), 20_000.0);
+        assert!((detection.area_ratio(1_000, 1_000) - 0.02).abs() < f32::EPSILON);
+        let record = detection.to_det_record(1_000, 1_000);
+        assert_eq!(record.area_px, 20_000.0);
+        assert!((record.area_ratio - 0.02).abs() < f32::EPSILON);
     }
 
     fn solid_mask(

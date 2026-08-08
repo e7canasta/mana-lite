@@ -1,0 +1,67 @@
+task = "pose"
+
+[defaults]
+confidence = 0.30
+iou = 0.50
+half = true
+
+[profiles.person]
+
+[profiles.person.postprocess]
+allow_classes = ["person"]
+min_confidence = 0.10
+min_area_ratio = 0.01
+max_area_ratio = 1.0
+nms_iou = 0.50
+
+[profiles.person.crop]
+type = "largest_class"
+class = "person"
+margin = 0.15
+
+[models.pose-standard]
+profile = "person"
+enabled = false
+path = "tools/model-tools/artifacts/yolo26-fp16/yolo26s-pose-fp16-320.onnx"
+confidence = 0.40
+imgsz = 320
+
+[models.pose-s-320]
+enabled = false
+path = "tools/model-tools/artifacts/yolo26-fp16/yolo26s-pose-fp16-320.onnx"
+imgsz = 320
+
+[models.pose-s-640]
+enabled = false
+path = "tools/model-tools/artifacts/yolo26-fp16/yolo26s-pose-fp16-640.onnx"
+imgsz = 640
+
+[models.pose-m-320]
+enabled = false
+path = "tools/model-tools/artifacts/yolo26-fp16/yolo26m-pose-fp16-320.onnx"
+imgsz = 320
+
+[models.pose-m-640]
+enabled = false
+path = "tools/model-tools/artifacts/yolo26-fp16/yolo26m-pose-fp16-640.onnx"
+imgsz = 640
+
+[models.pose-l-320]
+enabled = false
+path = "tools/model-tools/artifacts/yolo26-fp16/yolo26l-pose-fp16-320.onnx"
+imgsz = 320
+
+[models.pose-l-640]
+enabled = false
+path = "tools/model-tools/artifacts/yolo26-fp16/yolo26l-pose-fp16-640.onnx"
+imgsz = 640
+
+[models.pose-x-320]
+enabled = false
+path = "tools/model-tools/artifacts/yolo26-fp16/yolo26x-pose-fp16-320.onnx"
+imgsz = 320
+
+[models.pose-x-640]
+enabled = false
+path = "tools/model-tools/artifacts/yolo26-fp16/yolo26x-pose-fp16-640.onnx"
+imgsz = 640

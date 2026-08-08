@@ -112,6 +112,23 @@ pub enum Event {
         multiple_candidate_timer_ms: u64,
         multiple_exit_timer_ms: u64,
     },
+    FaceDwell {
+        frame_id: u64,
+        source: String,
+        state: String,
+        state_label: Option<String>,
+        state_dwell_ms: u64,
+        state_dwell_required_ms: Option<u64>,
+        cardinality: Option<String>,
+        person_present: bool,
+        face_present: bool,
+        face_confidence: Option<f32>,
+        face_in_dwell: Option<bool>,
+        at_edge: bool,
+        face_was_inside: bool,
+        face_model_ran: bool,
+        active_timers: Vec<FaceDwellTimerRecord>,
+    },
     Metrics(MetricsReport),
 }
 
@@ -144,6 +161,7 @@ impl Event {
             Event::Health { .. } => JsonlLevel::Info,
             Event::Fsm { .. } => JsonlLevel::Info,
             Event::Presence { .. } => JsonlLevel::Debug,
+            Event::FaceDwell { .. } => JsonlLevel::Debug,
             Event::Metrics { .. } => JsonlLevel::Info,
             Event::Frame { .. } => JsonlLevel::Debug,
             Event::Detection { .. } => JsonlLevel::Debug,
@@ -161,7 +179,17 @@ pub struct DetRecord {
     pub class: String,
     pub confidence: f32,
     pub bbox: [f32; 4],
+    /// Bounding-box area in source-frame pixels and as a fraction of the full frame.
+    pub area_px: f32,
+    pub area_ratio: f32,
     pub mask: Option<MaskRecord>,
+}
+
+#[derive(Debug, Clone)]
+pub struct FaceDwellTimerRecord {
+    pub trigger: String,
+    pub elapsed_ms: u64,
+    pub required_ms: u64,
 }
 
 /// JSONL wire record for an instance mask (Spec-003).
@@ -452,6 +480,42 @@ impl Event {
             empty_timer_ms,
             multiple_candidate_timer_ms,
             multiple_exit_timer_ms,
+        }
+    }
+
+    pub fn face_dwell(
+        frame_id: u64,
+        source: &str,
+        state: &str,
+        state_label: Option<&str>,
+        state_dwell_ms: u64,
+        state_dwell_required_ms: Option<u64>,
+        cardinality: Option<&str>,
+        person_present: bool,
+        face_present: bool,
+        face_confidence: Option<f32>,
+        face_in_dwell: Option<bool>,
+        at_edge: bool,
+        face_was_inside: bool,
+        face_model_ran: bool,
+        active_timers: Vec<FaceDwellTimerRecord>,
+    ) -> Self {
+        Event::FaceDwell {
+            frame_id,
+            source: source.into(),
+            state: state.into(),
+            state_label: state_label.map(str::to_string),
+            state_dwell_ms,
+            state_dwell_required_ms,
+            cardinality: cardinality.map(str::to_string),
+            person_present,
+            face_present,
+            face_confidence,
+            face_in_dwell,
+            at_edge,
+            face_was_inside,
+            face_model_ran,
+            active_timers,
         }
     }
 

@@ -1,0 +1,187 @@
+task = "detect"
+
+[defaults]
+confidence = 0.20
+iou = 0.50
+half = true
+
+[profiles.face.postprocess]
+allow_classes = ["face"]
+min_confidence = 0.30
+min_area_ratio = 0.001
+max_area_ratio = 0.35
+nms_iou = 0.005
+max_detections = 1
+
+# Dynamic face-detection crop derived from the person bbox. The fixed face-dwell
+# ROI and semantic person zones are configured separately in zones.toml.
+[profiles.face.crop]
+type = "largest_class"
+class = "person"
+square_size = 320
+upper_fraction = 0.50
+
+[models.detect-fast]
+enabled = true
+path = "tools/model-tools/artifacts/yolo26-fp16/yolo26x-fp16-320.onnx"
+confidence = 0.40
+iou = 0.20
+imgsz = 320
+
+[models.detect-fast.postprocess]
+allow_classes = ["person", "wheelchair"]
+min_confidence = 0.50
+min_area_ratio = 0.01
+
+[models.detect-fast.crop]
+# Static parent detection ROI. It is separate from the dynamic face crop and
+# from the semantic bed-dwell zone.
+type = "static"
+region = [420, 0, 1500, 1080]
+
+[models.face-yolo]
+path = "tools/model-tools/artifacts/yoloface-fp16/yolov12l-face-fp16-320.onnx"
+profile = "face"
+enabled = true
+confidence = 0.20
+iou = 0.05
+imgsz = 320
+half = true
+
+[models.detect-s-320]
+enabled = false
+path = "tools/model-tools/artifacts/yolo26-fp16/yolo26s-fp16-320.onnx"
+imgsz = 320
+
+[models.detect-s-640]
+enabled = false
+path = "tools/model-tools/artifacts/yolo26-fp16/yolo26s-fp16-640.onnx"
+imgsz = 640
+
+[models.detect-m-320]
+enabled = false
+path = "tools/model-tools/artifacts/yolo26-fp16/yolo26m-fp16-320.onnx"
+imgsz = 320
+
+[models.detect-m-640]
+enabled = false
+path = "tools/model-tools/artifacts/yolo26-fp16/yolo26m-fp16-640.onnx"
+imgsz = 640
+
+[models.detect-l-320]
+enabled = false
+path = "tools/model-tools/artifacts/yolo26-fp16/yolo26l-fp16-320.onnx"
+imgsz = 320
+
+[models.detect-l-640]
+enabled = false
+path = "tools/model-tools/artifacts/yolo26-fp16/yolo26l-fp16-640.onnx"
+imgsz = 640
+
+[models.detect-x-320]
+enabled = false
+path = "tools/model-tools/artifacts/yolo26-fp16/yolo26x-fp16-320.onnx"
+imgsz = 320
+
+[models.detect-x-640]
+enabled = false
+path = "tools/model-tools/artifacts/yolo26-fp16/yolo26x-fp16-640.onnx"
+imgsz = 640
+
+# YOLO11/12 face benchmark matrix. The face profile owns crop and postprocess.
+
+[models.face-v11-s-320]
+profile = "face"
+enabled = false
+path = "tools/model-tools/artifacts/yoloface-fp16/yolov11s-face-fp16-320.onnx"
+confidence = 0.10
+iou = 0.50
+imgsz = 320
+
+[models.face-v11-s-640]
+profile = "face"
+enabled = false
+path = "tools/model-tools/artifacts/yoloface-fp16/yolov11s-face-fp16-640.onnx"
+confidence = 0.10
+iou = 0.50
+imgsz = 640
+
+[models.face-v11-m-320]
+profile = "face"
+enabled = false
+path = "tools/model-tools/artifacts/yoloface-fp16/yolov11m-face-fp16-320.onnx"
+confidence = 0.10
+iou = 0.50
+imgsz = 320
+
+[models.face-v11-m-640]
+profile = "face"
+enabled = false
+path = "tools/model-tools/artifacts/yoloface-fp16/yolov11m-face-fp16-640.onnx"
+confidence = 0.10
+iou = 0.50
+imgsz = 640
+
+[models.face-v11-l-320]
+profile = "face"
+enabled = false
+path = "tools/model-tools/artifacts/yoloface-fp16/yolov11l-face-fp16-320.onnx"
+confidence = 0.10
+iou = 0.50
+imgsz = 320
+
+[models.face-v11-l-640]
+profile = "face"
+enabled = false
+path = "tools/model-tools/artifacts/yoloface-fp16/yolov11l-face-fp16-640.onnx"
+confidence = 0.10
+iou = 0.50
+imgsz = 640
+
+[models.face-v12-s-320]
+profile = "face"
+enabled = false
+path = "tools/model-tools/artifacts/yoloface-fp16/yolov12s-face-fp16-320.onnx"
+confidence = 0.10
+iou = 0.50
+imgsz = 320
+
+[models.face-v12-s-640]
+profile = "face"
+enabled = false
+path = "tools/model-tools/artifacts/yoloface-fp16/yolov12s-face-fp16-640.onnx"
+confidence = 0.10
+iou = 0.50
+imgsz = 640
+
+[models.face-v12-m-320]
+profile = "face"
+enabled = false
+path = "tools/model-tools/artifacts/yoloface-fp16/yolov12m-face-fp16-320.onnx"
+confidence = 0.10
+iou = 0.50
+imgsz = 320
+
+[models.face-v12-m-640]
+profile = "face"
+enabled = false
+path = "tools/model-tools/artifacts/yoloface-fp16/yolov12m-face-fp16-640.onnx"
+confidence = 0.10
+iou = 0.50
+imgsz = 640
+
+[models.face-v12-l-320]
+profile = "face"
+enabled = false
+path = "tools/model-tools/artifacts/yoloface-fp16/yolov12l-face-fp16-320.onnx"
+confidence = 0.10
+iou = 0.50
+imgsz = 320
+
+[models.face-v12-l-640]
+profile = "face"
+enabled = false
+path = "tools/model-tools/artifacts/yoloface-fp16/yolov12l-face-fp16-640.onnx"
+confidence = 0.10
+iou = 0.50
+imgsz = 640

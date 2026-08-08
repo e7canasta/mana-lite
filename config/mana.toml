@@ -26,12 +26,13 @@ blueprint_file = "config/blueprints/detect-room-face/blueprint.toml"
 # Use this profile when face inference itself must be excluded from the test.
 # blueprint_file = "config/blueprints/detect-room-raw/blueprint.toml"
 depth_rules_file = "config/depth-rules.toml"
-# zones_file = "config/zones.toml"
-# fsm_file = "config/fsm.toml"
+zones_file = "config/zones.toml"
+fsm_file = "config/blueprints/detect-room-face/fsm.toml"
 
 [detection]
 face_component_coverage = 0.70
 face_max_center_y_ratio = 0.65
+face_edge_margin_px = 32
 
 [presence]
 enabled = true
@@ -73,9 +74,9 @@ jsonl_level = "debug"
 [pipeline]
 snapshot = false
 infer = true
-track = false
-zones = false
-fsm = false
+track = true
+zones = true
+fsm = true
 [viz]
 enabled = true
 rerun_addr = "192.168.1.15:9876"

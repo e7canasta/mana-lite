@@ -31,6 +31,7 @@ Un blueprint declara:
 - los modelos activos.
 - las reglas de cascade.
 - si requiere tracking.
+- un overlay opcional de parámetros de modelos.
 
 `mana.toml` selecciona exactamente el blueprint activo mediante
 `inference.blueprint_file`.
@@ -39,6 +40,11 @@ El catalogo de modelos sigue siendo compartido. Al cargar un blueprint, el
 runtime crea una vista runtime del catalogo y habilita solo sus modelos. Esto
 permite que un mismo `models.toml` soporte varias combinaciones sin editarlo
 para cada despliegue.
+
+Cuando un despliegue necesita tuning propio, el blueprint puede declarar
+`model_overlay = "models.toml"`. Ese archivo debe incluir
+`extends = "../../models.toml"` y solo puede sobrescribir modelos existentes.
+El runtime compone una vista derivada sin mutar el catálogo compartido.
 
 ## Activation policies
 

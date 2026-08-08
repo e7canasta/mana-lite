@@ -1,0 +1,11 @@
+# Blueprint-local runtime tuning. The parent link is explicit and relative to
+# this file, so the effective catalog remains reproducible.
+extends = "../../models.toml"
+
+[models.face-yolo]
+confidence = 0.10
+
+[models.face-yolo.postprocess]
+min_area_ratio = 0.0005
+min_confidence = 0.30
+max_detections = 1

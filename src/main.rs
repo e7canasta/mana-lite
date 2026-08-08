@@ -4,6 +4,7 @@ mod config;
 mod depth;
 mod detection;
 mod error;
+mod face_dwell;
 mod fsm;
 mod infer;
 mod ingest;
@@ -20,16 +21,20 @@ mod zones;
 
 use cascade::{BlueprintConfig, CascadeRule, CascadeScheduler, CascadeTarget};
 use config::{
-    AppConfig, CropType, MetricsLogConfig, RerunBlueprintConfig, load_app_config, load_config,
-    load_depth_rules, load_fsm_catalog, load_metrics_log, load_model_catalog, load_rerun_blueprint,
-    load_viz_data, load_zone_catalog, validate_fsm,
+    AppConfig, CropType, MetricsLogConfig, RerunBlueprintConfig, apply_model_overlay,
+    load_app_config, load_config, load_depth_rules, load_fsm_catalog, load_metrics_log,
+    load_model_catalog, load_rerun_blueprint, load_viz_data, load_zone_catalog, validate_fsm,
+    validate_model_catalog,
 };
 use detection::{ConsolidatedObservation, DetectionConsolidator, DetectionRole, ModelDetections};
 use error::{ConfigError, ManaError, Result};
-use fsm::FsmEngine;
-use infer::{CropRect, InferEngine, InferenceResult, compute_bbox_roi, compute_upper_square_roi};
+use face_dwell::FaceDwellLogStrategy;
+use fsm::{FsmEngine, FsmSceneContext};
+use infer::{
+    CropRect, Detection, InferEngine, InferenceResult, compute_bbox_roi, compute_upper_square_roi,
+};
 use ingest::{IngestEngine, RawKeyframe, RetinaReader};
-use logger::{DetRecord, Event, JsonlLevel, LogManager, LogSink};
+use logger::{Event, JsonlLevel, LogManager, LogSink};
 use mana_types::RawFrameV1;
 use metrics::{Health, MetricsEngine, PerClassFrameStats};
 use occupancy::{OccupancyEvidence, OccupancyStateMachine};
@@ -42,7 +47,7 @@ use std::path::PathBuf;
 use std::time::Instant;
 use track::{Tracker, TrackerConfig, track_event_to_log};
 use ultralytics_inference::DepthMap;
-use viz::VizBridge;
+use viz::{FixedRoi, VizBridge};
 use zones::{ZoneEngine, zone_event_to_log};
 
 static VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -63,6 +68,7 @@ struct App {
     tracker: Tracker,
     zone_engine: Option<ZoneEngine>,
     fsm_engine: Option<FsmEngine>,
+    face_dwell_logger: FaceDwellLogStrategy,
     cascade: CascadeScheduler,
     detection_consolidator: DetectionConsolidator,
     model_tasks: HashMap<String, String>,
@@ -72,7 +78,11 @@ struct App {
     health: Health,
     presence: PresenceFilter,
     occupancy: OccupancyStateMachine,
-    depth_roi: Option<CropRect>,
+    depth_context_roi: Option<CropRect>,
+    person_detection_roi: Option<CropRect>,
+    face_dwell_roi: Option<CropRect>,
+    face_edge_margin_px: u32,
+    fsm_context: FsmSceneContext,
     depth_rules: depth::DepthRules,
     depth_rule_snapshot: depth::DepthRuleSnapshot,
     decoder: FrameDecoder,
@@ -114,36 +124,11 @@ impl App {
             }));
         }
         let model_catalog = load_model_catalog(&config.inference.model_catalog)?;
-        if let Some((model, _)) = model_catalog
-            .models
-            .iter()
-            .find(|(_, entry)| !entry.is_valid())
-        {
-            return Err(ManaError::Config(ConfigError::InvalidValue {
-                field: format!("models.{model}"),
-                msg: "confidence, iou, max_det and imgsz must be valid positive model settings"
-                    .into(),
-            }));
-        }
-        if let Some((model, _)) = model_catalog
-            .models
-            .iter()
-            .find(|(_, entry)| !entry.postprocess.is_valid())
-        {
-            return Err(ManaError::Config(ConfigError::InvalidValue {
-                field: format!("models.{model}.postprocess"),
-                msg: "confidence and area thresholds must be finite and ordered".into(),
-            }));
-        }
-        if let Some((model, _)) = model_catalog
-            .models
-            .iter()
-            .find(|(_, entry)| entry.crop.as_ref().is_some_and(|crop| !crop.is_valid()))
-        {
-            return Err(ManaError::Config(ConfigError::InvalidValue {
-                field: format!("models.{model}.crop"),
-                msg: "square_size must be positive and upper_fraction must be within 0..=1".into(),
-            }));
+        let model_errors = validate_model_catalog(&model_catalog);
+        if !model_errors.is_empty() {
+            return Err(ManaError::Config(ConfigError::ValidationError(
+                model_errors.join("; "),
+            )));
         }
         let blueprint = config
             .inference
@@ -176,6 +161,33 @@ impl App {
 
         let mut runtime_catalog = model_catalog.clone();
         if let Some(ref bp) = blueprint {
+            if let Some(overlay) = &bp.blueprint.model_overlay {
+                let blueprint_path = config.inference.blueprint_file.as_ref().ok_or_else(|| {
+                    ManaError::Config(ConfigError::InvalidValue {
+                        field: "blueprint.model_overlay".into(),
+                        msg: "a model overlay requires a blueprint file path".into(),
+                    })
+                })?;
+                let overlay_path = if overlay.is_absolute() {
+                    overlay.clone()
+                } else {
+                    blueprint_path
+                        .parent()
+                        .unwrap_or_else(|| std::path::Path::new("."))
+                        .join(overlay)
+                };
+                let overridden = apply_model_overlay(
+                    &mut runtime_catalog,
+                    &overlay_path,
+                    &config.inference.model_catalog,
+                )?;
+                log::info!(
+                    "model overlay: {} extends {} (overrides: {:?})",
+                    overlay_path.display(),
+                    config.inference.model_catalog.display(),
+                    overridden
+                );
+            }
             let selected: HashSet<&str> = bp.blueprint.models.iter().map(String::as_str).collect();
             if selected.is_empty() {
                 return Err(ManaError::Config(ConfigError::InvalidValue {
@@ -219,6 +231,12 @@ impl App {
             for (key, entry) in &mut runtime_catalog.models {
                 entry.enabled = selected.contains(key.as_str());
             }
+        }
+        let runtime_model_errors = validate_model_catalog(&runtime_catalog);
+        if !runtime_model_errors.is_empty() {
+            return Err(ManaError::Config(ConfigError::ValidationError(
+                runtime_model_errors.join("; "),
+            )));
         }
 
         let zones = config
@@ -324,17 +342,50 @@ impl App {
         log.emit(Event::meta_model_loaded(
             &primary_model,
             &default_model.path.display().to_string(),
-            &default_model.task,
+            default_model.task.as_str(),
             0,
         ));
 
-        let depth_roi = runtime_catalog
+        let depth_context_roi = runtime_catalog
             .models
             .get("depth-standard")
             .and_then(|entry| entry.crop.as_ref())
             .filter(|crop| crop.crop_type == CropType::Static)
             .and_then(|crop| crop.region)
             .map(CropRect::from_array);
+
+        let face_dwell_roi = zones
+            .as_ref()
+            .and_then(|catalog| catalog.face_dwell.as_ref())
+            .map(|entry| CropRect::from_array(entry.rect()));
+
+        let mut fixed_rois: Vec<FixedRoi> = runtime_catalog
+            .models
+            .iter()
+            .filter(|(_, entry)| entry.enabled)
+            .filter_map(|(model, entry)| {
+                entry
+                    .crop
+                    .as_ref()
+                    .filter(|crop| crop.crop_type == CropType::Static)
+                    .and_then(|crop| crop.region)
+                    .map(|region| FixedRoi {
+                        model: model.clone(),
+                        rect: CropRect::from_array(region),
+                    })
+            })
+            .collect();
+        if let Some(rect) = face_dwell_roi {
+            fixed_rois.push(FixedRoi {
+                model: "face-dwell".into(),
+                rect,
+            });
+        }
+        fixed_rois.sort_by(|a, b| a.model.cmp(&b.model));
+        let static_roi_map: HashMap<String, CropRect> = fixed_rois
+            .iter()
+            .map(|roi| (roi.model.clone(), roi.rect))
+            .collect();
 
         let infer = InferEngine::from_catalog(&runtime_catalog)?;
         log::info!("inference: {} model(s) loaded", infer.model_count());
@@ -391,7 +442,7 @@ impl App {
         let model_tasks: HashMap<String, String> = runtime_catalog
             .models
             .iter()
-            .map(|(k, v)| (k.clone(), v.task.clone()))
+            .map(|(k, v)| (k.clone(), v.task.to_string()))
             .collect();
         let model_enabled: HashMap<String, bool> = runtime_catalog
             .models
@@ -426,6 +477,7 @@ impl App {
                 &config.viz.rerun_addr,
                 &viz_data.viz.send,
                 &rerun_blueprint.rerun,
+                fixed_rois,
             )
         } else {
             VizBridge::disabled()
@@ -441,6 +493,7 @@ impl App {
             tracker,
             zone_engine,
             fsm_engine,
+            face_dwell_logger: FaceDwellLogStrategy,
             cascade,
             detection_consolidator: DetectionConsolidator::new(
                 config.detection.face_component_coverage,
@@ -455,7 +508,11 @@ impl App {
                 config.presence.poi.clone(),
             ),
             occupancy: OccupancyStateMachine::new(config.presence.occupancy.clone()),
-            depth_roi,
+            depth_context_roi,
+            person_detection_roi: static_roi_map.get("detect-fast").copied(),
+            face_dwell_roi,
+            face_edge_margin_px: config.detection.face_edge_margin_px,
+            fsm_context: FsmSceneContext::default(),
             depth_rules,
             depth_rule_snapshot: depth::DepthRuleSnapshot::default(),
             decoder,
@@ -651,10 +708,22 @@ impl App {
         } else {
             raw_person_count == 1
         };
+        let occupancy_person_count = if config.pipeline.track
+            && raw_person_count == 0
+            && presence_update.held
+            && confirmed_person_count == 1
+            && poi_present
+        {
+            // Keep a confirmed single-person session alive across the short
+            // detector dropouts already retained by PresenceFilter.
+            1
+        } else {
+            raw_person_count
+        };
         let occupancy_update = self.occupancy.update_at(
             OccupancyEvidence {
                 signal_valid: primary_root_valid,
-                raw_person_count,
+                raw_person_count: occupancy_person_count,
                 poi_present,
                 confirmed_person_count,
             },
@@ -721,24 +790,58 @@ impl App {
             self.run_scheduled_model(&model_key, target, fb, &mut pending);
         }
 
-        let model_outputs: Vec<ModelDetections> = pending
-            .iter()
-            .filter(|item| {
-                self.model_tasks
-                    .get(&item.model_key)
-                    .is_none_or(|task| task != "depth")
-            })
-            .map(|item| ModelDetections {
-                model: item.model_key.as_str(),
-                role: if item.model_key == self.primary_model {
-                    DetectionRole::Primary
-                } else {
-                    DetectionRole::Secondary
-                },
-                detections: &item.output.detections,
-            })
-            .collect();
+        let mut held_root_detections = Vec::new();
+        if config.pipeline.track && presence_update.held {
+            held_root_detections.extend(
+                tracking_observations
+                    .iter()
+                    .filter(|observation| observation.class == config.presence.class)
+                    .map(|observation| Detection {
+                        class: observation.class.clone(),
+                        confidence: observation.confidence,
+                        bbox: observation.bbox,
+                        keypoints: None,
+                        mask: None,
+                    }),
+            );
+        }
+        let mut model_outputs: Vec<ModelDetections> = Vec::new();
+        if !held_root_detections.is_empty() {
+            // Put the retained parent before the face child so consolidation
+            // can attach the current face evidence to the same person.
+            model_outputs.push(ModelDetections {
+                model: self.primary_model.as_str(),
+                role: DetectionRole::Primary,
+                detections: &held_root_detections,
+            });
+        }
+        model_outputs.extend(
+            pending
+                .iter()
+                .filter(|item| {
+                    self.model_tasks
+                        .get(&item.model_key)
+                        .is_none_or(|task| task != "depth")
+                })
+                .map(|item| ModelDetections {
+                    model: item.model_key.as_str(),
+                    role: if item.model_key == self.primary_model {
+                        DetectionRole::Primary
+                    } else {
+                        DetectionRole::Secondary
+                    },
+                    detections: &item.output.detections,
+                }),
+        );
         let observations = self.detection_consolidator.consolidate(&model_outputs);
+        let face_model_ran = pending.iter().any(|item| item.model_key == "face-yolo");
+        self.update_fsm_context(
+            &config.presence.class,
+            occupancy_update.state,
+            occupancy_person_count,
+            face_model_ran,
+            &observations,
+        );
         for observation in &observations {
             let mut sources: Vec<String> = observation
                 .evidence
@@ -757,7 +860,8 @@ impl App {
                 sources,
             ));
         }
-        self.viz.log_consolidated_observations(&observations);
+        self.viz
+            .log_consolidated_observations(&observations, fb.w, fb.h);
         if config.pipeline.track {
             self.tracker.enrich_observations(&observations);
         }
@@ -896,14 +1000,14 @@ impl App {
         }
         self.viz.log_per_frame_class_stats(model_key, &per_class);
         self.viz
-            .log_model_detections(model_key, &output.detections, crop_rect);
+            .log_model_detections(model_key, &output.detections, crop_rect, frame_w, frame_h);
         self.viz.log_model_pose(model_key, &output.detections);
         self.viz
-            .log_depth_context_boxes(model_key, &output.detections, self.depth_roi);
+            .log_depth_context_boxes(model_key, &output.detections, self.depth_context_roi);
         self.viz.log_depth_context_polygons(
             model_key,
             &output.detections,
-            self.depth_roi,
+            self.depth_context_roi,
             frame_w,
             frame_h,
         );
@@ -922,7 +1026,11 @@ impl App {
             model_key,
             output.infer_ms,
             output.pipeline_us / 1000,
-            output.detections.iter().map(DetRecord::from).collect(),
+            output
+                .detections
+                .iter()
+                .map(|detection| detection.to_det_record(frame_w, frame_h))
+                .collect(),
             output.postprocess_rejected,
             output.post_nms_suppressed,
             Some(per_class),
@@ -974,7 +1082,10 @@ impl App {
         let Some(depth) = output.depth.as_ref() else {
             return;
         };
-        let Some(roi) = crop_rect.or(self.depth_roi).map(|rect| rect.to_array()) else {
+        let Some(roi) = crop_rect
+            .or(self.depth_context_roi)
+            .map(|rect| rect.to_array())
+        else {
             return;
         };
         let results = self.depth_rules.evaluate(depth, roi);
@@ -1007,6 +1118,62 @@ impl App {
         }
     }
 
+    fn update_fsm_context(
+        &mut self,
+        person_class: &str,
+        cardinality: occupancy::RoomCardinality,
+        raw_person_count: usize,
+        face_model_ran: bool,
+        observations: &[ConsolidatedObservation],
+    ) {
+        let person = observations
+            .iter()
+            .filter(|observation| observation.class == person_class)
+            .max_by(|a, b| {
+                a.confidence
+                    .partial_cmp(&b.confidence)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+        let face = person.and_then(|observation| {
+            observation
+                .components
+                .iter()
+                .filter(|component| component.class == "face")
+                .max_by(|a, b| {
+                    a.confidence
+                        .partial_cmp(&b.confidence)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                })
+        });
+        let person_present = raw_person_count > 0;
+        let face_present = face.is_some();
+        let face_in_dwell = self
+            .face_dwell_roi
+            .map(|roi| face.is_some_and(|evidence| bbox_intersects_roi(evidence.bbox, roi)));
+        let at_edge = person.is_some_and(|observation| {
+            self.bbox_near_roi(observation.bbox, self.person_detection_roi)
+        });
+
+        self.fsm_context = FsmSceneContext {
+            cardinality: Some(cardinality.as_str().into()),
+            person_present,
+            face_present,
+            face_confidence: face.map(|evidence| evidence.confidence),
+            face_in_dwell,
+            at_edge,
+            face_model_ran,
+        };
+    }
+
+    fn bbox_near_roi(&self, bbox: [f32; 4], roi: Option<CropRect>) -> bool {
+        let Some(roi) = roi else { return false };
+        let margin = self.face_edge_margin_px as f32;
+        bbox[0] <= roi.x1 as f32 + margin
+            || bbox[1] <= roi.y1 as f32 + margin
+            || bbox[2] >= roi.x2 as f32 - margin
+            || bbox[3] >= roi.y2 as f32 - margin
+    }
+
     fn publish_entities(&mut self) {
         let current_tracks = self.tracker.current_tracks();
         self.viz.log_entity_boxes(&current_tracks);
@@ -1028,45 +1195,66 @@ impl App {
         if !config.pipeline.zones && !config.pipeline.fsm {
             return;
         }
-        let (Some(ref mut zone), Some(ref mut fsm)) =
-            (self.zone_engine.as_mut(), self.fsm_engine.as_mut())
-        else {
-            return;
-        };
-
         let zone_events = if config.pipeline.zones {
-            let current: Vec<&track::Track> = self.tracker.current_tracks();
-            let events = zone.evaluate(&current);
-            for ev in &events {
-                self.log
-                    .emit(zone_event_to_log(ev, self.state.frame_number()));
+            if let Some(zone) = self.zone_engine.as_mut() {
+                let current: Vec<&track::Track> = self.tracker.current_tracks();
+                let events = zone.evaluate(&current);
+                for ev in &events {
+                    self.log
+                        .emit(zone_event_to_log(ev, self.state.frame_number()));
+                }
+                events
+            } else {
+                Vec::new()
             }
-            events
         } else {
-            vec![]
+            Vec::new()
         };
 
         if config.pipeline.fsm {
-            Self::try_advance_fsm(
-                fsm,
-                &zone_events,
-                zone,
-                &self.health,
-                &self.depth_rule_snapshot,
-                &mut self.log,
-            );
+            if self.fsm_engine.is_some() {
+                let zone = self.zone_engine.as_ref();
+                let snapshot = {
+                    let fsm = self.fsm_engine.as_mut().expect("checked above");
+                    Self::try_advance_fsm(
+                        fsm,
+                        &zone_events,
+                        zone,
+                        &self.health,
+                        &self.depth_rule_snapshot,
+                        &self.fsm_context,
+                        false,
+                        &mut self.log,
+                    );
+                    fsm.snapshot()
+                };
+                self.face_dwell_logger.log_keyframe(
+                    &mut self.log,
+                    self.state.frame_number(),
+                    &self.fsm_context,
+                    &snapshot,
+                );
+                self.viz.log_face_state(&snapshot.state);
+            }
         }
     }
 
     fn try_advance_fsm(
         fsm: &mut FsmEngine,
         zone_events: &[zones::ZoneEvent],
-        zone: &ZoneEngine,
+        zone: Option<&ZoneEngine>,
         health: &Health,
         depth: &depth::DepthRuleSnapshot,
+        context: &FsmSceneContext,
+        wildcard_only: bool,
         log: &mut dyn LogSink,
-    ) {
-        if let Some(tr) = fsm.evaluate(zone_events, zone, health, depth) {
+    ) -> Option<fsm::FsmTransitionResult> {
+        let transition = if wildcard_only {
+            fsm.evaluate_wildcard_with_context(zone_events, zone, health, depth, context)
+        } else {
+            fsm.evaluate_with_context(zone_events, zone, health, depth, context)
+        };
+        if let Some(tr) = transition.as_ref() {
             log.emit(Event::fsm_transition(
                 &tr.from,
                 tr.from_label.as_deref(),
@@ -1076,6 +1264,7 @@ impl App {
                 tr.dwell_ms,
             ));
         }
+        transition
     }
 
     fn flush_viz_metrics(&mut self, frame_buf: &Option<FrameBuffer>, timestamp_ns: i64) {
@@ -1113,11 +1302,33 @@ impl App {
         if !config.pipeline.fsm {
             return;
         }
-        if let (Some(ref mut fsm), Some(ref zone)) =
-            (self.fsm_engine.as_mut(), self.zone_engine.as_ref())
-        {
+        if self.fsm_engine.is_some() {
             let depth = self.depth_rule_snapshot.clone();
-            Self::try_advance_fsm(fsm, &[], zone, &self.health, &depth, &mut self.log);
+            let zone = self.zone_engine.as_ref();
+            let context = self.fsm_context.clone();
+            let snapshot = {
+                let fsm = self.fsm_engine.as_mut().expect("checked above");
+                Self::try_advance_fsm(
+                    fsm,
+                    &[],
+                    zone,
+                    &self.health,
+                    &depth,
+                    &context,
+                    true,
+                    &mut self.log,
+                )
+                .map(|_| fsm.snapshot())
+            };
+            if let Some(snapshot) = snapshot {
+                self.face_dwell_logger.log_wildcard(
+                    &mut self.log,
+                    self.state.frame_number(),
+                    &context,
+                    &snapshot,
+                );
+                self.viz.log_face_state(&snapshot.state);
+            }
         }
     }
 }
@@ -1130,6 +1341,13 @@ fn raw_frame_header(fb: &FrameBuffer, frame_id: u64, timestamp_ns: i64) -> RawFr
         timestamp_ns,
         ..Default::default()
     }
+}
+
+fn bbox_intersects_roi(bbox: [f32; 4], roi: CropRect) -> bool {
+    bbox[0] < roi.x2 as f32
+        && bbox[2] > roi.x1 as f32
+        && bbox[1] < roi.y2 as f32
+        && bbox[3] > roi.y1 as f32
 }
 
 fn depth_summary(

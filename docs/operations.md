@@ -52,17 +52,19 @@ Desde la raiz del repositorio:
 cargo run -- --config config/mana.toml
 ```
 
-La fuente RTSP, usuario y transporte viven en `config/mana.toml`. Las rutas
-de modelos viven en `config/models.toml`. El binario debe ejecutarse desde la
-raiz si las rutas son relativas.
+La fuente RTSP, usuario y transporte viven en `config/mana.toml`. El punto de
+entrada de modelos es `config/models.toml`; sus archivos incluidos viven en
+`config/models/`. Las rutas de artefactos conservan el contrato actual y se
+interpretan desde la raíz de ejecución.
 
 ## 3. Configuracion Administrativa
 
 | Archivo | Administrar | No cambiar sin validar |
 |---|---|---|
 | `config/mana.toml` | RTSP, pipeline, tracking, consolidacion, salida, Rerun | Credenciales y rutas de produccion |
-| `config/models.toml` | ONNX, confianza, NMS, filtros, crops | `allow_classes`, areas y `iou` |
-| `config/blueprints/<name>/blueprint.toml` | Perfil activo, modelos y gates | Cambiar en 24/7 solo con validacion |
+| `config/models.toml` y `config/models/` | ONNX, confianza, NMS, filtros, crops, perfiles | `allow_classes`, areas y `iou` |
+| `config/blueprints/<name>/blueprint.toml` | Perfil activo, modelos, overlay y gates | Cambiar en 24/7 solo con validacion |
+| `config/blueprints/<name>/models.toml` | Tuning local sobre el catálogo padre | Mantener `extends` apuntando al catálogo correcto |
 | `[presence.poi]` en `config/mana.toml` | Histeresis de señal del POI | `on_ticks` y `off_ticks` |
 | `[presence.occupancy]` en `config/mana.toml` | Timers TON/TOF de cardinalidad | `single_confirm_ms`, `empty_confirm_ms`, `multiple_confirm_ms`, `multiple_exit_ms` |
 | `config/cascade.toml` | Dependencias entre modelos | `requires` y clase padre |
@@ -276,9 +278,10 @@ detect-fast (root)
 depth-standard (root independiente, ROI fijo [560,140 1240,820])
 ```
 
-`face-yolo` usa `models/yolov12l-face.onnx`. No es un modelo root: tiene
-`same_frame = true` y solo se ejecuta cuando `detect-fast` produce
-exactamente una deteccion de clase `person` en el mismo frame.
+`face-yolo` usa `models/yolov12l-face.onnx`. No es un modelo root: en la
+cascada generica puede usar `same_frame = true`; el blueprint activo
+`detect-room-face` usa el track confirmado del padre para construir el crop
+facial dinamico. En ambos casos solo se ejecuta con exactamente una persona.
 
 La deteccion `face` tiene un contrato distinto al de una deteccion primaria:
 
@@ -289,9 +292,10 @@ La deteccion `face` tiene un contrato distinto al de una deteccion primaria:
   primaria; queda disponible en el evento `detection` crudo para diagnostico.
 - Con cero o dos personas, `face-yolo` aparece como `skip` y no consume
   inferencia.
-- El crop de face es un cuadrado centrado en la mitad superior de la persona
-  que puede sobresalir del ROI fijo de `detect-fast` (comportamiento oficial,
-  ADR-023).
+- El crop de face es un cuadrado dinamico centrado en la mitad superior de la
+  persona y puede sobresalir del ROI fijo de `detect-fast` (ADR-023). La ROI
+  fija `face_dwell` de 400x300, la zona semantica `zones.bed` y el ROI fijo de
+  `depth-standard` son regiones independientes.
 
 `depth-standard` no entra en consolidacion, tracking, zonas ni FSM; su
 validacion es `valid_pixels` y estadisticas, no detecciones. Blueprint
@@ -421,11 +425,11 @@ tracking activo.
 - [ ] `cargo test` pasa antes de desplegar.
 - [ ] Los modelos configurados existen y cargan.
 - [ ] Usar `detect-room-raw` y `track = false` para calibrar cardinalidad raw.
-- [ ] Usar `detect-room-face` y `track = false` para validar cardinalidad mas el ROI de face.
-- [ ] Usar `track = true` para validar continuidad de identidad y children.
+- [ ] Usar `detect-room-face` con `track = true`, `zones = true` y `fsm = true` para validar la FSM facial.
 - [ ] `detection`, `consolidated_detection` y `presence` aparecen en JSONL.
 - [ ] Rerun muestra `/world/camera/observations`.
 - [ ] Rerun muestra la timeline `/pipeline/state/room`.
+- [ ] Rerun muestra la timeline `/pipeline/state/face` y el crop dinamico `/world/camera/crops/face-yolo/bgr`.
 - [ ] La tasa de keyframes vistos y procesados es interpretable.
 - [ ] Los drops de keyframes ocurren cuando la inferencia se alarga, sin backlog creciente.
 - [ ] `gap_ms` y `Hz` se visualizan en paneles separados; la salud usa ratios `0..1`.

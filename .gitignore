@@ -8,7 +8,7 @@
 *.safetensors
 
 # Output
-logs/
+# logs/
 *.jsonl
 
 # IDE

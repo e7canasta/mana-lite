@@ -32,11 +32,12 @@ permite validar children ni continuidad espacial.
 
 ## `detect-room-face`
 
-Usar cuando se necesita calibrar cardinalidad sin tracking y, al mismo tiempo,
-observar la cara de una unica persona. Mantiene `pipeline.track = false`, pero
-activa `face-yolo` solo en estado `single` y sobre un ROI dinamico de la mitad
-superior del bbox de la persona. Las coordenadas de face se trasladan al frame
-original para Rerun, JSONL y las etapas posteriores.
+Usar cuando se necesita cardinalidad, continuidad y ciclo de vida facial de una
+unica persona. Usa `pipeline.track = true`, `zones = true` y `fsm = true`, pero
+activa `face-yolo` solo en estado `single`. La cara se analiza en un crop
+dinamico derivado del track de la persona y las coordenadas se mantienen en el
+frame original para Rerun, JSONL y las etapas posteriores. La zona de cama usada
+por la FSM es independiente del crop facial.
 
 ## `detect-face-pose-seg`
 

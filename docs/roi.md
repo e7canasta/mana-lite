@@ -10,7 +10,7 @@ Guia conceptual y practica del sistema de crop pre-inferencia. Para funcionales 
 2. [Como funciona — el pipeline mental](#2-como-funciona--el-pipeline-mental)
 3. [Las dos fuentes de ROI](#3-las-dos-fuentes-de-roi)
 4. [Las tres politicas](#4-las-tres-politicas)
-5. [Independencia por modelo](#5-independencia-por-modelo)
+5. [Politicas por modelo y perfiles](#5-politicas-por-modelo-y-perfiles)
 6. [Coordenadas — garantia del frame original](#6-coordenadas--garantia-del-frame-original)
 7. [Interaccion con el cascade](#7-interaccion-con-el-cascade)
 8. [Interaccion con tracking, zonas y FSM](#8-interaccion-con-tracking-zonas-y-fsm)
@@ -154,9 +154,15 @@ El ROI nunca excede esta region. Util para privacidad o para limitar el gasto de
 
 ---
 
-## 5. Independencia por modelo
+## 5. Politicas por modelo y perfiles
 
-Cada entry en `models.toml` tiene su propia seccion `[models.<name>.crop]`. No se heredan, no se comparten.
+El catalogo publico sigue siendo `models.toml`, pero incluye archivos por task en
+`config/models/`. Los valores se resuelven por capas: defaults comunes, defaults
+del task, perfil y override del modelo. Un modelo puede declarar `profile =
+"face"` y sobrescribir solo sus campos tecnicos.
+
+Los arrays reemplazan al valor heredado completo y las tablas se combinan en
+profundidad. Para quitar un crop heredado se usa `crop = false`.
 
 ```toml
 [models.detect-fast]            # root — sin crop, frame completo
@@ -199,6 +205,13 @@ upper_fraction = 0.50
 horizontalmente en la persona y verticalmente en el centro de su mitad
 superior. El engine conserva letterboxing/aspect ratio dentro del modelo y
 devuelve las detecciones con offset al frame original.
+
+`detect-room-face` conserva ese crop dinamico: el ROI de deteccion facial se
+calcula desde el track de `person` y no se sustituye por la ROI fija
+`face_dwell` usada por la FSM. Esa ROI semantica mide 400x300 en el centro
+superior de la camara y se publica junto con las ROI estaticas activas de
+modelos como `detect-fast` o `depth-standard` bajo
+`/world/camera/rois/fixed/<name>`; todas tienen un uso independiente.
 
 Tres modelos, tres politicas distintas. El cascade define **quien es el parent** (de donde vienen las detecciones para el ROI), y cada modelo define **como** usar esa informacion.
 
@@ -300,7 +313,7 @@ model = "pose-standard"
 requires = "detect-fast"
 requires_class = "person"
 
-# models.toml
+# config/models/pose.toml
 [models.pose-standard.crop]
 type = "largest_class"
 class = "person"
@@ -312,6 +325,7 @@ Sin persona → `pose-standard` no corre (cascade lo saltea). Con persona → cr
 ### Receta 3: Detector de cama con privacidad
 
 ```toml
+# config/models/detect.toml
 [models.bed-detector]
 path = "models/yolo26s.onnx"
 task = "detect"
@@ -340,7 +354,7 @@ model = "face-v11"
 requires = "detect-fast"
 requires_class = "person"
 
-# models.toml
+# config/models/detect.toml
 [models.face-v11.crop]
 type = "largest_class"
 class = "person"

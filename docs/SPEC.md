@@ -46,12 +46,16 @@ snapshot_verbose = false
 jsonl_level = "info"
 ```
 
-### `models.toml` — Model Catalog
+### `models.toml` — Model Catalog Manifest
 
 The active inference profile is selected separately with
 `inference.blueprint_file`. See [specs/inference-blueprints.md](specs/inference-blueprints.md).
 
-Each table under `[models]` is a named entry. Keys are stable identifiers for FSM/stage to reference.
+`models.toml` is the stable public entry point and includes `config/models/base.toml`
+plus one file per inference task. Each table under `[models]` in those task files
+is a named entry. Keys are stable identifiers for FSM/stage to reference.
+Task defaults and profiles are resolved before validation; a model can override
+only the fields that differ from its profile.
 
 ```toml
 [models.detect-fast]
@@ -86,7 +90,7 @@ confidence = 0.1
 
 [models.seg-standard]
 path = "models/yolo26x-seg-fp16-640.onnx"
-task = "detect"
+task = "segment"
 confidence = 0.2
 half = true
 
@@ -107,7 +111,7 @@ region = [560, 140, 1240, 820]
 | Field | Type | Required | Default | Description |
 |---|---|---|---|---|
 | `path` | string | yes | — | Filesystem path to `.onnx` |
-| `task` | string | yes | — | `detect`, `segment`, `pose`, `classify`, `obb`, `semantic`, `depth` |
+| `task` | string | task file | — | `detect`, `segment`, `pose`, `classify`, `obb`, `semantic`, `depth` |
 | `enabled` | bool | no | true | `false` deshabilita el modelo en el scheduler (ADR-020) |
 | `confidence` | float | no | 0.25 | Detection confidence threshold |
 | `iou` | float | no | 0.7 | NMS IoU threshold |
@@ -295,6 +299,14 @@ x2 = 500
 y2 = 800
 label = "Bed A"
 hysteresis_ms = 500
+
+# Fixed 400x300 face-dwell ROI, top-center on a 1920x1080 camera.
+[face_dwell]
+x1 = 760
+y1 = 0
+x2 = 1160
+y2 = 300
+label = "Face dwell"
 
 [zones.chair]
 x1 = 600

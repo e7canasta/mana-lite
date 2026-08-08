@@ -1,0 +1,347 @@
+# Face lifecycle for the person-crop detect-room-face experiment.
+# All normal states keep the same cascade models enabled; the cascade itself
+# still gates face-yolo until room cardinality is single.
+[fsm]
+initial = "idle"
+
+[fsm.states.idle]
+label = "Face idle"
+models = ["detect-fast", "face-yolo"]
+
+[fsm.states.searching]
+label = "Buscando cara"
+models = ["detect-fast", "face-yolo"]
+
+[fsm.states.detected]
+label = "Cara detectada"
+models = ["detect-fast", "face-yolo"]
+
+[fsm.states.other]
+label = "Persona presente sin cara visible"
+models = ["detect-fast", "face-yolo"]
+
+[fsm.states.in_bed]
+label = "Persona en cama"
+models = ["detect-fast", "face-yolo"]
+
+[fsm.states.edge]
+label = "Persona en el borde"
+models = ["detect-fast", "face-yolo"]
+
+[fsm.states.exiting]
+label = "Saliendo"
+models = ["detect-fast", "face-yolo"]
+
+# A second person cancels the single-person face session.
+
+[[fsm.transitions]]
+from = "searching"
+to = "idle"
+guards = [{ type = "cardinality", value = "multiple" }]
+
+[[fsm.transitions]]
+from = "detected"
+to = "idle"
+guards = [{ type = "cardinality", value = "multiple" }]
+
+[[fsm.transitions]]
+from = "other"
+to = "idle"
+guards = [{ type = "cardinality", value = "multiple" }]
+
+[[fsm.transitions]]
+from = "in_bed"
+to = "idle"
+guards = [{ type = "cardinality", value = "multiple" }]
+
+[[fsm.transitions]]
+from = "edge"
+to = "idle"
+guards = [{ type = "cardinality", value = "multiple" }]
+
+[[fsm.transitions]]
+from = "exiting"
+to = "idle"
+guards = [{ type = "cardinality", value = "multiple" }]
+
+# Session entry. Occupancy already applies its own single_confirm_ms timer.
+
+[[fsm.transitions]]
+from = "idle"
+to = "searching"
+guards = [{ type = "cardinality", value = "single" }]
+
+[[fsm.transitions]]
+from = "searching"
+to = "detected"
+dwell = "500ms"
+guards = [
+    { type = "cardinality", value = "single" },
+    { type = "person_present" },
+    { type = "face_detected", min_confidence = 0.10 },
+    { type = "face_not_in_dwell" },
+    { type = "face_not_at_edge" },
+]
+
+[[fsm.transitions]]
+from = "searching"
+to = "in_bed"
+dwell = "1000ms"
+guards = [
+    { type = "cardinality", value = "single" },
+    { type = "person_present" },
+    { type = "face_in_dwell" },
+    { type = "face_not_at_edge" },
+]
+
+[[fsm.transitions]]
+from = "searching"
+to = "edge"
+dwell = "500ms"
+guards = [
+    { type = "cardinality", value = "single" },
+    { type = "person_present" },
+    { type = "face_detected", min_confidence = 0.10 },
+    { type = "face_at_edge" },
+]
+
+[[fsm.transitions]]
+from = "searching"
+to = "other"
+dwell = "3s"
+guards = [
+    { type = "cardinality", value = "single" },
+    { type = "person_present" },
+    { type = "face_absent" },
+]
+
+[[fsm.transitions]]
+from = "searching"
+to = "idle"
+guards = [{ type = "person_absent" }]
+
+# Normal face lifecycle. Edge has priority over bed so border movement is
+# visible even when the bed rectangle touches the camera boundary.
+
+[[fsm.transitions]]
+from = "detected"
+to = "exiting"
+dwell = "1500ms"
+guards = [
+    { type = "person_absent" },
+    { type = "face_was_inside" },
+]
+
+[[fsm.transitions]]
+from = "detected"
+to = "edge"
+dwell = "300ms"
+guards = [
+    { type = "cardinality", value = "single" },
+    { type = "face_at_edge" },
+]
+
+[[fsm.transitions]]
+from = "detected"
+to = "in_bed"
+dwell = "1000ms"
+guards = [
+    { type = "cardinality", value = "single" },
+    { type = "face_in_dwell" },
+    { type = "face_not_at_edge" },
+]
+
+[[fsm.transitions]]
+from = "detected"
+to = "other"
+dwell = "700ms"
+guards = [
+    { type = "cardinality", value = "single" },
+    { type = "person_present" },
+    { type = "face_absent" },
+    { type = "face_not_in_dwell" },
+    { type = "face_not_at_edge" },
+]
+
+[[fsm.transitions]]
+from = "in_bed"
+to = "exiting"
+dwell = "1500ms"
+guards = [
+    { type = "person_absent" },
+    { type = "face_was_inside" },
+]
+
+[[fsm.transitions]]
+from = "in_bed"
+to = "edge"
+dwell = "300ms"
+guards = [
+    { type = "cardinality", value = "single" },
+    { type = "face_at_edge" },
+]
+
+[[fsm.transitions]]
+from = "in_bed"
+to = "detected"
+dwell = "500ms"
+guards = [
+    { type = "cardinality", value = "single" },
+    { type = "face_detected", min_confidence = 0.10 },
+    { type = "face_not_in_dwell" },
+    { type = "face_not_at_edge" },
+]
+
+[[fsm.transitions]]
+from = "in_bed"
+to = "other"
+dwell = "700ms"
+guards = [
+    { type = "cardinality", value = "single" },
+    { type = "person_present" },
+    { type = "face_absent" },
+    { type = "face_not_in_dwell" },
+    { type = "face_not_at_edge" },
+]
+
+[[fsm.transitions]]
+from = "edge"
+to = "exiting"
+dwell = "1500ms"
+guards = [
+    { type = "person_absent" },
+    { type = "face_was_inside" },
+]
+
+[[fsm.transitions]]
+from = "edge"
+to = "in_bed"
+dwell = "1000ms"
+guards = [
+    { type = "cardinality", value = "single" },
+    { type = "face_in_dwell" },
+    { type = "face_not_at_edge" },
+]
+
+[[fsm.transitions]]
+from = "edge"
+to = "detected"
+dwell = "500ms"
+guards = [
+    { type = "cardinality", value = "single" },
+    { type = "face_detected", min_confidence = 0.10 },
+    { type = "face_not_in_dwell" },
+    { type = "face_not_at_edge" },
+]
+
+[[fsm.transitions]]
+from = "edge"
+to = "other"
+dwell = "700ms"
+guards = [
+    { type = "cardinality", value = "single" },
+    { type = "person_present" },
+    { type = "face_absent" },
+    { type = "face_not_in_dwell" },
+    { type = "face_not_at_edge" },
+]
+
+[[fsm.transitions]]
+from = "other"
+to = "exiting"
+dwell = "1500ms"
+guards = [
+    { type = "person_absent" },
+    { type = "face_was_inside" },
+]
+
+[[fsm.transitions]]
+from = "other"
+to = "idle"
+dwell = "1500ms"
+guards = [
+    { type = "person_absent" },
+    { type = "face_was_not_inside" },
+]
+
+[[fsm.transitions]]
+from = "other"
+to = "edge"
+dwell = "300ms"
+guards = [
+    { type = "cardinality", value = "single" },
+    { type = "face_at_edge" },
+]
+
+[[fsm.transitions]]
+from = "other"
+to = "in_bed"
+dwell = "1000ms"
+guards = [
+    { type = "cardinality", value = "single" },
+    { type = "face_in_dwell" },
+    { type = "face_not_at_edge" },
+]
+
+[[fsm.transitions]]
+from = "other"
+to = "detected"
+dwell = "500ms"
+guards = [
+    { type = "cardinality", value = "single" },
+    { type = "face_detected", min_confidence = 0.10 },
+    { type = "face_not_in_dwell" },
+    { type = "face_not_at_edge" },
+]
+
+# Exit recovery. A person who returns during the exit dwell can resume any
+# meaningful state without losing the inside latch.
+
+[[fsm.transitions]]
+from = "exiting"
+to = "edge"
+dwell = "300ms"
+guards = [
+    { type = "cardinality", value = "single" },
+    { type = "person_present" },
+    { type = "face_at_edge" },
+]
+
+[[fsm.transitions]]
+from = "exiting"
+to = "in_bed"
+dwell = "1000ms"
+guards = [
+    { type = "cardinality", value = "single" },
+    { type = "person_present" },
+    { type = "face_in_dwell" },
+    { type = "face_not_at_edge" },
+]
+
+[[fsm.transitions]]
+from = "exiting"
+to = "detected"
+dwell = "500ms"
+guards = [
+    { type = "cardinality", value = "single" },
+    { type = "person_present" },
+    { type = "face_detected", min_confidence = 0.10 },
+    { type = "face_not_in_dwell" },
+    { type = "face_not_at_edge" },
+]
+
+[[fsm.transitions]]
+from = "exiting"
+to = "other"
+dwell = "500ms"
+guards = [
+    { type = "cardinality", value = "single" },
+    { type = "person_present" },
+    { type = "face_absent" },
+]
+
+[[fsm.transitions]]
+from = "exiting"
+to = "idle"
+dwell = "1500ms"
+guards = [{ type = "person_absent" }]

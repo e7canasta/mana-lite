@@ -119,7 +119,14 @@
 ```
 src/
 ├── main.rs               Entry point, superloop orchestration ✅
-├── config.rs             Parsing for all TOML schemas         ✅
+├── config/               Typed TOML schemas, loaders, composition ✅
+│   ├── mod.rs            Public configuration facade
+│   ├── app.rs            Runtime/application settings
+│   ├── models.rs         Resolved model specs and profiles
+│   ├── model_loader.rs   Manifest composition and raw patches
+│   ├── loader.rs         TOML loaders and manifest entry points
+│   ├── validation.rs     Cross-catalog validation
+│   └── blueprint.rs      Blueprint and cascade schemas
 ├── ingest.rs             Retina RTSP + keyframe drain + reconnect ✅
 ├── snapshot.rs           H.264 decode + RGB buffer + PNG saver ✅
 ├── infer.rs              Model execution + filters + NMS + masks ✅
@@ -145,10 +152,12 @@ src/
 | File | Loaded via | Purpose |
 |---|---|---|
 | `config/mana.toml` | `load_app_config()` | Top-level: stream source, pipeline toggles, output paths |
-| `config/models.toml` | `load_model_catalog()` | ONNX model catalog: paths, tasks, imgsz, confidence, `enabled` flag (ADR-020), per-model crop ROI |
-| `config/models.example.toml` | — | Ejemplo: ramas face/seg con `enabled = false` |
+| `config/models.toml` | `load_model_catalog()` | Public model manifest; includes `config/models/base.toml` and one file per task |
+| `config/models/*.toml` | `load_model_catalog()` | Task defaults, profiles and model overrides; resolved before runtime |
+| `config/models.example.toml` | — | Example manifest with the same composition layers |
 | `config/cascade.toml` | `load_config::<CascadeConfig>()` | Model dependency graph (requires, requires_class) |
-| `config/blueprints/<name>/blueprint.toml` | `load_config::<BlueprintConfig>()` | Named model set, primary root and cascade rules |
+| `config/blueprints/<name>/blueprint.toml` | `load_config::<BlueprintConfig>()` | Named model set, primary root, optional model overlay and cascade rules |
+| `config/blueprints/<name>/models.toml` | `apply_model_overlay()` | Blueprint-local parameter overrides with an explicit parent catalog |
 | `config/fsm.toml` | `load_fsm_catalog()` | Clinical state machine: states, models, transitions |
 | `config/zones.toml` | `load_zone_catalog()` | Spatial ROIs for tracking + FSM zone guards |
 | `config/metrics.toml` | `load_metrics_log()` | Text log verbosity + metrics settings |
@@ -159,7 +168,7 @@ src/
 
 ```
 main.rs
- ├── config.rs ────────────── serde, toml
+ ├── config/ ──────────────── serde, toml, model composition
  ├── ingest.rs ────────────── retina, mana-rtsp, url
  │    └── RetinaReader (async RTSP + reconnect)
  ├── snapshot.rs ──────────── ffmpeg-next, image, mana-video

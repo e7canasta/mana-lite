@@ -1,6 +1,6 @@
 # ADR-002: TOML Catalog Pattern
 
-**Status:** Accepted, extended by [ADR-026](026-inference-blueprints.md)
+**Status:** Accepted, extended by [ADR-026](026-inference-blueprints.md) and the task catalog composition refactor
 **Date:** 2026-08-03
 
 ## Context
@@ -12,7 +12,7 @@ Mana Lite needs to configure models, zones, and FSM rules. The full Mana OS uses
 
 1. **Versionable artifacts:** `models.toml` checked into git → can A/B test `detect-v1` vs `detect-v2` by changing one line in `fsm.toml`.
 2. **Separation of concerns:** Models (data science), zones (facility layout), and FSM (clinical policy) are owned by different teams. One file per domain.
-3. **Discoverability:** A new integrator reads `models.toml` and sees all available models at a glance.
+3. **Discoverability:** A new integrator starts at `models.toml`, which remains the public catalog entry point.
 
 ## Decision
 
@@ -21,7 +21,8 @@ Four TOML files, each with a single responsibility:
 | File | Responsibility | Owned by |
 |---|---|---|
 | `mana.toml` | Application root: source, health, refs to other files | DevOps |
-| `models.toml` | ONNX catalog: path, task, thresholds | ML Engineer |
+| `models.toml` | Public manifest for the ONNX catalog | ML Engineer |
+| `models/*.toml` | Task defaults, profiles, paths and thresholds | ML Engineer |
 | `zones.toml` | Spatial ROIs: named rectangles | Facility Manager |
 | `fsm.toml` | Clinical states, guards, transitions | Clinical Engineer |
 
@@ -64,7 +65,7 @@ To A/B test a new model, an ML engineer:
 - **Positive:** Serde validation at startup catches typos before the superloop runs.
 - **Positive:** Zones and FSM can be edited by non-Rust-developers.
 - **Negative:** Four files to keep in sync. The root `mana.toml` explicitly points to the others, so there's no hidden convention.
-- **Negative:** TOML doesn't support `include` or `import`. Each file is self-contained. Cross-file references (FSM → model keys) are validated at startup with clear error messages.
+- **Negative:** TOML does not natively support `include` or `import`; Mana Lite resolves the explicit `include` list in `models.toml` with a typed loader. Cross-file references (FSM → model keys) are validated at startup with clear error messages.
 
 ## Current Deployment Rule
 

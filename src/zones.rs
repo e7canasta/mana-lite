@@ -116,6 +116,10 @@ impl ZoneEngine {
     pub fn all_vacant(&self) -> bool {
         self.zones.values().all(|z| !z.is_occupied)
     }
+
+    pub fn is_occupied(&self, zone: &str) -> bool {
+        self.zones.get(zone).is_some_and(|state| state.is_occupied)
+    }
 }
 
 fn find_class_confidence(tracks: &[&Track], id: u64) -> (String, f32) {
@@ -190,6 +194,7 @@ mod tests {
                     hysteresis_ms: 100,
                 },
             )]),
+            face_dwell: None,
         };
         let mut engine = ZoneEngine::from_catalog(&catalog);
         let track = make_track(1, "person", [50.0, 50.0, 150.0, 150.0], true);
@@ -215,6 +220,7 @@ mod tests {
                     hysteresis_ms: 0, // zero hysteresis for test
                 },
             )]),
+            face_dwell: None,
         };
         let mut engine = ZoneEngine::from_catalog(&catalog);
         let track = make_track(1, "person", [100.0, 100.0, 200.0, 200.0], true);
@@ -242,6 +248,7 @@ mod tests {
                     hysteresis_ms: 100,
                 },
             )]),
+            face_dwell: None,
         };
         let mut engine = ZoneEngine::from_catalog(&catalog);
         let unconfirmed = make_track(1, "person", [100.0, 100.0, 200.0, 200.0], false);

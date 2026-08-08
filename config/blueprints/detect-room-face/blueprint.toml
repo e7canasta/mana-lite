@@ -1,10 +1,11 @@
 # Calibration profile: raw room cardinality plus face enrichment for one person.
 [blueprint]
 name = "detect-room-face"
-description = "Raw room cardinality with dynamic face ROI for a single person"
+description = "Raw room cardinality with dynamic person face crop and lifecycle FSM"
 primary_model = "detect-fast"
 models = ["detect-fast", "face-yolo"]
-requires_tracking = false
+requires_tracking = true
+model_overlay = "models.toml"
 
 [[rules]]
 model = "detect-fast"
@@ -15,4 +16,6 @@ requires = "detect-fast"
 requires_class = "person"
 requires_exact_count = 1
 requires_min_confidence = 0.50
-same_frame = true
+# Use the confirmed person track to resolve the dynamic face crop so short
+# detector dropouts do not suppress the face child.
+same_frame = false

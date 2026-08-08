@@ -1,0 +1,32 @@
+task = "detect"
+
+[defaults]
+confidence = 0.20
+iou = 0.50
+half = true
+
+[profiles.face.postprocess]
+allow_classes = ["face"]
+min_confidence = 0.10
+max_area_ratio = 0.35
+nms_iou = 0.05
+max_detections = 1
+
+[profiles.face.crop]
+type = "largest_class"
+class = "person"
+square_size = 320
+upper_fraction = 0.50
+
+[models.detect-fast]
+enabled = true
+path = "models/yolo26s.onnx"
+confidence = 0.10
+imgsz = 640
+
+[models.face-yolo]
+profile = "face"
+enabled = false
+path = "models/yolov12l-face.onnx"
+confidence = 0.10
+imgsz = 640

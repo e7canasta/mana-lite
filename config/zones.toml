@@ -1,4 +1,6 @@
 [zones.bed]
+# Semantic person occupancy region for the room/FSM. This is not the dynamic
+# face detection crop or the fixed face-dwell ROI.
 x1 = 100
 y1 = 200
 x2 = 500
@@ -29,3 +31,13 @@ x2 = 800
 y2 = 900
 label = "Floor Area"
 hysteresis_ms = 1000
+
+# Fixed face-dwell ROI for the 1920x1080 camera: 400x300, top-center.
+# This is a semantic FSM region, not the dynamic crop consumed by face-yolo.
+[face_dwell]
+x1 = 760
+y1 = 0
+x2 = 1160
+y2 = 300
+label = "Face dwell"
+hysteresis_ms = 500

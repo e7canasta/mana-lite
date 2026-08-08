@@ -268,17 +268,52 @@ detect-fast      -> pose-standard
 Exige tracking, una persona confirmada y visible, y activa las tres ramas
 secundarias solo cuando el conteo exacto es uno.
 
-## 9. Futuro: presets separados
+## 9. Composición del catálogo
 
-La separacion completa prevista es:
+La separación actual es:
 
 ```text
-models.toml       catalogo de artefactos
-presets.toml      defaults de inferencia y postprocess
+models.toml       manifest publico del catalogo
+models/base.toml  defaults comunes
+models/<task>.toml defaults, perfiles y modelos por task
 blueprint.toml    stages, referencias y gates
 mana.toml         operacion 24/7
 ```
 
-La implementacion actual introduce blueprints sin romper el esquema existente
-de `models.toml`. La extraccion de presets sera una migracion posterior y no
-debe cambiar la semantica de los gates.
+`models.toml` conserva el punto de entrada público para no cambiar las
+referencias externas. El loader resuelve capas tipadas antes de validar el
+blueprint; la selección de modelos continúa siendo responsabilidad del
+blueprint y no del perfil de configuración.
+
+### Overlay por blueprint
+
+Un blueprint puede declarar un archivo `models.toml` local para ajustar
+parámetros sin duplicar el catálogo completo:
+
+```toml
+# config/blueprints/detect-room-face/blueprint.toml
+[blueprint]
+model_overlay = "models.toml"
+```
+
+```toml
+# config/blueprints/detect-room-face/models.toml
+extends = "../../models.toml"
+
+[models.face-yolo]
+confidence = 0.15
+
+[models.face-yolo.postprocess]
+min_confidence = 0.15
+
+[models.face-yolo.crop]
+type = "largest_class"
+class = "person"
+square_size = 320
+upper_fraction = 0.50
+```
+
+El parent debe ser el catálogo configurado en `mana.toml`. El overlay solo
+puede modificar modelos existentes; no puede crear IDs, cambiar `task`,
+`profile` ni activar modelos. La activación continúa definida por
+`blueprint.models`.

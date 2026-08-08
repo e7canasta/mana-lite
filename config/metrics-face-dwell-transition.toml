@@ -1,5 +1,6 @@
-# Narrow diagnostic profile for reproducing room cardinality transitions.
-# Keep this separate from the 24/7 metrics profile.
+# Narrow diagnostic profile for reproducing face dwell state transitions.
+# It keeps room cardinality evidence enabled so both state machines can be
+# compared on the same frame sequence.
 [metrics]
 report_interval_s = 1
 
@@ -23,9 +24,9 @@ infer_empty = false
 frame_events = false
 detection_events = false
 presence_events = true
-face_dwell_events = false
+face_dwell_events = true
 zone_events = false
-fsm_events = false
+fsm_events = true
 metrics_event = false
 per_model_in_window = false
 class_counts_in_window = false

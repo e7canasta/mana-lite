@@ -1,0 +1,57 @@
+task = "depth"
+
+[defaults]
+confidence = 0.0
+iou = 0.50
+half = true
+
+[models.depth-standard]
+enabled = false
+path = "models/yolo26l-depth-fp16-320.onnx"
+imgsz = 320
+
+[models.depth-standard.crop]
+# Fixed depth context ROI for bed-approach/dwell rules, independent of the
+# dynamic face detection crop.
+type = "static"
+region = [560, 140, 1240, 820]
+
+[models.depth-s-320]
+enabled = false
+path = "tools/model-tools/artifacts/yolo26-fp16/yolo26s-depth-fp16-320.onnx"
+imgsz = 320
+
+[models.depth-s-640]
+enabled = false
+path = "tools/model-tools/artifacts/yolo26-fp16/yolo26s-depth-fp16-640.onnx"
+imgsz = 640
+
+[models.depth-m-320]
+enabled = false
+path = "tools/model-tools/artifacts/yolo26-fp16/yolo26m-depth-fp16-320.onnx"
+imgsz = 320
+
+[models.depth-m-640]
+enabled = false
+path = "tools/model-tools/artifacts/yolo26-fp16/yolo26m-depth-fp16-640.onnx"
+imgsz = 640
+
+[models.depth-l-320]
+enabled = false
+path = "tools/model-tools/artifacts/yolo26-fp16/yolo26l-depth-fp16-320.onnx"
+imgsz = 320
+
+[models.depth-l-640]
+enabled = false
+path = "tools/model-tools/artifacts/yolo26-fp16/yolo26l-depth-fp16-640.onnx"
+imgsz = 640
+
+[models.depth-x-320]
+enabled = false
+path = "tools/model-tools/artifacts/yolo26-fp16/yolo26x-depth-fp16-320.onnx"
+imgsz = 320
+
+[models.depth-x-640]
+enabled = false
+path = "tools/model-tools/artifacts/yolo26-fp16/yolo26x-depth-fp16-640.onnx"
+imgsz = 640

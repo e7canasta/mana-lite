@@ -105,6 +105,10 @@ pub fn write_event(event: &Event, ts: &str, buf: &mut Vec<u8>) {
                 write_json_string(&d.class, buf);
                 buf.extend_from_slice(b"\",\"confidence\":");
                 write_f32(d.confidence, buf);
+                buf.extend_from_slice(b",\"area_px\":");
+                write_f32(d.area_px, buf);
+                buf.extend_from_slice(b",\"area_ratio\":");
+                write_f32(d.area_ratio, buf);
                 buf.extend_from_slice(b",\"bbox\":[");
                 for (j, v) in d.bbox.iter().enumerate() {
                     if j > 0 {
@@ -490,6 +494,66 @@ pub fn write_event(event: &Event, ts: &str, buf: &mut Vec<u8>) {
             buf.extend_from_slice(b",\"multiple_exit_timer_ms\":");
             write_u64(*multiple_exit_timer_ms, buf);
         }
+        Event::FaceDwell {
+            frame_id,
+            source,
+            state,
+            state_label,
+            state_dwell_ms,
+            state_dwell_required_ms,
+            cardinality,
+            person_present,
+            face_present,
+            face_confidence,
+            face_in_dwell,
+            at_edge,
+            face_was_inside,
+            face_model_ran,
+            active_timers,
+        } => {
+            buf.extend_from_slice(b"\"type\":\"face_dwell\",\"frame_id\":");
+            write_u64(*frame_id, buf);
+            buf.extend_from_slice(b",\"source\":\"");
+            write_json_string(source, buf);
+            buf.extend_from_slice(b"\",\"state\":\"");
+            write_json_string(state, buf);
+            buf.extend_from_slice(b"\",\"state_label\":");
+            write_optional_string(state_label.as_deref(), buf);
+            buf.extend_from_slice(b",\"state_dwell_ms\":");
+            write_u64(*state_dwell_ms, buf);
+            buf.extend_from_slice(b",\"state_dwell_required_ms\":");
+            write_optional_u64(*state_dwell_required_ms, buf);
+            buf.extend_from_slice(b",\"cardinality\":");
+            write_optional_string(cardinality.as_deref(), buf);
+            buf.extend_from_slice(b",\"person_present\":");
+            write_bool(*person_present, buf);
+            buf.extend_from_slice(b",\"face_present\":");
+            write_bool(*face_present, buf);
+            buf.extend_from_slice(b",\"face_confidence\":");
+            write_optional_f32(*face_confidence, buf);
+            buf.extend_from_slice(b",\"face_in_dwell\":");
+            write_optional_bool(*face_in_dwell, buf);
+            buf.extend_from_slice(b",\"at_edge\":");
+            write_bool(*at_edge, buf);
+            buf.extend_from_slice(b",\"face_was_inside\":");
+            write_bool(*face_was_inside, buf);
+            buf.extend_from_slice(b",\"face_model_ran\":");
+            write_bool(*face_model_ran, buf);
+            buf.extend_from_slice(b",\"active_timers\":[");
+            for (index, timer) in active_timers.iter().enumerate() {
+                if index > 0 {
+                    buf.push(b',');
+                }
+                buf.extend_from_slice(b"{\"trigger\":\"");
+                write_json_string(&timer.trigger, buf);
+                buf.extend_from_slice(b"\",\"elapsed_ms\":");
+                write_u64(timer.elapsed_ms, buf);
+                buf.extend_from_slice(b",\"required_ms\":");
+                write_u64(timer.required_ms, buf);
+                buf.push(b'}');
+            }
+            buf.push(b']');
+        }
         Event::Metrics(r) => {
             buf.extend_from_slice(b"\"type\":\"metrics\"");
             append_field(buf, "window_s", r.window_s);
@@ -575,6 +639,42 @@ fn append_field(buf: &mut Vec<u8>, name: &str, value: u64) {
     buf.extend_from_slice(name.as_bytes());
     buf.extend_from_slice(b"\":");
     write_u64(value, buf);
+}
+
+fn write_bool(value: bool, buf: &mut Vec<u8>) {
+    buf.extend_from_slice(if value { b"true" } else { b"false" });
+}
+
+fn write_optional_bool(value: Option<bool>, buf: &mut Vec<u8>) {
+    match value {
+        Some(value) => write_bool(value, buf),
+        None => buf.extend_from_slice(b"null"),
+    }
+}
+
+fn write_optional_u64(value: Option<u64>, buf: &mut Vec<u8>) {
+    match value {
+        Some(value) => write_u64(value, buf),
+        None => buf.extend_from_slice(b"null"),
+    }
+}
+
+fn write_optional_f32(value: Option<f32>, buf: &mut Vec<u8>) {
+    match value {
+        Some(value) => write_f32(value, buf),
+        None => buf.extend_from_slice(b"null"),
+    }
+}
+
+fn write_optional_string(value: Option<&str>, buf: &mut Vec<u8>) {
+    match value {
+        Some(value) => {
+            buf.push(b'"');
+            write_json_string(value, buf);
+            buf.push(b'"');
+        }
+        None => buf.extend_from_slice(b"null"),
+    }
 }
 
 pub fn write_json_string(s: &str, buf: &mut Vec<u8>) {

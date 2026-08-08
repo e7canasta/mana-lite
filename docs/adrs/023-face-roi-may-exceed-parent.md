@@ -48,3 +48,12 @@ la regla:
   en su ROI, crop del hijo como vista independiente).
 - Cualquier regla futura que limite la visión de `face-yolo` debe definirse en
   su propia config `[models.face-yolo.crop]`, no heredando el ROI del padre.
+
+## Aplicacion en `detect-room-face`
+
+El blueprint conserva el crop dinamico de `face-yolo`: un cuadrado de 320 px
+centrado en la mitad superior del track de `person`. El ROI fijo de
+`detect-fast`, `face_dwell` y la zona semantica `zones.bed` no se reutilizan
+como crop facial. El objeto observado sigue siendo la misma cara, pero cada
+region tiene un contrato distinto: deteccion fisica, dwell facial fijo,
+contexto de profundidad o permanencia de persona.

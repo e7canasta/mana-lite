@@ -1,0 +1,17 @@
+# Shared model defaults. Task files and profiles override only what they need.
+
+[defaults]
+confidence = 0.25
+iou = 0.70
+max_det = 300
+device = "cpu"
+rect = true
+polygon_simplify = 0.75
+
+[defaults.postprocess]
+min_confidence = 0.0
+min_area_ratio = 0.0
+max_area_ratio = 1.0
+min_component_area_ratio = 0.0
+mask_threshold = 0.5
+nms_iou = 0.5

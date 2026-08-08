@@ -2,7 +2,7 @@ mod event;
 mod serialize;
 
 #[allow(unused_imports)]
-pub use event::{DetRecord, Event, JsonlLevel, MaskRecord};
+pub use event::{DetRecord, Event, FaceDwellTimerRecord, JsonlLevel, MaskRecord};
 use serialize::write_event;
 
 use crate::config::{MetricsJsonlConfig, Rotate};
@@ -276,6 +276,7 @@ impl MetricsJsonlConfig {
             Event::Zone { .. } => self.zone_events,
             Event::Fsm { .. } => self.fsm_events,
             Event::Presence { .. } => self.presence_events,
+            Event::FaceDwell { .. } => self.face_dwell_events,
             Event::Metrics(_) => self.metrics_event,
             Event::Meta { .. } | Event::Health { .. } | Event::Entity { .. } => true,
         }
@@ -472,6 +473,8 @@ mod tests {
             class: "person".into(),
             confidence: 0.87,
             bbox: [100.0, 200.0, 300.0, 500.0],
+            area_px: 60_000.0,
+            area_ratio: 0.1,
             mask: None,
         }];
         let mut log = test_logger();
@@ -491,6 +494,8 @@ mod tests {
         assert!(out.contains("\"pipeline_ms\":60"));
         assert!(out.contains("\"class\":\"person\""));
         assert!(out.contains("\"confidence\":0.87"));
+        assert!(out.contains("\"area_px\":60000"));
+        assert!(out.contains("\"area_ratio\":0.1"));
         assert!(out.contains("\"bbox\":[100,200,300,500]"));
     }
 
@@ -511,6 +516,8 @@ mod tests {
             class: "person".into(),
             confidence: 0.9,
             bbox: [3.0, 4.0, 5.0, 6.0],
+            area_px: 4.0,
+            area_ratio: 0.0,
             mask: Some(record),
         }];
         let mut log = test_logger();
@@ -659,6 +666,42 @@ mod tests {
     }
 
     #[test]
+    fn face_dwell_event_serializes_state_evidence_and_timers() {
+        let mut log = test_logger();
+        log.emit(Event::face_dwell(
+            42,
+            "keyframe",
+            "searching",
+            Some("Buscando cara"),
+            500,
+            None,
+            Some("single"),
+            true,
+            true,
+            Some(0.87),
+            Some(true),
+            false,
+            false,
+            true,
+            vec![FaceDwellTimerRecord {
+                trigger: "searching→in_bed".into(),
+                elapsed_ms: 500,
+                required_ms: 1_000,
+            }],
+        ));
+        let out = collect(&mut log);
+        assert!(out.contains("\"type\":\"face_dwell\""));
+        assert!(out.contains("\"frame_id\":42"));
+        assert!(out.contains("\"source\":\"keyframe\""));
+        assert!(out.contains("\"state\":\"searching\""));
+        assert!(out.contains("\"state_label\":\"Buscando cara\""));
+        assert!(out.contains("\"face_in_dwell\":true"));
+        assert!(out.contains("\"face_model_ran\":true"));
+        assert!(out.contains("\"trigger\":\"searching→in_bed\""));
+        assert!(out.contains("\"required_ms\":1000"));
+    }
+
+    #[test]
     fn health_blind_has_message() {
         let mut log = test_logger();
         log.emit(Event::health_blind(10_000));
@@ -699,6 +742,8 @@ mod tests {
             class: "x".into(),
             confidence: 0.5,
             bbox: [-10.5, 0.0, 100.0, 200.25],
+            area_px: 0.0,
+            area_ratio: 0.0,
             mask: None,
         }];
         let mut log = test_logger();
