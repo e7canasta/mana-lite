@@ -152,23 +152,29 @@ impl Default for PresencePoiPolicy {
     }
 }
 
-/// Policy for confirming and releasing room cardinality states.
+/// Time-based policy for confirming and releasing room cardinality states.
 #[derive(Debug, Clone, Deserialize)]
 pub struct OccupancyPolicy {
-    #[serde(default = "default_occupancy_empty_ticks")]
-    pub empty_ticks: u32,
-    #[serde(default = "default_occupancy_multiple_candidate_ticks")]
-    pub multiple_candidate_ticks: u32,
-    #[serde(default = "default_occupancy_multiple_exit_ticks")]
-    pub multiple_exit_ticks: u32,
+    #[serde(default = "default_occupancy_single_confirm_ms")]
+    pub single_confirm_ms: u64,
+    #[serde(default = "default_occupancy_empty_confirm_ms")]
+    pub empty_confirm_ms: u64,
+    #[serde(default = "default_occupancy_multiple_confirm_ms")]
+    pub multiple_confirm_ms: u64,
+    #[serde(default = "default_occupancy_multiple_exit_ms")]
+    pub multiple_exit_ms: u64,
+    #[serde(default)]
+    pub require_confirmed_tracks: bool,
 }
 
 impl Default for OccupancyPolicy {
     fn default() -> Self {
         Self {
-            empty_ticks: default_occupancy_empty_ticks(),
-            multiple_candidate_ticks: default_occupancy_multiple_candidate_ticks(),
-            multiple_exit_ticks: default_occupancy_multiple_exit_ticks(),
+            single_confirm_ms: default_occupancy_single_confirm_ms(),
+            empty_confirm_ms: default_occupancy_empty_confirm_ms(),
+            multiple_confirm_ms: default_occupancy_multiple_confirm_ms(),
+            multiple_exit_ms: default_occupancy_multiple_exit_ms(),
+            require_confirmed_tracks: false,
         }
     }
 }
@@ -189,9 +195,10 @@ impl PresenceConfig {
         !self.class.trim().is_empty()
             && self.poi.on_ticks > 0
             && self.poi.off_ticks > 0
-            && self.occupancy.empty_ticks > 0
-            && self.occupancy.multiple_candidate_ticks > 0
-            && self.occupancy.multiple_exit_ticks > 0
+            && self.occupancy.single_confirm_ms > 0
+            && self.occupancy.empty_confirm_ms > 0
+            && self.occupancy.multiple_confirm_ms > 0
+            && self.occupancy.multiple_exit_ms > 0
     }
 }
 
@@ -207,16 +214,20 @@ fn default_presence_off_ticks() -> u32 {
     4
 }
 
-fn default_occupancy_empty_ticks() -> u32 {
-    4
+fn default_occupancy_single_confirm_ms() -> u64 {
+    3_000
 }
 
-fn default_occupancy_multiple_candidate_ticks() -> u32 {
-    2
+fn default_occupancy_empty_confirm_ms() -> u64 {
+    8_000
 }
 
-fn default_occupancy_multiple_exit_ticks() -> u32 {
-    2
+fn default_occupancy_multiple_confirm_ms() -> u64 {
+    5_000
+}
+
+fn default_occupancy_multiple_exit_ms() -> u64 {
+    5_000
 }
 
 #[derive(Debug, Deserialize)]
@@ -1122,6 +1133,7 @@ fn apply_env_overrides(cfg: &mut AppConfig) {
     env_path!("MANA_MODEL_CATALOG"     => cfg.inference.model_catalog);
     env_opt!("MANA_BLUEPRINT_FILE"     => cfg.inference.blueprint_file);
     env_opt!("MANA_DEFAULT_MODEL"      => cfg.inference.default_model);
+    env_opt!("MANA_METRICS_FILE"       => cfg.metrics_file);
     env_parse!("MANA_DATA_STALE_MS"   => cfg.health.data_stale_ms);
     env_parse!("MANA_REPORT_INTERVAL" => cfg.health.report_interval_s);
     env_opt!("MANA_SAVE_DIR"          => cfg.output.save_dir);
@@ -1229,7 +1241,7 @@ mod tests {
         assert!(catalog.models.contains_key("detect-fast"));
         let detect = &catalog.models["detect-fast"];
         assert_eq!(detect.task, "detect");
-        assert_eq!(detect.confidence, 0.2);
+        assert_eq!(detect.confidence, 0.4);
         assert!(detect.is_valid());
     }
 
@@ -1279,11 +1291,12 @@ mod tests {
         assert!(config.source.keyframes_only);
         assert!(config.presence.enabled);
         assert_eq!(config.presence.poi.off_ticks, 8);
-        assert_eq!(config.presence.occupancy.multiple_candidate_ticks, 2);
+        assert_eq!(config.presence.occupancy.multiple_confirm_ms, 5_000);
+        assert!(!config.presence.occupancy.require_confirmed_tracks);
         assert_eq!(
             config.inference.blueprint_file,
             Some(PathBuf::from(
-                "config/blueprints/detect-face/blueprint.toml"
+                "config/blueprints/detect-room-face/blueprint.toml"
             ))
         );
         assert_eq!(config.health.data_stale_ms, 10_000);
@@ -1293,15 +1306,29 @@ mod tests {
             model.models["detect-fast"].postprocess.allow_classes,
             vec!["person", "wheelchair"]
         );
-        assert_eq!(
-            model.models["detect-fast"].postprocess.min_area_ratio,
-            0.001
-        );
+        assert_eq!(model.models["detect-fast"].postprocess.min_area_ratio, 0.01);
         assert_eq!(model.models["face-yolo"].postprocess.nms_iou, 0.05);
         assert_eq!(
             model.models["face-yolo"].postprocess.max_detections,
             Some(1)
         );
+        for version in [11, 12] {
+            for size in ["s", "m", "l"] {
+                for imgsz in [320, 640] {
+                    let key = format!("face-v{version}-{size}-{imgsz}");
+                    let entry = model
+                        .models
+                        .get(&key)
+                        .unwrap_or_else(|| panic!("missing face matrix entry {key}"));
+                    assert!(!entry.enabled);
+                    assert_eq!(entry.task, "detect");
+                    assert_eq!(entry.imgsz, Some(imgsz));
+                    assert!(entry.half);
+                    assert_eq!(entry.postprocess.allow_classes, vec!["face".to_string()]);
+                    assert!(entry.crop.is_some());
+                }
+            }
+        }
         assert_eq!(
             model.models["seg-standard"]
                 .postprocess
@@ -1317,6 +1344,15 @@ mod tests {
                 .and_then(|crop| crop.region),
             Some([560, 140, 1240, 820])
         );
+    }
+
+    #[test]
+    fn room_transition_metrics_profile_only_keeps_presence_events() {
+        let config = load_metrics_log(Path::new("config/metrics-room-transition.toml")).unwrap();
+        assert!(!config.metrics.jsonl.detection_events);
+        assert!(config.metrics.jsonl.presence_events);
+        assert!(!config.metrics.jsonl.depth_events);
+        assert!(!config.metrics.text.infer_summary);
     }
 
     #[test]

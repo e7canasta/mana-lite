@@ -4,8 +4,8 @@ rerun_file = "config/rerun.toml"
 
 [source]
 #url = "rtsp://192.168.1.6:8554/mana015"
-url = "rtsp://192.168.1.15:8554/clip1"
-#url = "rtsp://192.168.1.6:8554/home"
+#url = "rtsp://192.168.1.15:8554/clip1"
+url = "rtsp://192.168.1.6:8554/home"
 username = "admin"
 password = ""
 transport = "tcp"
@@ -21,7 +21,10 @@ reconnect_backoff_max_ms = 30000
 [inference]
 model_catalog = "config/models.toml"
 # Select one named inference profile under config/blueprints/.
-blueprint_file = "config/blueprints/detect-face/blueprint.toml"
+# Calibration profile: timed raw cardinality plus face ROI without tracking.
+blueprint_file = "config/blueprints/detect-room-face/blueprint.toml"
+# Use this profile when face inference itself must be excluded from the test.
+# blueprint_file = "config/blueprints/detect-room-raw/blueprint.toml"
 depth_rules_file = "config/depth-rules.toml"
 # zones_file = "config/zones.toml"
 # fsm_file = "config/fsm.toml"
@@ -35,16 +38,18 @@ enabled = true
 class = "person"
 
 [presence.poi]
+# PLC TON: valid one-person detections required before room becomes single.
 on_ticks = 1
-# Initial calibration: keep the POI through brief detector dropouts.
+# PLC TOF for the POI/tracker path; room exit uses occupancy.empty_confirm_ms.
 off_ticks = 8
 
 [presence.occupancy]
-# Applied after POI release; this policy is intentionally independent.
-empty_ticks = 4
-# A second person needs two valid candidate ticks and confirmed tracks.
-multiple_candidate_ticks = 2
-multiple_exit_ticks = 2
+# Room transitions use monotonic time, not keyframe/inference counts.
+single_confirm_ms = 3000
+empty_confirm_ms = 8000
+multiple_confirm_ms = 5000
+multiple_exit_ms = 5000
+require_confirmed_tracks = false
 
 [tracking]
 min_hits = 2
@@ -68,7 +73,7 @@ jsonl_level = "debug"
 [pipeline]
 snapshot = false
 infer = true
-track = true
+track = false
 zones = false
 fsm = false
 [viz]

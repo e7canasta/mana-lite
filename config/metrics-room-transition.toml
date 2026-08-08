@@ -1,0 +1,32 @@
+# Narrow diagnostic profile for reproducing room cardinality transitions.
+# Keep this separate from the 24/7 metrics profile.
+[metrics]
+report_interval_s = 1
+
+[metrics.text]
+ingest_line = false
+infer_summary = false
+per_model_lines = false
+
+[metrics.text.flags]
+ingest_pframes = false
+ingest_dup = false
+ingest_keyframe_drops = false
+ingest_timeouts = false
+ingest_reconnect = false
+ingest_ssrc = false
+ingest_rtp = false
+infer_skips = false
+infer_empty = false
+
+[metrics.jsonl]
+frame_events = false
+detection_events = false
+presence_events = true
+zone_events = false
+fsm_events = false
+metrics_event = false
+per_model_in_window = false
+class_counts_in_window = false
+class_per_frame_stats = false
+depth_events = false

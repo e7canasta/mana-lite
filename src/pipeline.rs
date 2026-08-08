@@ -1,5 +1,5 @@
 use crate::config::MetricsTextConfig;
-use crate::logger::{Event, Logger};
+use crate::logger::{Event, LogSink};
 use crate::metrics::{Health, HealthTransition, MetricsEngine, MetricsReport, PerModelMetrics};
 use std::time::Instant;
 
@@ -38,7 +38,7 @@ impl PipelineState {
         decode_us: u64,
         metrics: &mut MetricsEngine,
         health: &mut Health,
-        log: &mut Logger,
+        log: &mut dyn LogSink,
     ) -> u64 {
         self.frame_count += 1;
         let now = Instant::now();
@@ -66,7 +66,7 @@ impl PipelineState {
     pub fn evaluate_health(
         &self,
         health: &mut Health,
-        log: &mut Logger,
+        log: &mut dyn LogSink,
         metrics: &mut MetricsEngine,
     ) {
         match health.evaluate() {

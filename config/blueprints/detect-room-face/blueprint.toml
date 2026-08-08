@@ -1,0 +1,18 @@
+# Calibration profile: raw room cardinality plus face enrichment for one person.
+[blueprint]
+name = "detect-room-face"
+description = "Raw room cardinality with dynamic face ROI for a single person"
+primary_model = "detect-fast"
+models = ["detect-fast", "face-yolo"]
+requires_tracking = false
+
+[[rules]]
+model = "detect-fast"
+
+[[rules]]
+model = "face-yolo"
+requires = "detect-fast"
+requires_class = "person"
+requires_exact_count = 1
+requires_min_confidence = 0.50
+same_frame = true

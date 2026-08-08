@@ -64,7 +64,7 @@ raiz si las rutas son relativas.
 | `config/models.toml` | ONNX, confianza, NMS, filtros, crops | `allow_classes`, areas y `iou` |
 | `config/blueprints/<name>/blueprint.toml` | Perfil activo, modelos y gates | Cambiar en 24/7 solo con validacion |
 | `[presence.poi]` en `config/mana.toml` | Histeresis de señal del POI | `on_ticks` y `off_ticks` |
-| `[presence.occupancy]` en `config/mana.toml` | Confirmacion de cardinalidad | `multiple_candidate_ticks` y `multiple_exit_ticks` |
+| `[presence.occupancy]` en `config/mana.toml` | Timers TON/TOF de cardinalidad | `single_confirm_ms`, `empty_confirm_ms`, `multiple_confirm_ms`, `multiple_exit_ms` |
 | `config/cascade.toml` | Dependencias entre modelos | `requires` y clase padre |
 | `config/metrics.toml` | Resumen terminal y eventos JSONL | Desactivar eventos necesarios para diagnostico |
 | `config/viz.toml` | Frames, boxes, ROI y series Rerun | `boxes` si se necesita inspeccion visual |
@@ -365,7 +365,7 @@ inferencia. Los paths de datos los escribe `src/viz.rs`:
 | `/pipeline/infer/<model>/pipeline_us` | Tiempo wall-clock del modelo completo | Si `infer_latency = true` |
 | `/pipeline/infer/<model>/hz` | Frecuencia de llamadas del modelo | Si `infer_rate = true` |
 | `/pipeline/decode/latency_us` | Tiempo de decode | Si `decode_latency = true` |
-| `/pipeline/state/room/cardinality` | Timeline `unknown/empty/single/multiple` | Siempre con Rerun conectado |
+| `/pipeline/state/room/cardinality` | Timeline `empty/single/multiple` | Siempre con Rerun conectado |
 | `/pipeline/state/room/second_person` | Timeline `none/candidate/confirmed` | Siempre con Rerun conectado |
 | `/pipeline/state/room/signal` | Timeline `valid/invalid` | Siempre con Rerun conectado |
 
@@ -420,7 +420,9 @@ tracking activo.
 
 - [ ] `cargo test` pasa antes de desplegar.
 - [ ] Los modelos configurados existen y cargan.
-- [ ] `track = true` durante calibracion de `multiple`.
+- [ ] Usar `detect-room-raw` y `track = false` para calibrar cardinalidad raw.
+- [ ] Usar `detect-room-face` y `track = false` para validar cardinalidad mas el ROI de face.
+- [ ] Usar `track = true` para validar continuidad de identidad y children.
 - [ ] `detection`, `consolidated_detection` y `presence` aparecen en JSONL.
 - [ ] Rerun muestra `/world/camera/observations`.
 - [ ] Rerun muestra la timeline `/pipeline/state/room`.

@@ -117,10 +117,19 @@ impl Tracker {
     }
 
     pub fn update(&mut self, detections: &[TrackObservation]) -> Vec<TrackEvent> {
+        self.update_with_mode(detections, false)
+    }
+
+    fn update_with_mode(
+        &mut self,
+        detections: &[TrackObservation],
+        allow_single_reacquire: bool,
+    ) -> Vec<TrackEvent> {
         let mut events = Vec::new();
 
         self.predict_all();
-        let (det_matched, track_matched) = self.match_detections(detections);
+        let (det_matched, track_matched) =
+            self.match_detections(detections, allow_single_reacquire);
 
         self.update_matched(&track_matched, detections, &mut events);
         self.age_unmatched(&track_matched, &mut events);
@@ -136,7 +145,19 @@ impl Tracker {
     ) -> Vec<TrackEvent> {
         let track_observations: Vec<TrackObservation> =
             observations.iter().map(TrackObservation::from).collect();
-        self.update(&track_observations)
+        self.update_with_mode(&track_observations, false)
+    }
+
+    /// Reacquire the existing confirmed identity when the room is expected to
+    /// contain one person. This avoids spawning a new ID after a brief bbox
+    /// jump or detector dropout.
+    pub fn update_single_person(
+        &mut self,
+        observations: &[ConsolidatedObservation],
+    ) -> Vec<TrackEvent> {
+        let track_observations: Vec<TrackObservation> =
+            observations.iter().map(TrackObservation::from).collect();
+        self.update_with_mode(&track_observations, true)
     }
 
     pub fn enrich_observations(&mut self, observations: &[ConsolidatedObservation]) {
@@ -179,6 +200,7 @@ impl Tracker {
     fn match_detections(
         &self,
         detections: &[TrackObservation],
+        allow_single_reacquire: bool,
     ) -> (Vec<bool>, HashMap<u64, usize>) {
         let track_ids: Vec<u64> = self.tracks.keys().copied().collect();
         let mut cost = vec![vec![f32::INFINITY; detections.len()]; track_ids.len()];
@@ -200,6 +222,24 @@ impl Tracker {
         for (row, col) in matched {
             track_matched.insert(track_ids[row], col);
             det_matched[col] = true;
+        }
+
+        if allow_single_reacquire && detections.len() == 1 && !det_matched[0] {
+            let detection = &detections[0];
+            let best = self
+                .tracks
+                .values()
+                .filter(|track| track.is_confirmed && track.class == detection.class)
+                .max_by(|a, b| {
+                    compute_iou(&a.bbox, &detection.bbox)
+                        .partial_cmp(&compute_iou(&b.bbox, &detection.bbox))
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                        .then_with(|| b.misses.cmp(&a.misses))
+                });
+            if let Some(track) = best {
+                track_matched.insert(track.id, 0);
+                det_matched[0] = true;
+            }
         }
 
         (det_matched, track_matched)
@@ -432,6 +472,17 @@ mod tests {
         }
     }
 
+    fn consolidated(bbox: [f32; 4]) -> crate::detection::ConsolidatedObservation {
+        crate::detection::ConsolidatedObservation {
+            class: "person".into(),
+            confidence: 0.9,
+            bbox,
+            primary_model: "detect-fast".into(),
+            evidence: Vec::new(),
+            components: Vec::new(),
+        }
+    }
+
     #[test]
     fn single_detection_creates_track() {
         let mut tracker = Tracker::new();
@@ -509,6 +560,26 @@ mod tests {
                 .iter()
                 .any(|e| matches!(e, TrackEvent::Updated { id: 1, .. }))
         );
+        assert_eq!(tracker.track_count(), 1);
+    }
+
+    #[test]
+    fn single_person_reacquire_keeps_identity_after_large_bbox_jump() {
+        let mut tracker = Tracker::new();
+        let first = consolidated([100.0, 100.0, 200.0, 300.0]);
+        let jumped = consolidated([500.0, 100.0, 600.0, 300.0]);
+
+        tracker.update_single_person(std::slice::from_ref(&first));
+        tracker.update_single_person(std::slice::from_ref(&first));
+        let events = tracker.update_single_person(std::slice::from_ref(&jumped));
+
+        assert!(
+            events
+                .iter()
+                .any(|event| matches!(event, TrackEvent::Updated { id: 1, .. }))
+        );
+        assert_eq!(tracker.current_tracks().len(), 1);
+        assert_eq!(tracker.current_tracks()[0].id, 1);
         assert_eq!(tracker.track_count(), 1);
     }
 

@@ -130,7 +130,9 @@ infer:  2.0 Hz — 10 calls in 5s | 38ms avg | 2-145ms | 12 dets | skips:2, empt
 
 ## 3. JSONL: registro forense
 
-Controlado por `config/metrics.toml` seccion `[metrics.jsonl]`.
+Controlado por `config/metrics.toml` seccion `[metrics.jsonl]`. Para depurar
+una transicion aislada se puede usar `config/metrics-room-transition.toml`,
+que deja solo el evento `presence` por evaluacion.
 
 ```toml
 [metrics.jsonl]
@@ -197,10 +199,12 @@ frame. El evento permite calibrar las politicas sin inferirlas desde labels de
 bbox:
 
 ```json
-{"type":"presence","frame_id":10,"state":"single",
+{"type":"presence","frame_id":10,"keyframe_gap_ms":2500,"source_window_ms":2500,
+ "keyframes_seen":10,"keyframes_dropped":1,"state":"single","poi_state":"present",
  "second_person":"candidate","raw_count":2,"confirmed_count":1,
- "signal_valid":true,"held":false,"empty_ticks":0,
- "candidate_ticks":1,"exit_ticks":0}
+ "signal_valid":true,"held":false,"poi_positive_ticks":3,
+ "poi_empty_ticks":0,"single_timer_ms":0,"empty_timer_ms":0,
+ "multiple_candidate_timer_ms":500,"multiple_exit_timer_ms":0}
 ```
 
 **Depth event** — estadisticas del mapa depth local al ROI, nunca la matriz:
@@ -285,9 +289,11 @@ a tiempo. `gap_ms` es el intervalo entre keyframes procesados, no una medicion
 pura del stream cuando hubo drops. Para una lectura de salud comun, usar
 `drop_ratio`, `throughput_ratio` y `freshness`.
 
-**Room state** — la timeline muestra la maquina de cardinalidad. `single` es la
-persona de interes mantenida por la politica POI; `multiple` solo aparece cuando
-la segunda persona supera la politica de candidatos y tiene track confirmado.
+**Room state** — la timeline muestra la cardinalidad de la habitacion:
+`empty`, `single` o `multiple`. En el perfil 24/7, `single` puede conservarse
+durante un dropout corto por la politica POI; en `detect-room-raw` y
+`detect-room-face` se calibra con el conteo raw y los timers de room, sin
+retencion del child face.
 Los lanes `second_person` y `signal` explican si la maquina esta esperando
 confirmacion o si el frame no era valido.
 
@@ -332,7 +338,7 @@ Solo las entidades que Rerun recibe actualmente:
   infer/{model}/pipeline_us          ─ tiempo wall-clock del modelo
   infer/{model}/hz                   ─ frecuencia de llamadas del modelo
   decode/latency_us                  ─ tiempo de decode
-  state/room/cardinality              ─ StateChange: unknown/empty/single/multiple
+  state/room/cardinality              ─ StateChange: empty/single/multiple
   state/room/second_person            ─ StateChange: none/candidate/confirmed
   state/room/signal                   ─ StateChange: valid/invalid
 

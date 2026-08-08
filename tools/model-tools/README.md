@@ -80,6 +80,26 @@ checkpoints are reported at the end and cause a non-zero exit status. Use
 `--dry-run` to inspect the matrix first, or restrict it with `--tasks`, `--models`,
 and `--sizes`.
 
+Export the YOLO face matrix from the downloaded YOLO11 and YOLO12 checkpoints:
+
+```bash
+./scripts/export-yoloface-fp16-matrix.sh
+```
+
+The face script accepts `yolov11{s,m,l}-face.pt` and `yolov12{s,m,l}-face.pt`,
+including browser-download suffixes such as `yolov12s-face (1).pt`. It writes
+12 artifacts under `artifacts/yoloface-fp16/`:
+
+```text
+yolov{11,12}{s,m,l}-face-fp16-{320,640}.onnx
+```
+
+Use `--dry-run`, `--versions`, `--models`, and `--sizes` to inspect or restrict
+the matrix. The corresponding disabled catalog keys are
+`face-v{11,12}-{s,m,l}-{320,640}`. They include the same face crop and
+postprocess policy as the active `face-yolo` entry and can be enabled one at a
+time after latency and detection quality have been compared.
+
 The runtime catalog registers the same matrix with keys such as
 `detect-s-320`, `pose-m-640`, `seg-l-320`, and `depth-x-640`. They are disabled
 by default in `config/models.toml`; enable one only after selecting it in the

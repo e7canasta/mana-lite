@@ -1,0 +1,11 @@
+# Calibration-only profile: primary detections and room cardinality without
+# tracker-dependent children.
+[blueprint]
+name = "detect-room-raw"
+description = "Raw room cardinality calibration without tracking"
+primary_model = "detect-fast"
+models = ["detect-fast"]
+requires_tracking = false
+
+[[rules]]
+model = "detect-fast"

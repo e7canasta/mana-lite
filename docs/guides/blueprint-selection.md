@@ -3,7 +3,9 @@
 ## Decision rapida
 
 ```text
-Calibracion o coste minimo       -> detect-face
+Calibracion raw de cardinalidad -> detect-room-raw
+Cardinalidad raw + ROI de face  -> detect-room-face
+Calibracion o coste minimo      -> detect-face
 24/7 con enriquecimiento estable -> detect-face-pose-seg
 ```
 
@@ -20,6 +22,21 @@ Usa tracking y presencia temporal: una persona aceptada activa la presencia y
 los vacios del POI se toleran durante `presence.poi.off_ticks` antes de
 declarar ausencia. La confirmacion de una segunda persona usa una politica
 separada en `presence.occupancy`.
+
+## `detect-room-raw`
+
+Usar solo para calibrar el conteo temporal del detector sin introducir
+identidades ni deriva de Kalman. Requiere `pipeline.track = false` y confirma
+`multiple` con evidencia raw y timers de room, no con tracks confirmados. No
+permite validar children ni continuidad espacial.
+
+## `detect-room-face`
+
+Usar cuando se necesita calibrar cardinalidad sin tracking y, al mismo tiempo,
+observar la cara de una unica persona. Mantiene `pipeline.track = false`, pero
+activa `face-yolo` solo en estado `single` y sobre un ROI dinamico de la mitad
+superior del bbox de la persona. Las coordenadas de face se trasladan al frame
+original para Rerun, JSONL y las etapas posteriores.
 
 ## `detect-face-pose-seg`
 

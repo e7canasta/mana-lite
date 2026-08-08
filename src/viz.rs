@@ -40,6 +40,8 @@ pub struct VizBridge {
 
 const DEPTH_OVERLAY_ALPHA: u8 = 150;
 const POSE_KEYPOINT_CONFIDENCE: f32 = 0.25;
+const FRAME_NUMBER_TIMELINE: &str = "frame_nr";
+const FRAME_TIME_TIMELINE: &str = "frame_time";
 
 fn sanitize_entity_name(name: &str) -> String {
     name.chars()
@@ -111,6 +113,8 @@ impl VizBridge {
             .connect_grpc_opts(url);
         match rec {
             Ok(rec) => {
+                // Keep the SDK wall-clock timeline available alongside the frame timelines.
+                rec.set_log_time_enabled(true);
                 Self::send_default_blueprint(&rec);
                 Self::send_presence_state_configuration(&rec);
                 self.last_occupancy_state = None;
@@ -233,9 +237,9 @@ impl VizBridge {
             (
                 "/pipeline/state/room/cardinality",
                 rerun::StateConfiguration::new()
-                    .with_values(["unknown", "empty", "single", "multiple"])
-                    .with_labels(["Unknown", "Empty", "Single person", "Multiple people"])
-                    .with_colors([0x9E9E9EFF, 0x607D8BFF, 0x4CAF50FF, 0xFF9800FF]),
+                    .with_values(["empty", "single", "multiple"])
+                    .with_labels(["Empty", "Single person", "Multiple people"])
+                    .with_colors([0x607D8BFF, 0x4CAF50FF, 0xFF9800FF]),
             ),
             (
                 "/pipeline/state/room/second_person",
@@ -286,10 +290,11 @@ impl VizBridge {
         }
     }
 
-    pub fn set_frame_time(&self) {
+    pub fn set_frame_time(&self, frame_number: u64, timestamp_ns: i64) {
         if let Inner::Connected { ref rec, .. } = self.inner {
-            let ts = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
-            rec.set_time_sequence("frame_ns", ts);
+            let frame_number = i64::try_from(frame_number).unwrap_or(i64::MAX);
+            rec.set_time_sequence(FRAME_NUMBER_TIMELINE, frame_number);
+            rec.set_timestamp_nanos_since_epoch(FRAME_TIME_TIMELINE, timestamp_ns);
         }
     }
 
@@ -1041,6 +1046,71 @@ impl VizBridge {
         if let Err(e) = rec.log(path, &rerun::Scalars::single(value)) {
             log::warn!("viz scalar {path} failed: {e}");
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::occupancy::{RoomCardinality, SecondPersonState};
+    use std::time::Instant;
+
+    #[test]
+    fn occupancy_state_has_sequence_timestamp_and_log_time_timelines() {
+        let (rec, storage) = rerun::RecordingStreamBuilder::new("mana-viz-test")
+            .batcher_config(rerun::log::ChunkBatcherConfig::NEVER)
+            .memory()
+            .expect("memory recording");
+        rec.set_log_time_enabled(true);
+        let mut bridge = VizBridge {
+            inner: Inner::Connected {
+                rec,
+                last_flush_warn: Instant::now(),
+            },
+            addr: String::new(),
+            toggles: VizSendToggles::default(),
+            last_infer_at: HashMap::new(),
+            last_occupancy_state: None,
+            last_second_person_state: None,
+            last_signal_state: None,
+        };
+
+        bridge.set_frame_time(1, 1_000);
+        bridge.log_occupancy_state(RoomCardinality::Empty, SecondPersonState::None, true);
+        bridge.set_frame_time(2, 2_000);
+        bridge.log_occupancy_state(RoomCardinality::Single, SecondPersonState::None, true);
+
+        let state_chunks = storage
+            .take()
+            .into_iter()
+            .filter_map(|msg| match msg {
+                rerun::log::LogMsg::ArrowMsg(_, msg) => {
+                    Some(rerun::log::Chunk::from_arrow_msg(&msg).expect("valid chunk"))
+                }
+                _ => None,
+            })
+            .filter(|chunk| chunk.entity_path().to_string() == "/pipeline/state/room/cardinality")
+            .collect::<Vec<_>>();
+
+        let chunk = state_chunks.first().expect("state chunk");
+        let timelines = chunk.timelines();
+        assert_eq!(
+            timelines
+                .get(&rerun::TimelineName::from(FRAME_NUMBER_TIMELINE))
+                .expect("frame number timeline")
+                .timeline()
+                .typ(),
+            rerun::external::re_log_types::TimeType::Sequence
+        );
+        assert_eq!(
+            timelines
+                .get(&rerun::TimelineName::from(FRAME_TIME_TIMELINE))
+                .expect("frame timestamp timeline")
+                .timeline()
+                .typ(),
+            rerun::external::re_log_types::TimeType::TimestampNs
+        );
+        assert!(timelines.contains_key(&rerun::TimelineName::log_time()));
     }
 }
 

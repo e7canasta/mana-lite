@@ -131,7 +131,7 @@ RTSP Stream
 4. **Consolidate**: `Detection` de cada modelo se fusiona, sin memoria temporal, en `ConsolidatedObservation` y sus evidencias se asocian por relación espacial. Depth no entra aquí.
 5. **POI signal**: `presence.poi` adquiere y sostiene la persona de interes antes del tracker.
 6. **Track (opcional)**: con `pipeline.track = true`, el tracker asigna IDs y mantiene `TrackedEntity` entre frames.
-7. **Occupancy state**: la maquina clasifica `unknown`, `empty`, `single` o `multiple`; la segunda persona requiere dos ticks candidatos y dos tracks confirmados.
+7. **Occupancy state**: la maquina clasifica `empty`, `single` o `multiple` con timers monotono de room; la segunda persona puede requerir tracks confirmados segun la politica.
 8. **Publish observations**: JSONL emite detecciones y presencia; Rerun dibuja `/world/camera/observations`, entidades y la timeline `/pipeline/state/room`.
 9. **Zones/FSM (opcionales)**: consumen tracks y siguen representando eventos clinicos de cama, separados de cardinalidad.
 
@@ -805,7 +805,7 @@ jq 'select(.type=="detection" and .per_class.person.conf_min < 0.5)' mana-*.json
 jq -c 'select(.type=="detection") | {f: .frame_id, m: .model, c: [.det[]?.class]}' mana-*.jsonl
 
 # Timeline de cardinalidad de habitacion
-jq -c 'select(.type=="presence") | {f: .frame_id, s: .state, second: .second_person, raw: .raw_count, confirmed: .confirmed_count}' mana-*.jsonl
+ jq -c 'select(.type=="presence") | {f: .frame_id, room: .state, poi: .poi_state, raw: .raw_count, ton_ms: .single_timer_ms, empty_ms: .empty_timer_ms}' mana-*.jsonl
 ```
 
 ---

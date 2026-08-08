@@ -184,27 +184,34 @@ on_ticks = 1
 off_ticks = 8
 
 [presence.occupancy]
-empty_ticks = 4
-multiple_candidate_ticks = 2
-multiple_exit_ticks = 2
+single_confirm_ms = 3000
+empty_confirm_ms = 8000
+multiple_confirm_ms = 5000
+multiple_exit_ms = 5000
+require_confirmed_tracks = false
 ```
 
 `poi` y `occupancy` son politicas distintas. El mecanismo recibe la evidencia
 del frame y aplica cada politica en su propia capa:
 
 - `poi` es permisiva: adquiere rapido la persona de interes y sostiene su bbox
-  durante dropouts cortos antes del tracker.
+  durante dropouts cortos antes del tracker. `on_ticks` es el TON de entrada:
+  la primera deteccion inicia el timer y la presencia solo se confirma tras
+  evaluaciones validas sostenidas.
 - `occupancy` es conservadora para confirmar una segunda persona: requiere
-  `multiple_candidate_ticks` con conteo `2+` y al menos dos tracks confirmados.
-- `multiple_exit_ticks` evita volver a `single` por una perdida aislada de la
+  `multiple_confirm_ms` de conteo `2+`. Puede exigir tracks confirmados con
+  `require_confirmed_tracks = true`; el perfil raw de calibracion lo deja en
+  `false`.
+- `multiple_exit_ms` evita volver a `single` por una perdida aislada de la
   segunda persona.
 
-La maquina de cardinalidad publica estados independientes del FSM clinico:
+La maquina de cardinalidad publica estados independientes del FSM clinico y
+usa tiempo monotono, no cantidad de keyframes:
 
 ```text
-UNKNOWN -> EMPTY | SINGLE | MULTIPLE
-SINGLE  + segundo candidato breve      -> SINGLE
-SINGLE  + segundo track confirmado     -> MULTIPLE
+EMPTY   + persona confirmada           -> SINGLE
+SINGLE  + segundo candidato breve       -> SINGLE
+SINGLE  + segundo candidato persistente -> MULTIPLE
 MULTIPLE + perdida breve de la segunda -> MULTIPLE
 MULTIPLE + salida confirmada           -> SINGLE o EMPTY
 sin frame valido                       -> no cambia el estado

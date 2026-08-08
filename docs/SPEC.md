@@ -171,21 +171,27 @@ on_ticks = 1
 off_ticks = 8
 
 [presence.occupancy]
-empty_ticks = 4
-multiple_candidate_ticks = 2
-multiple_exit_ticks = 2
+single_confirm_ms = 3000
+empty_confirm_ms = 8000
+multiple_confirm_ms = 5000
+multiple_exit_ms = 5000
+require_confirmed_tracks = false
 ```
 
 The `poi` policy runs after spatial consolidation of primary observations and
 before the classic tracker. Empty valid inference ticks shorter than
 `poi.off_ticks` hold the last person observation. Missing/invalid input does not
-count as absence.
+count as absence. `poi.on_ticks` is the PLC TON entry timer: the first valid
+person starts it, and presence becomes confirmed only after that many valid
+evaluations.
 
-The independent occupancy policy classifies the room as `unknown`, `empty`,
-`single` or `multiple`. A second person requires the configured number of valid
-candidate ticks and at least two confirmed tracks. This prevents one raw false
-positive from changing the room state while still allowing the POI signal to be
-held permissively.
+The independent occupancy policy classifies the room as `empty`, `single` or
+`multiple`. Room transitions use monotonic-time TON/TOF timers, independent of
+camera FPS, GOP/I-frame cadence, dropped frames and inference latency. A second
+person uses `multiple_confirm_ms`; `require_confirmed_tracks = true` can add
+the stricter track evidence for a 24/7 profile. The room cardinality lane is
+separate from the POI hold signal, and raw calibration uses the current
+detector count instead of retaining a person through `presence.poi.off_ticks`.
 
 ### `cascade.toml` - Cascaded Model Eligibility
 

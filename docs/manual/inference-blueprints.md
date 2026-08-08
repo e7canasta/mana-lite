@@ -33,8 +33,9 @@ fsm = false
 ```
 
 El child face usa el track confirmado. El filtro de presencia mantiene la
-ultima observacion durante cuatro ticks vacios por defecto. Puede omitirse si
-hay mas de una persona.
+ultima observacion durante `presence.poi.off_ticks` evaluaciones validas. La
+cardinalidad de room usa sus propios timers monotono y puede omitirse si hay
+mas de una persona.
 
 ## 3. Perfil estable multi-modelo
 

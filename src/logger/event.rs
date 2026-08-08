@@ -4,6 +4,7 @@ use crate::metrics::{MetricsReport, PerClassFrameStats};
 /// `map_height` y `valid_ratio` (contrato `DepthRoiMap`, spec §8/§10).
 pub const DEPTH_EVENT_VERSION: u8 = 2;
 
+#[derive(Debug, Clone)]
 pub enum Event {
     Meta {
         event: String,
@@ -93,15 +94,23 @@ pub enum Event {
     },
     Presence {
         frame_id: u64,
+        keyframe_gap_ms: u64,
+        source_window_ms: u64,
+        keyframes_seen: u64,
+        keyframes_dropped: u64,
         state: String,
+        poi_state: String,
         second_person: String,
         raw_count: usize,
         confirmed_count: usize,
         signal_valid: bool,
         held: bool,
-        empty_ticks: u32,
-        candidate_ticks: u32,
-        exit_ticks: u32,
+        poi_positive_ticks: u32,
+        poi_empty_ticks: u32,
+        single_timer_ms: u64,
+        empty_timer_ms: u64,
+        multiple_candidate_timer_ms: u64,
+        multiple_exit_timer_ms: u64,
     },
     Metrics(MetricsReport),
 }
@@ -147,6 +156,7 @@ impl Event {
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct DetRecord {
     pub class: String,
     pub confidence: f32,
@@ -164,6 +174,7 @@ pub struct DetRecord {
 ///
 /// Built by [`crate::infer::DetectionMask::to_wire_record`], which owns the
 /// wire format of the mask.
+#[derive(Debug, Clone)]
 pub struct MaskRecord {
     pub rle: Vec<u32>,
     pub bbox: [f32; 4],
@@ -404,27 +415,43 @@ impl Event {
 
     pub fn presence(
         frame_id: u64,
+        keyframe_gap_ms: u64,
+        source_window_ms: u64,
+        keyframes_seen: u64,
+        keyframes_dropped: u64,
         state: &str,
+        poi_state: &str,
         second_person: &str,
         raw_count: usize,
         confirmed_count: usize,
         signal_valid: bool,
         held: bool,
-        empty_ticks: u32,
-        candidate_ticks: u32,
-        exit_ticks: u32,
+        poi_positive_ticks: u32,
+        poi_empty_ticks: u32,
+        single_timer_ms: u64,
+        empty_timer_ms: u64,
+        multiple_candidate_timer_ms: u64,
+        multiple_exit_timer_ms: u64,
     ) -> Self {
         Event::Presence {
             frame_id,
+            keyframe_gap_ms,
+            source_window_ms,
+            keyframes_seen,
+            keyframes_dropped,
             state: state.into(),
+            poi_state: poi_state.into(),
             second_person: second_person.into(),
             raw_count,
             confirmed_count,
             signal_valid,
             held,
-            empty_ticks,
-            candidate_ticks,
-            exit_ticks,
+            poi_positive_ticks,
+            poi_empty_ticks,
+            single_timer_ms,
+            empty_timer_ms,
+            multiple_candidate_timer_ms,
+            multiple_exit_timer_ms,
         }
     }
 

@@ -8,10 +8,21 @@ pub enum PresenceState {
     Ambiguous,
 }
 
+impl PresenceState {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Absent => "absent",
+            Self::Present => "present",
+            Self::Ambiguous => "ambiguous",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PresenceUpdate {
     pub state: PresenceState,
     pub held: bool,
+    pub positive_ticks: u32,
     pub empty_ticks: u32,
 }
 
@@ -52,6 +63,7 @@ impl PresenceFilter {
                 PresenceUpdate {
                     state: self.state,
                     held: false,
+                    positive_ticks: self.positive_ticks,
                     empty_ticks: self.empty_ticks,
                 },
             );
@@ -62,6 +74,7 @@ impl PresenceFilter {
                 PresenceUpdate {
                     state: self.state,
                     held: false,
+                    positive_ticks: self.positive_ticks,
                     empty_ticks: self.empty_ticks,
                 },
             );
@@ -82,6 +95,7 @@ impl PresenceFilter {
                 PresenceUpdate {
                     state: self.state,
                     held: false,
+                    positive_ticks: self.positive_ticks,
                     empty_ticks: 0,
                 },
             );
@@ -102,6 +116,7 @@ impl PresenceFilter {
                 PresenceUpdate {
                     state: self.state,
                     held: false,
+                    positive_ticks: self.positive_ticks,
                     empty_ticks: 0,
                 },
             );
@@ -120,6 +135,7 @@ impl PresenceFilter {
                 PresenceUpdate {
                     state: self.state,
                     held: true,
+                    positive_ticks: self.positive_ticks,
                     empty_ticks: self.empty_ticks,
                 },
             );
@@ -135,6 +151,7 @@ impl PresenceFilter {
             PresenceUpdate {
                 state: self.state,
                 held: false,
+                positive_ticks: self.positive_ticks,
                 empty_ticks: self.empty_ticks,
             },
         )
@@ -188,6 +205,23 @@ mod tests {
         assert!(update.held);
         assert_eq!(update.empty_ticks, 1);
         assert_eq!(filter.state(), PresenceState::Present);
+    }
+
+    #[test]
+    fn confirms_presence_after_configured_on_ticks() {
+        let mut filter = PresenceFilter::new(
+            true,
+            "person",
+            PresencePoiPolicy {
+                on_ticks: 3,
+                off_ticks: 3,
+            },
+        );
+        let one = [person()];
+
+        assert_eq!(filter.update(&one, true).1.state, PresenceState::Absent);
+        assert_eq!(filter.update(&one, true).1.state, PresenceState::Absent);
+        assert_eq!(filter.update(&one, true).1.state, PresenceState::Present);
     }
 
     #[test]

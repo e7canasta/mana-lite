@@ -13,7 +13,7 @@ pub fn log_detections_2d(
     frame: FrameSize,
 ) -> Result<()> {
     let dets = batch.valid();
-    rec.set_time_sequence("frame_ns", batch.timestamp_ns);
+    rec.set_timestamp_nanos_since_epoch("frame_time", batch.timestamp_ns);
     rec.log(entity_path, &rerun::Clear::recursive()).ok();
     if dets.is_empty() {
         return Ok(());

@@ -29,7 +29,7 @@ use error::{ConfigError, ManaError, Result};
 use fsm::FsmEngine;
 use infer::{CropRect, InferEngine, InferenceResult, compute_bbox_roi, compute_upper_square_roi};
 use ingest::{IngestEngine, RawKeyframe, RetinaReader};
-use logger::{DetRecord, Event, JsonlLevel, Logger};
+use logger::{DetRecord, Event, JsonlLevel, LogManager, LogSink};
 use mana_types::RawFrameV1;
 use metrics::{Health, MetricsEngine, PerClassFrameStats};
 use occupancy::{OccupancyEvidence, OccupancyStateMachine};
@@ -39,6 +39,7 @@ use snapshot::{FrameBuffer, FrameDecoder, SnapshotSaver};
 use std::collections::{HashMap, HashSet};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::PathBuf;
+use std::time::Instant;
 use track::{Tracker, TrackerConfig, track_event_to_log};
 use ultralytics_inference::DepthMap;
 use viz::VizBridge;
@@ -78,7 +79,7 @@ struct App {
     snapshots: SnapshotSaver,
     viz: VizBridge,
     state: PipelineState,
-    log: Logger,
+    log: Box<dyn LogSink>,
     crop_frames_pending: Vec<CropFrameQueue>,
 }
 
@@ -304,11 +305,12 @@ impl App {
 
         let jsonl_level = JsonlLevel::from_str(&config.output.jsonl_level);
         let mut log = if let Some(ref dir) = config.output.save_dir {
-            Logger::rotating(dir.clone(), &config.output.rotate, jsonl_level)?
+            LogManager::rotating(dir.clone(), &config.output.rotate, jsonl_level)?
         } else {
-            Logger::new(jsonl_level)
+            LogManager::new(jsonl_level)
         };
         log.set_jsonl_config(metrics_log.metrics.jsonl.clone());
+        let mut log: Box<dyn LogSink> = Box::new(log);
 
         log::info!(
             "mana-lite v{VERSION} starting (output {})",
@@ -506,19 +508,20 @@ impl App {
     }
 
     fn process_keyframe(&mut self, kf: RawKeyframe, config: &AppConfig) {
-        self.viz.set_frame_time();
-        self.viz.log_keyframe_selection(
-            kf.keyframes_seen,
-            kf.keyframes_dropped,
-            kf.source_window_ms,
-        );
-
+        let frame_timestamp_ns = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
         let (frame_buf, decode_us) = self.decoder.decode_timed(&kf.h264);
         let dt_ms = self.state.on_keyframe(
             decode_us,
             &mut self.metrics,
             &mut self.health,
             &mut self.log,
+        );
+        self.viz
+            .set_frame_time(self.state.frame_number(), frame_timestamp_ns);
+        self.viz.log_keyframe_selection(
+            kf.keyframes_seen,
+            kf.keyframes_dropped,
+            kf.source_window_ms,
         );
         self.viz.log_decode_latency(decode_us);
         self.viz.log_keyframe_gap(dt_ms);
@@ -529,10 +532,17 @@ impl App {
         // Depth guards require evidence from this frame, never a stale result.
         self.depth_rule_snapshot = depth::DepthRuleSnapshot::default();
         if config.pipeline.infer {
-            self.run_inference(fb, config);
+            self.run_inference(
+                fb,
+                config,
+                dt_ms,
+                kf.source_window_ms,
+                kf.keyframes_seen,
+                kf.keyframes_dropped,
+            );
         }
         self.evaluate_scene(config);
-        self.flush_viz_metrics(&frame_buf);
+        self.flush_viz_metrics(&frame_buf, frame_timestamp_ns);
     }
 
     fn save_snapshot_if_enabled(
@@ -546,7 +556,15 @@ impl App {
         }
     }
 
-    fn run_inference(&mut self, fb: &FrameBuffer, config: &AppConfig) {
+    fn run_inference(
+        &mut self,
+        fb: &FrameBuffer,
+        config: &AppConfig,
+        keyframe_gap_ms: u64,
+        source_window_ms: u64,
+        keyframes_seen: u64,
+        keyframes_dropped: u64,
+    ) {
         self.viz.clear_depth_context_boxes();
         let requested = self.resolve_models(config);
         let ordered = self.cascade.ordered(&requested);
@@ -587,6 +605,16 @@ impl App {
         let root_observations = self.detection_consolidator.consolidate(&root_outputs);
         let (effective_root_observations, presence_update) =
             self.presence.update(&root_observations, primary_root_valid);
+        let raw_person_count = root_observations
+            .iter()
+            .filter(|observation| observation.class == config.presence.class)
+            .count();
+        let tracking_observations: &[ConsolidatedObservation] =
+            if matches!(presence_update.state, presence::PresenceState::Ambiguous) {
+                &[]
+            } else {
+                &effective_root_observations
+            };
         if presence_update.held {
             log::debug!(
                 "presence: holding last observation for {} empty tick(s)",
@@ -594,12 +622,13 @@ impl App {
             );
         }
         if config.pipeline.track {
-            self.run_tracking(&effective_root_observations);
+            self.run_tracking(
+                tracking_observations,
+                raw_person_count == 1
+                    && tracking_observations.len() == 1
+                    && tracking_observations[0].class == config.presence.class,
+            );
         }
-        let raw_person_count = root_observations
-            .iter()
-            .filter(|observation| observation.class == config.presence.class)
-            .count();
         let confirmed_person_count = if config.pipeline.track {
             self.tracker
                 .current_tracks()
@@ -610,16 +639,27 @@ impl App {
             0
         };
         let poi_present = if config.presence.enabled {
-            matches!(presence_update.state, presence::PresenceState::Present)
+            if config.pipeline.track {
+                matches!(presence_update.state, presence::PresenceState::Present)
+            } else {
+                // Raw calibration uses the POI entry timer, but a missing raw
+                // person starts the room exit timer immediately instead of
+                // being held by presence.poi.off_ticks.
+                raw_person_count == 1
+                    && matches!(presence_update.state, presence::PresenceState::Present)
+            }
         } else {
             raw_person_count == 1
         };
-        let occupancy_update = self.occupancy.update(OccupancyEvidence {
-            signal_valid: primary_root_valid,
-            raw_person_count,
-            poi_present,
-            confirmed_person_count,
-        });
+        let occupancy_update = self.occupancy.update_at(
+            OccupancyEvidence {
+                signal_valid: primary_root_valid,
+                raw_person_count,
+                poi_present,
+                confirmed_person_count,
+            },
+            Instant::now(),
+        );
         self.viz.log_occupancy_state(
             occupancy_update.state,
             occupancy_update.second_person,
@@ -627,15 +667,23 @@ impl App {
         );
         self.log.emit(Event::presence(
             self.state.frame_number(),
+            keyframe_gap_ms,
+            source_window_ms,
+            keyframes_seen,
+            keyframes_dropped,
             occupancy_update.state.as_str(),
+            presence_update.state.as_str(),
             occupancy_update.second_person.as_str(),
             raw_person_count,
             confirmed_person_count,
             primary_root_valid,
             presence_update.held,
-            occupancy_update.empty_ticks,
-            occupancy_update.multiple_candidate_ticks,
-            occupancy_update.multiple_exit_ticks,
+            presence_update.positive_ticks,
+            presence_update.empty_ticks,
+            occupancy_update.single_timer_ms,
+            occupancy_update.empty_timer_ms,
+            occupancy_update.multiple_candidate_timer_ms,
+            occupancy_update.multiple_exit_timer_ms,
         ));
 
         let children: Vec<String> = ordered
@@ -644,6 +692,10 @@ impl App {
             .map(|model| (*model).to_owned())
             .collect();
         for model_key in children {
+            if occupancy_update.state != occupancy::RoomCardinality::Single {
+                self.metrics.tick_infer_skip(&model_key);
+                continue;
+            }
             let target = if self.cascade.same_frame(&model_key) {
                 self.cascade
                     .parent_of(&model_key)
@@ -943,8 +995,12 @@ impl App {
         }
     }
 
-    fn run_tracking(&mut self, observations: &[ConsolidatedObservation]) {
-        let track_events = self.tracker.update_observations(observations);
+    fn run_tracking(&mut self, observations: &[ConsolidatedObservation], single_person: bool) {
+        let track_events = if single_person {
+            self.tracker.update_single_person(observations)
+        } else {
+            self.tracker.update_observations(observations)
+        };
         for ev in &track_events {
             self.log
                 .emit(track_event_to_log(ev, self.state.frame_number()));
@@ -952,8 +1008,8 @@ impl App {
     }
 
     fn publish_entities(&mut self) {
-        let active_tracks = self.tracker.active_tracks();
-        self.viz.log_entity_boxes(&active_tracks);
+        let current_tracks = self.tracker.current_tracks();
+        self.viz.log_entity_boxes(&current_tracks);
         for track in self.tracker.current_tracks() {
             let mut sources: Vec<String> = track.evidence.iter().map(|e| e.model.clone()).collect();
             sources.sort();
@@ -979,8 +1035,8 @@ impl App {
         };
 
         let zone_events = if config.pipeline.zones {
-            let active: Vec<&track::Track> = self.tracker.active_tracks();
-            let events = zone.evaluate(&active);
+            let current: Vec<&track::Track> = self.tracker.current_tracks();
+            let events = zone.evaluate(&current);
             for ev in &events {
                 self.log
                     .emit(zone_event_to_log(ev, self.state.frame_number()));
@@ -1008,7 +1064,7 @@ impl App {
         zone: &ZoneEngine,
         health: &Health,
         depth: &depth::DepthRuleSnapshot,
-        log: &mut Logger,
+        log: &mut dyn LogSink,
     ) {
         if let Some(tr) = fsm.evaluate(zone_events, zone, health, depth) {
             log.emit(Event::fsm_transition(
@@ -1022,9 +1078,9 @@ impl App {
         }
     }
 
-    fn flush_viz_metrics(&mut self, frame_buf: &Option<FrameBuffer>) {
+    fn flush_viz_metrics(&mut self, frame_buf: &Option<FrameBuffer>, timestamp_ns: i64) {
         if let Some(fb) = frame_buf.as_ref() {
-            let header = raw_frame_header(fb, self.state.frame_number());
+            let header = raw_frame_header(fb, self.state.frame_number(), timestamp_ns);
             self.viz.log_frame(&header, &fb.rgb);
             for entry in self.crop_frames_pending.drain(..) {
                 if let Some(crop) = entry.crop_frame {
@@ -1066,12 +1122,12 @@ impl App {
     }
 }
 
-fn raw_frame_header(fb: &FrameBuffer, frame_id: u64) -> RawFrameV1 {
+fn raw_frame_header(fb: &FrameBuffer, frame_id: u64, timestamp_ns: i64) -> RawFrameV1 {
     RawFrameV1 {
         width: fb.w,
         height: fb.h,
         frame_id,
-        timestamp_ns: chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0),
+        timestamp_ns,
         ..Default::default()
     }
 }

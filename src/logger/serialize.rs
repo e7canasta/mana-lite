@@ -435,20 +435,38 @@ pub fn write_event(event: &Event, ts: &str, buf: &mut Vec<u8>) {
         }
         Event::Presence {
             frame_id,
+            keyframe_gap_ms,
+            source_window_ms,
+            keyframes_seen,
+            keyframes_dropped,
             state,
+            poi_state,
             second_person,
             raw_count,
             confirmed_count,
             signal_valid,
             held,
-            empty_ticks,
-            candidate_ticks,
-            exit_ticks,
+            poi_positive_ticks,
+            poi_empty_ticks,
+            single_timer_ms,
+            empty_timer_ms,
+            multiple_candidate_timer_ms,
+            multiple_exit_timer_ms,
         } => {
             buf.extend_from_slice(b"\"type\":\"presence\",\"frame_id\":");
             write_u64(*frame_id, buf);
+            buf.extend_from_slice(b",\"keyframe_gap_ms\":");
+            write_u64(*keyframe_gap_ms, buf);
+            buf.extend_from_slice(b",\"source_window_ms\":");
+            write_u64(*source_window_ms, buf);
+            buf.extend_from_slice(b",\"keyframes_seen\":");
+            write_u64(*keyframes_seen, buf);
+            buf.extend_from_slice(b",\"keyframes_dropped\":");
+            write_u64(*keyframes_dropped, buf);
             buf.extend_from_slice(b",\"state\":\"");
             write_json_string(state, buf);
+            buf.extend_from_slice(b"\",\"poi_state\":\"");
+            write_json_string(poi_state, buf);
             buf.extend_from_slice(b"\",\"second_person\":\"");
             write_json_string(second_person, buf);
             buf.extend_from_slice(b"\",\"raw_count\":");
@@ -459,12 +477,18 @@ pub fn write_event(event: &Event, ts: &str, buf: &mut Vec<u8>) {
             buf.extend_from_slice(if *signal_valid { b"true" } else { b"false" });
             buf.extend_from_slice(b",\"held\":");
             buf.extend_from_slice(if *held { b"true" } else { b"false" });
-            buf.extend_from_slice(b",\"empty_ticks\":");
-            write_u64(*empty_ticks as u64, buf);
-            buf.extend_from_slice(b",\"candidate_ticks\":");
-            write_u64(*candidate_ticks as u64, buf);
-            buf.extend_from_slice(b",\"exit_ticks\":");
-            write_u64(*exit_ticks as u64, buf);
+            buf.extend_from_slice(b",\"poi_positive_ticks\":");
+            write_u64(*poi_positive_ticks as u64, buf);
+            buf.extend_from_slice(b",\"poi_empty_ticks\":");
+            write_u64(*poi_empty_ticks as u64, buf);
+            buf.extend_from_slice(b",\"single_timer_ms\":");
+            write_u64(*single_timer_ms, buf);
+            buf.extend_from_slice(b",\"empty_timer_ms\":");
+            write_u64(*empty_timer_ms, buf);
+            buf.extend_from_slice(b",\"multiple_candidate_timer_ms\":");
+            write_u64(*multiple_candidate_timer_ms, buf);
+            buf.extend_from_slice(b",\"multiple_exit_timer_ms\":");
+            write_u64(*multiple_exit_timer_ms, buf);
         }
         Event::Metrics(r) => {
             buf.extend_from_slice(b"\"type\":\"metrics\"");

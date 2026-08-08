@@ -60,16 +60,20 @@ on_ticks = 1
 off_ticks = 8
 
 [presence.occupancy]
-empty_ticks = 4
-multiple_candidate_ticks = 2
-multiple_exit_ticks = 2
+single_confirm_ms = 3000
+empty_confirm_ms = 8000
+multiple_confirm_ms = 5000
+multiple_exit_ms = 5000
+require_confirmed_tracks = false
 ```
 
 The POI signal policy and room-cardinality policy are deliberately separate.
 The first is permissive and protects continuity for the person of interest. The
-second is conservative: `multiple` requires two valid candidate ticks and two
-confirmed tracks. The cardinality state machine is visualized through Rerun
-`StateChange` lanes and does not replace the clinical FSM for bed events.
+second uses monotonic TON/TOF timers and is independent of keyframe cadence:
+`multiple` requires `multiple_confirm_ms` of valid evidence. A 24/7 policy may
+additionally require two confirmed tracks; the raw calibration profile does
+not. The cardinality state machine is visualized through Rerun `StateChange`
+lanes and does not replace the clinical FSM for bed events.
 
 The filter may feed a held observation to the classic tracker for a short
 dropout. It does not create a new `track_id` and it does not replace IoU/Kalman

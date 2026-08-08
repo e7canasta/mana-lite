@@ -368,8 +368,8 @@ fn write_recording(
     depth: &ultralytics_inference::DepthMap,
     roi: Option<(u32, u32, u32, u32)>,
 ) -> Result<(), Box<dyn Error>> {
-    rec.set_time_sequence(
-        "frame_ns",
+    rec.set_timestamp_nanos_since_epoch(
+        "frame_time",
         chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0),
     );
     let (width, height) = image.dimensions();

@@ -1,25 +1,25 @@
 [models.detect-fast]
 enabled = true
 # Baseline small FP16 320: models/yolo26s-fp16-320.onnx
-path = "models/yolo26x-fp16-640.onnx"
 task = "detect"
-confidence = 0.20
-iou = 0.5
-imgsz = 640
+path = "models/yolo26s-fp16-320.onnx"
+confidence = 0.40
+iou = 0.2
+imgsz = 320                           # 640
 half = true
 
 [models.detect-fast.postprocess]
 allow_classes = ["person", "wheelchair"]
-min_confidence = 0.25
-min_area_ratio = 0.001
+min_confidence = 0.50
+min_area_ratio = 0.01
 max_area_ratio = 1.0
 nms_iou = 0.50
 
 [models.detect-fast.crop]
 type = "static"
 # Baseline centered ROI 680x680: [560, 140, 1240, 820]
-region = [560, 140, 1240, 820]
-# region = [420, 0, 1500, 1080]
+# region = [560, 140, 1240, 820]
+region = [420, 0, 1500, 1080]
 
 # [models.detect-large]
 # path = "models/yolo26x.onnx"
@@ -38,7 +38,7 @@ enabled = false
 # Baseline FP32 640: models/yolo26n-pose.onnx
 path = "tools/model-tools/artifacts/yolo26-fp16/yolo26s-pose-fp16-320.onnx"
 task = "pose"
-confidence = 0.3
+confidence = 0.4
 iou = 0.5
 imgsz = 320
 half = true
@@ -57,11 +57,13 @@ nms_iou = 0.50
 
 [models.face-yolo]
 enabled = true
-path = "models/yolov12l-face.onnx"
+# path = "models/yolov12l-face.onnx"
+# path = "models/yolov12s-face.onnx"
+path = "tools/model-tools/artifacts/yoloface-fp16/yolov12s-face-fp16-320.onnx"
 task = "detect"
 confidence = 0.10
 iou = 0.5
-imgsz = 640
+imgsz = 320
 
 [models.face-yolo.crop]
 type = "largest_class"
@@ -79,6 +81,287 @@ max_area_ratio = 0.35
 # The explicit NMS keeps the highest-confidence box.
 nms_iou = 0.05
 # Optional second stage after NMS: keep only the strongest candidate.
+max_detections = 1
+
+# ── YOLO face FP16 benchmark matrix ──────────────────────────
+# These entries are disabled until each variant is benchmarked. They preserve
+# the active face crop and postprocess policy so a catalog key can be selected
+# directly by a face blueprint.
+
+[models.face-v11-s-320]
+enabled = false
+path = "tools/model-tools/artifacts/yoloface-fp16/yolov11s-face-fp16-320.onnx"
+task = "detect"
+confidence = 0.10
+iou = 0.50
+imgsz = 320
+half = true
+
+[models.face-v11-s-320.crop]
+type = "largest_class"
+class = "person"
+square_size = 320
+upper_fraction = 0.50
+
+[models.face-v11-s-320.postprocess]
+allow_classes = ["face"]
+min_confidence = 0.10
+min_area_ratio = 0.0001
+max_area_ratio = 0.35
+nms_iou = 0.05
+max_detections = 1
+
+[models.face-v11-s-640]
+enabled = false
+path = "tools/model-tools/artifacts/yoloface-fp16/yolov11s-face-fp16-640.onnx"
+task = "detect"
+confidence = 0.10
+iou = 0.50
+imgsz = 640
+half = true
+
+[models.face-v11-s-640.crop]
+type = "largest_class"
+class = "person"
+square_size = 320
+upper_fraction = 0.50
+
+[models.face-v11-s-640.postprocess]
+allow_classes = ["face"]
+min_confidence = 0.10
+min_area_ratio = 0.0001
+max_area_ratio = 0.35
+nms_iou = 0.05
+max_detections = 1
+
+[models.face-v11-m-320]
+enabled = false
+path = "tools/model-tools/artifacts/yoloface-fp16/yolov11m-face-fp16-320.onnx"
+task = "detect"
+confidence = 0.10
+iou = 0.50
+imgsz = 320
+half = true
+
+[models.face-v11-m-320.crop]
+type = "largest_class"
+class = "person"
+square_size = 320
+upper_fraction = 0.50
+
+[models.face-v11-m-320.postprocess]
+allow_classes = ["face"]
+min_confidence = 0.10
+min_area_ratio = 0.0001
+max_area_ratio = 0.35
+nms_iou = 0.05
+max_detections = 1
+
+[models.face-v11-m-640]
+enabled = false
+path = "tools/model-tools/artifacts/yoloface-fp16/yolov11m-face-fp16-640.onnx"
+task = "detect"
+confidence = 0.10
+iou = 0.50
+imgsz = 640
+half = true
+
+[models.face-v11-m-640.crop]
+type = "largest_class"
+class = "person"
+square_size = 320
+upper_fraction = 0.50
+
+[models.face-v11-m-640.postprocess]
+allow_classes = ["face"]
+min_confidence = 0.10
+min_area_ratio = 0.0001
+max_area_ratio = 0.35
+nms_iou = 0.05
+max_detections = 1
+
+[models.face-v11-l-320]
+enabled = false
+path = "tools/model-tools/artifacts/yoloface-fp16/yolov11l-face-fp16-320.onnx"
+task = "detect"
+confidence = 0.10
+iou = 0.50
+imgsz = 320
+half = true
+
+[models.face-v11-l-320.crop]
+type = "largest_class"
+class = "person"
+square_size = 320
+upper_fraction = 0.50
+
+[models.face-v11-l-320.postprocess]
+allow_classes = ["face"]
+min_confidence = 0.10
+min_area_ratio = 0.0001
+max_area_ratio = 0.35
+nms_iou = 0.05
+max_detections = 1
+
+[models.face-v11-l-640]
+enabled = false
+path = "tools/model-tools/artifacts/yoloface-fp16/yolov11l-face-fp16-640.onnx"
+task = "detect"
+confidence = 0.10
+iou = 0.50
+imgsz = 640
+half = true
+
+[models.face-v11-l-640.crop]
+type = "largest_class"
+class = "person"
+square_size = 320
+upper_fraction = 0.50
+
+[models.face-v11-l-640.postprocess]
+allow_classes = ["face"]
+min_confidence = 0.10
+min_area_ratio = 0.0001
+max_area_ratio = 0.35
+nms_iou = 0.05
+max_detections = 1
+
+[models.face-v12-s-320]
+enabled = false
+path = "tools/model-tools/artifacts/yoloface-fp16/yolov12s-face-fp16-320.onnx"
+task = "detect"
+confidence = 0.10
+iou = 0.50
+imgsz = 320
+half = true
+
+[models.face-v12-s-320.crop]
+type = "largest_class"
+class = "person"
+square_size = 320
+upper_fraction = 0.50
+
+[models.face-v12-s-320.postprocess]
+allow_classes = ["face"]
+min_confidence = 0.10
+min_area_ratio = 0.0001
+max_area_ratio = 0.35
+nms_iou = 0.05
+max_detections = 1
+
+[models.face-v12-s-640]
+enabled = false
+path = "tools/model-tools/artifacts/yoloface-fp16/yolov12s-face-fp16-640.onnx"
+task = "detect"
+confidence = 0.10
+iou = 0.50
+imgsz = 640
+half = true
+
+[models.face-v12-s-640.crop]
+type = "largest_class"
+class = "person"
+square_size = 320
+upper_fraction = 0.50
+
+[models.face-v12-s-640.postprocess]
+allow_classes = ["face"]
+min_confidence = 0.10
+min_area_ratio = 0.0001
+max_area_ratio = 0.35
+nms_iou = 0.05
+max_detections = 1
+
+[models.face-v12-m-320]
+enabled = false
+path = "tools/model-tools/artifacts/yoloface-fp16/yolov12m-face-fp16-320.onnx"
+task = "detect"
+confidence = 0.10
+iou = 0.50
+imgsz = 320
+half = true
+
+[models.face-v12-m-320.crop]
+type = "largest_class"
+class = "person"
+square_size = 320
+upper_fraction = 0.50
+
+[models.face-v12-m-320.postprocess]
+allow_classes = ["face"]
+min_confidence = 0.10
+min_area_ratio = 0.0001
+max_area_ratio = 0.35
+nms_iou = 0.05
+max_detections = 1
+
+[models.face-v12-m-640]
+enabled = false
+path = "tools/model-tools/artifacts/yoloface-fp16/yolov12m-face-fp16-640.onnx"
+task = "detect"
+confidence = 0.10
+iou = 0.50
+imgsz = 640
+half = true
+
+[models.face-v12-m-640.crop]
+type = "largest_class"
+class = "person"
+square_size = 320
+upper_fraction = 0.50
+
+[models.face-v12-m-640.postprocess]
+allow_classes = ["face"]
+min_confidence = 0.10
+min_area_ratio = 0.0001
+max_area_ratio = 0.35
+nms_iou = 0.05
+max_detections = 1
+
+[models.face-v12-l-320]
+enabled = false
+path = "tools/model-tools/artifacts/yoloface-fp16/yolov12l-face-fp16-320.onnx"
+task = "detect"
+confidence = 0.10
+iou = 0.50
+imgsz = 320
+half = true
+
+[models.face-v12-l-320.crop]
+type = "largest_class"
+class = "person"
+square_size = 320
+upper_fraction = 0.50
+
+[models.face-v12-l-320.postprocess]
+allow_classes = ["face"]
+min_confidence = 0.10
+min_area_ratio = 0.0001
+max_area_ratio = 0.35
+nms_iou = 0.05
+max_detections = 1
+
+[models.face-v12-l-640]
+enabled = false
+path = "tools/model-tools/artifacts/yoloface-fp16/yolov12l-face-fp16-640.onnx"
+task = "detect"
+confidence = 0.10
+iou = 0.50
+imgsz = 640
+half = true
+
+[models.face-v12-l-640.crop]
+type = "largest_class"
+class = "person"
+square_size = 320
+upper_fraction = 0.50
+
+[models.face-v12-l-640.postprocess]
+allow_classes = ["face"]
+min_confidence = 0.10
+min_area_ratio = 0.0001
+max_area_ratio = 0.35
+nms_iou = 0.05
 max_detections = 1
 
 [models.seg-standard]

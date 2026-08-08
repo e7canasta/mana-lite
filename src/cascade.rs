@@ -727,6 +727,8 @@ mod tests {
         for path in [
             "config/blueprints/detect-face/blueprint.toml",
             "config/blueprints/detect-face-pose-seg/blueprint.toml",
+            "config/blueprints/detect-room-raw/blueprint.toml",
+            "config/blueprints/detect-room-face/blueprint.toml",
         ] {
             let blueprint: BlueprintConfig =
                 crate::config::load_config(std::path::Path::new(path)).unwrap();

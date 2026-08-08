@@ -42,7 +42,7 @@ pub(super) fn log_at<A: rerun::AsComponents>(
     archetype: &A,
     ctx: impl FnOnce() -> String,
 ) -> Result<()> {
-    rec.set_time_sequence("frame_ns", timestamp_ns);
+    rec.set_timestamp_nanos_since_epoch("frame_time", timestamp_ns);
     log_archetype(rec, entity_path, archetype, ctx)
 }
 
@@ -52,7 +52,7 @@ pub(super) fn log_many<A: rerun::AsComponents>(
     items: impl IntoIterator<Item = (String, A)>,
     what: &str,
 ) {
-    rec.set_time_sequence("frame_ns", timestamp_ns);
+    rec.set_timestamp_nanos_since_epoch("frame_time", timestamp_ns);
     for (path, archetype) in items {
         if let Err(err) = rec.log(path.as_str(), &archetype) {
             tracing::warn!(%err, target_path = %path, "{what} log failed");
