@@ -126,7 +126,9 @@ este modo debe usar filtros de confianza, area y conteo.
 
 ### Gate basado en track
 
-Cuando `same_frame` es falso, el child necesita un track confirmado y visible:
+Cuando `same_frame` es falso, el child necesita un track confirmado y visible.
+El filtro de presencia puede mantener la ultima observacion durante un dropout
+corto antes de entregarla al tracker:
 
 ```text
 detect-fast -> deteccion -> tracker -> track confirmado -> child
@@ -136,7 +138,8 @@ El track debe tener:
 
 - clase requerida.
 - `is_confirmed = true`.
-- `misses = 0`.
+- `misses = 0` mientras la presencia esta fresca o siendo sostenida por el
+  filtro temporal.
 - confianza y area suficientes.
 - conteo exacto si se declara `requires_exact_count`.
 
@@ -159,13 +162,42 @@ requires_min_area_ratio = 0.01
 ```
 
 En un blueprint estable esta regla usa tracking. `min_hits` confirma la
-persona y `misses = 0` evita ejecutar children con una observacion ausente.
+persona y el filtro temporal sostiene vacios cortos antes de declarar ausencia.
 
 El conteo se realiza sobre la escena efectiva del detector, incluyendo su ROI
 configurado. Si el detector procesa solo una region de la imagen, "una persona
 en la sala" significa una persona en esa region.
 
-## 6. Anti-parpadeo
+## 6. Filtro temporal de presencia / senal
+
+El filtro se ejecuta despues de la consolidacion espacial de las observaciones
+primarias y antes de actualizar el tracker. Solo cuenta ticks con inferencia
+valida:
+
+```toml
+[presence]
+enabled = true
+class = "person"
+on_ticks = 1
+off_ticks = 4
+```
+
+Su comportamiento es asimetrico:
+
+```text
+1 persona         -> PRESENT
+0 personas, tick 1..3 -> mantiene la ultima observacion
+0 personas, tick 4 -> ABSENT
+2 personas         -> AMBIGUOUS, no se sostiene una persona
+sin frame valido   -> no cambia el estado
+```
+
+La observacion sostenida no crea una identidad nueva. Solo evita que un hueco
+breve de la senal haga perder la presencia y permite que el tracker continue
+con su continuidad espacial. El `track_id`, la prediccion y el matching siguen
+siendo responsabilidad del tracker clasico.
+
+## 7. Anti-parpadeo
 
 El sistema aplica estabilidad en capas:
 
@@ -173,14 +205,16 @@ El sistema aplica estabilidad en capas:
 2. `TrackerConfig.min_hits` evita confirmar un candidato aislado.
 3. El cascade exige track confirmado y visible para children estables.
 4. `requires_exact_count = 1` bloquea la rama si hay cero o mas de una persona.
-5. `max_age` conserva identidad para tracking, pero no autoriza inferencia
-   hija cuando `misses > 0`.
+5. El filtro de presencia sostiene vacios cortos y corta despues de
+   `off_ticks`.
+6. `max_age` conserva identidad para tracking y evita borrar de inmediato el
+   track.
 
 No se debe usar `max_age` como permiso para ejecutar un modelo hijo sobre una
 posicion vieja. La frescura de la evidencia y la elegibilidad del child son
 conceptos distintos.
 
-## 7. Blueprints incluidos
+## 8. Blueprints incluidos
 
 ### `detect-face`
 
@@ -188,7 +222,7 @@ conceptos distintos.
 detect-fast -> face-yolo
 ```
 
-Usa `same_frame = true`, no exige tracking y sirve para calibracion.
+Usa tracking y filtro de presencia para una habitacion con una persona.
 
 ### `detect-face-pose-seg`
 
@@ -201,7 +235,7 @@ detect-fast      -> pose-standard
 Exige tracking, una persona confirmada y visible, y activa las tres ramas
 secundarias solo cuando el conteo exacto es uno.
 
-## 8. Futuro: presets separados
+## 9. Futuro: presets separados
 
 La separacion completa prevista es:
 

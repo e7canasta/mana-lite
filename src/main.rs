@@ -11,6 +11,7 @@ mod kalman;
 mod logger;
 mod metrics;
 mod pipeline;
+mod presence;
 mod snapshot;
 mod track;
 mod viz;
@@ -31,6 +32,7 @@ use logger::{DetRecord, Event, JsonlLevel, Logger};
 use mana_types::RawFrameV1;
 use metrics::{Health, MetricsEngine, PerClassFrameStats};
 use pipeline::PipelineState;
+use presence::PresenceFilter;
 use snapshot::{FrameBuffer, FrameDecoder, SnapshotSaver};
 use std::collections::{HashMap, HashSet};
 use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -65,6 +67,7 @@ struct App {
     ingest: IngestEngine<RetinaReader>,
     metrics: MetricsEngine,
     health: Health,
+    presence: PresenceFilter,
     depth_roi: Option<CropRect>,
     depth_rules: depth::DepthRules,
     depth_rule_snapshot: depth::DepthRuleSnapshot,
@@ -435,6 +438,7 @@ impl App {
             ingest,
             metrics,
             health,
+            presence: PresenceFilter::new(config.presence.clone()),
             depth_roi,
             depth_rules,
             depth_rule_snapshot: depth::DepthRuleSnapshot::default(),
@@ -534,15 +538,59 @@ impl App {
         let ordered = self.cascade.ordered(&requested);
         let mut pending: Vec<PendingModelOutput> = Vec::new();
 
-        for model_key in ordered {
-            let is_static = self
-                .infer
-                .crop_info(model_key)
-                .map_or(false, |c| c.crop_type == CropType::Static);
+        let roots: Vec<String> = ordered
+            .iter()
+            .filter(|model| self.cascade.parent_of(model).is_none())
+            .map(|model| (*model).to_owned())
+            .collect();
+        for model_key in roots {
+            self.run_scheduled_model(&model_key, None, fb, &mut pending);
+        }
 
-            let target = if self.cascade.same_frame(model_key) {
+        let root_outputs: Vec<ModelDetections> = pending
+            .iter()
+            .filter(|item| {
+                self.cascade.parent_of(&item.model_key).is_none()
+                    && self
+                        .model_tasks
+                        .get(&item.model_key)
+                        .is_none_or(|task| task != "depth")
+            })
+            .map(|item| ModelDetections {
+                model: item.model_key.as_str(),
+                role: if item.model_key == self.primary_model {
+                    DetectionRole::Primary
+                } else {
+                    DetectionRole::Secondary
+                },
+                detections: &item.output.detections,
+            })
+            .collect();
+        let root_observations = self.detection_consolidator.consolidate(&root_outputs);
+        let primary_root_ran = pending
+            .iter()
+            .any(|item| item.model_key == self.primary_model);
+        let (effective_root_observations, presence_update) =
+            self.presence.update(&root_observations, primary_root_ran);
+        if presence_update.held {
+            log::debug!(
+                "presence: holding last observation for {} empty tick(s)",
+                presence_update.empty_ticks
+            );
+        }
+        if config.pipeline.track {
+            self.run_tracking(&effective_root_observations);
+        }
+
+        let children: Vec<String> = ordered
+            .iter()
+            .filter(|model| self.cascade.parent_of(model).is_some())
+            .map(|model| (*model).to_owned())
+            .collect();
+        for model_key in children {
+            let target = if self.cascade.same_frame(&model_key) {
                 self.cascade
-                    .parent_of(model_key)
+                    .parent_of(&model_key)
                     .and_then(|parent| {
                         pending
                             .iter()
@@ -551,39 +599,18 @@ impl App {
                     })
                     .and_then(|detections| {
                         self.cascade
-                            .target_for_detections(model_key, detections, fb.w, fb.h)
+                            .target_for_detections(&model_key, detections, fb.w, fb.h)
                     })
             } else {
                 let current_tracks = self.tracker.current_tracks();
                 self.cascade
-                    .target_for(model_key, &current_tracks, fb.w, fb.h)
+                    .target_for(&model_key, &current_tracks, fb.w, fb.h)
             };
-            if self.cascade.parent_of(model_key).is_some() && target.is_none() {
-                self.metrics.tick_infer_skip(model_key);
+            if target.is_none() {
+                self.metrics.tick_infer_skip(&model_key);
                 continue;
             }
-
-            let crop_rect = self.resolve_crop_rect(model_key, target, fb);
-
-            let manual_crop = if is_static { None } else { crop_rect };
-            if let Some(mut output) = self.infer.run(model_key, &fb.rgb, fb.w, fb.h, manual_crop) {
-                let crop_frame = output.crop_frame.take();
-                if config.pipeline.track && model_key == &self.primary_model {
-                    let observations =
-                        self.detection_consolidator.consolidate(&[ModelDetections {
-                            model: model_key,
-                            role: DetectionRole::Primary,
-                            detections: &output.detections,
-                        }]);
-                    self.run_tracking(&observations);
-                }
-                pending.push(PendingModelOutput {
-                    model_key: model_key.to_owned(),
-                    output,
-                    crop_frame,
-                    crop_rect,
-                });
-            }
+            self.run_scheduled_model(&model_key, target, fb, &mut pending);
         }
 
         let model_outputs: Vec<ModelDetections> = pending
@@ -638,6 +665,30 @@ impl App {
         }
         if config.pipeline.track {
             self.publish_entities();
+        }
+    }
+
+    fn run_scheduled_model(
+        &mut self,
+        model_key: &str,
+        target: Option<CascadeTarget>,
+        fb: &FrameBuffer,
+        pending: &mut Vec<PendingModelOutput>,
+    ) {
+        let is_static = self
+            .infer
+            .crop_info(model_key)
+            .is_some_and(|c| c.crop_type == CropType::Static);
+        let crop_rect = self.resolve_crop_rect(model_key, target, fb);
+        let manual_crop = if is_static { None } else { crop_rect };
+        if let Some(mut output) = self.infer.run(model_key, &fb.rgb, fb.w, fb.h, manual_crop) {
+            let crop_frame = output.crop_frame.take();
+            pending.push(PendingModelOutput {
+                model_key: model_key.to_owned(),
+                output,
+                crop_frame,
+                crop_rect,
+            });
         }
     }
 

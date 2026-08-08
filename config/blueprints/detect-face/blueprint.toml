@@ -1,11 +1,11 @@
 # Lightweight deployment: one primary detector plus face enrichment.
-# This blueprint uses same-frame gating and does not require tracking.
+# The presence filter holds short detector dropouts before the tracker.
 [blueprint]
 name = "detect-face"
 description = "Detect one person and run face on the same frame"
 primary_model = "detect-fast"
 models = ["detect-fast", "face-yolo"]
-requires_tracking = false
+requires_tracking = true
 
 [[rules]]
 model = "detect-fast"
@@ -16,4 +16,3 @@ requires = "detect-fast"
 requires_class = "person"
 requires_exact_count = 1
 requires_min_confidence = 0.50
-same_frame = true

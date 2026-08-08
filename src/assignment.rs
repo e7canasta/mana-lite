@@ -114,9 +114,7 @@ pub fn hungarian_min(
         det_matched[det] = true;
     }
 
-    let unmatched_tracks: Vec<usize> = (0..n_tracks)
-        .filter(|&i| !track_matched[i])
-        .collect();
+    let unmatched_tracks: Vec<usize> = (0..n_tracks).filter(|&i| !track_matched[i]).collect();
     let unmatched_dets: Vec<usize> = (0..n_dets).filter(|&j| !det_matched[j]).collect();
 
     (matched, unmatched_tracks, unmatched_dets)

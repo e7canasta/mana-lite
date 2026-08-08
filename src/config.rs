@@ -19,6 +19,8 @@ pub struct AppConfig {
     #[serde(default)]
     pub detection: DetectionConfig,
     #[serde(default)]
+    pub presence: PresenceConfig,
+    #[serde(default)]
     pub tracking: TrackingConfig,
     #[serde(default)]
     pub metrics_file: Option<PathBuf>,
@@ -118,6 +120,41 @@ fn default_face_component_coverage() -> f32 {
 }
 fn default_face_max_center_y_ratio() -> f32 {
     0.65
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct PresenceConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_presence_class")]
+    pub class: String,
+    #[serde(default = "default_presence_on_ticks")]
+    pub on_ticks: u32,
+    #[serde(default = "default_presence_off_ticks")]
+    pub off_ticks: u32,
+}
+
+impl Default for PresenceConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            class: default_presence_class(),
+            on_ticks: default_presence_on_ticks(),
+            off_ticks: default_presence_off_ticks(),
+        }
+    }
+}
+
+fn default_presence_class() -> String {
+    "person".into()
+}
+
+fn default_presence_on_ticks() -> u32 {
+    1
+}
+
+fn default_presence_off_ticks() -> u32 {
+    4
 }
 
 #[derive(Debug, Deserialize)]

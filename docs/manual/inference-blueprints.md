@@ -22,18 +22,19 @@ reducido:
 detect-fast -> face-yolo
 ```
 
-Configuracion recomendada durante calibracion:
+Configuracion recomendada para una habitacion con una persona:
 
 ```toml
 [pipeline]
 infer = true
-track = false
+track = true
 zones = false
 fsm = false
 ```
 
-El child face usa las detecciones del mismo frame. Puede omitirse si no hay
-persona o si hay mas de una.
+El child face usa el track confirmado. El filtro de presencia mantiene la
+ultima observacion durante cuatro ticks vacios por defecto. Puede omitirse si
+hay mas de una persona.
 
 ## 3. Perfil estable multi-modelo
 
@@ -72,7 +73,8 @@ active ramas costosas.
 
 Procedimiento:
 
-1. Ejecutar primero `detect-face` con video conocido.
+1. Ejecutar primero `detect-face` con video conocido y observar el filtro de
+   presencia.
 2. Verificar `detection` y `consolidated_detection` en JSONL.
 3. Verificar `/world/camera/observations` en Rerun.
 4. Cambiar a `detect-face-pose-seg` y activar `track = true`.

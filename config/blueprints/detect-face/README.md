@@ -1,15 +1,15 @@
 # `detect-face`
 
-Perfil ligero para calibracion y despliegues con coste bajo.
+Perfil ligero para despliegues con coste bajo y una sola persona estable.
 
 ```text
 detect-fast
-    └── face-yolo (exactamente una persona, mismo frame)
+    └── face-yolo (exactamente una persona, track + presencia estable)
 ```
 
-No requiere tracking. El gate usa las detecciones aceptadas por
-`detect-fast`; la confianza y el area base se controlan en
-`config/models.toml`.
+El gate usa las detecciones aceptadas por `detect-fast`; la confianza y el
+area base se controlan en `config/models.toml`. Requiere tracking y el filtro
+de presencia mantiene un dropout corto antes de declarar ausencia.
 
 Para activarlo, `config/mana.toml` debe apuntar a:
 

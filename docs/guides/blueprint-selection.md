@@ -11,13 +11,13 @@ Calibracion o coste minimo       -> detect-face
 
 Elegir este perfil cuando:
 
-- tracking aun esta en calibracion.
+- solo se necesita detect y face.
 - se necesita observar detecciones y face.
 - se quiere reducir carga de CPU/GPU.
-- una decision del mismo frame es aceptable.
+- se quiere tolerar un dropout corto del detector.
 
-Su gate es directo: `detect-fast` debe producir exactamente una persona
-aceptada en el frame actual.
+Usa tracking y presencia temporal: una persona aceptada activa la presencia y
+los vacios se toleran durante `off_ticks` antes de declarar ausencia.
 
 ## `detect-face-pose-seg`
 
@@ -28,16 +28,17 @@ Elegir este perfil cuando:
 - se necesita estabilidad entre frames.
 - el coste de tracking es aceptable.
 
-Su gate usa el tracker, no solo la deteccion del frame. Por defecto necesita
-dos hits para confirmar la identidad y no utiliza tracks con misses.
+Su gate usa el tracker y la presencia temporal, no solo la deteccion del frame.
+Por defecto necesita dos hits para confirmar la identidad.
 
 ## Elegir `same_frame` o tracking
 
 `same_frame` es una politica de latencia y simplicidad. No es una politica de
 estabilidad.
 
-Tracking es una politica de estabilidad y continuidad. Debe preferirse para
-despliegues 24/7, especialmente con `requires_exact_count` y modelos caros.
+La presencia temporal es una politica de estabilidad de senal. El tracking es
+una politica de continuidad espacial e identidad. Para este caso deben usarse
+juntos, aunque solo haya una persona.
 
 ## Agregar un nuevo blueprint
 

@@ -30,6 +30,12 @@ depth_rules_file = "config/depth-rules.toml"
 face_component_coverage = 0.70
 face_max_center_y_ratio = 0.65
 
+[presence]
+enabled = true
+class = "person"
+on_ticks = 1
+off_ticks = 4
+
 [tracking]
 min_hits = 2
 max_age = 20
@@ -52,7 +58,7 @@ jsonl_level = "debug"
 [pipeline]
 snapshot = false
 infer = true
-track = false
+track = true
 zones = false
 fsm = false
 [viz]

@@ -127,10 +127,7 @@ impl Kalman7 {
 
 impl Default for Kalman7 {
     fn default() -> Self {
-        Self {
-            x: [0.0; 7],
-            p: P0,
-        }
+        Self { x: [0.0; 7], p: P0 }
     }
 }
 
@@ -188,11 +185,11 @@ fn transpose7(a: [[f32; 7]; 7]) -> [[f32; 7]; 7] {
 fn mat7_vec7(a: [[f32; 7]; 7], v: [f32; 7]) -> [f32; 7] {
     let mut out = [0.0f32; 7];
     for i in 0..7 {
-            let mut acc = 0.0;
-            for j in 0..7 {
-                acc = a[i][j].mul_add(v[j], acc);
-            }
-            out[i] = acc;
+        let mut acc = 0.0;
+        for j in 0..7 {
+            acc = a[i][j].mul_add(v[j], acc);
+        }
+        out[i] = acc;
     }
     out
 }
@@ -292,7 +289,11 @@ mod tests {
             kalman.update([x + 25.0, 50.0, 5_000.0, 0.5]);
         }
         let bbox = kalman.bbox();
-        assert!(bbox[0] > 60.0, "smoothed x1 should track motion: {}", bbox[0]);
+        assert!(
+            bbox[0] > 60.0,
+            "smoothed x1 should track motion: {}",
+            bbox[0]
+        );
         assert!(bbox[0] < 130.0, "should lag slightly behind: {}", bbox[0]);
     }
 

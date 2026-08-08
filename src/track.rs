@@ -618,9 +618,8 @@ mod tests {
     #[test]
     fn kalman_smooths_jittery_detections() {
         let mut tracker = Tracker::new();
-        let jittered = |dx: f32| {
-            observation("person", [100.0 + dx, 100.0 + dx, 200.0 + dx, 300.0 + dx])
-        };
+        let jittered =
+            |dx: f32| observation("person", [100.0 + dx, 100.0 + dx, 200.0 + dx, 300.0 + dx]);
         tracker.update(&[jittered(0.0)]);
         tracker.update(&[jittered(4.0)]);
         tracker.update(&[jittered(-3.0)]);
