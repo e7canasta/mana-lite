@@ -1,7 +1,8 @@
 # ADR-013: SORT Tracking for Clinical Scenes
 
-**Status:** Draft
+**Status:** Accepted
 **Date:** 2026-08-04
+**Implemented:** 2026-08-07
 
 ## Context
 
@@ -16,12 +17,25 @@ Las detecciones por frame son efímeras — no tienen identidad. Necesitamos tra
 
 **SORT clásico (Simple Online and Realtime Tracking) con Kalman 7D + Hungarian matching.**
 
-La implementación actual de `mana-lite` es una primera etapa compatible con
-la misma interfaz: usa predicción lineal del bbox y matching greedy por IoU. No
-se debe considerar Kalman 7D + Hungarian completo hasta que ese reemplazo esté
-implementado y validado con video clínico.
+La implementación en `mana-lite` (2026-08-07) reemplaza la primera etapa
+compatible (predicción lineal + greedy IoU) por:
 
-SORT fue publicado en 2016 (Bewley et al.) y es el algoritmo estándar en MOTChallenge. 7 dimensiones de estado: `[x, y, s, r, dx, dy, ds]` donde `s = w*h` (escala), `r = w/h` (aspect ratio).
+- `src/kalman.rs`: Kalman 7D `[cx, cy, s, r, dcx, dcy, ds]` sin dependencias
+  (matrices f32 fijas, inversa 4×4 por Gauss-Jordan). Constantes:
+  `P0 = diag(10,10,10,10,1e4,1e4,1e4)`, `Q = diag(1,1,1,1,0.01,0.01,1e-4)`,
+  `R = I4`. Propagación `P' = F·P·Fᵀ + Q`, `S = H·P·Hᵀ + R = P[0..4,0..4] + R`.
+- `src/assignment.rs`: Hungarian (Kuhn-Munkres, e-maxx) O(n³) con matriz
+  1-based, sentinela finito `FORBIDDEN = 1e6` para pares prohibidos (clase
+  distinta) y filtrado final por `max_cost = 1 - iou_threshold`.
+- `src/track.rs`: matching con `1 - IoU`, `track.bbox` = bbox del estado
+  Kalman tras predecir/actualizar.
+
+La validación con video clínico real (drift en paciente inmóvil, oclusión,
+frecuencias distintas entre modelos) queda pendiente de cámara RTSP; los
+parámetros `min_hits/max_age/tentative_max_age/iou_threshold` ya estaban en
+`config/mana.toml` y se ejercitan en tests de integración de `track.rs`.
+
+SORT fue publicado en 2016 (Bewley et al.) y es el algoritmo estándar en MOTChallenge.
 
 ```rust
 struct TrackingEngine {
@@ -181,7 +195,8 @@ confirmados; `tentative_max_age` aplica a tracks que todavía no alcanzaron
 - **Positive:** Filtrado natural de falsos positivos (detecciones esporádicas → tracks unconfirmed → eliminados).
 - **Positive:** Algoritmo bien conocido, implementaciones de referencia en Python/C++ fácilmente portables a Rust.
 - **Negative:** Sin re-identificación por apariencia. Si dos personas intercambian posición durante una oclusión, los tracks se intercambian. Clínicamente inusual.
-- **Negative:** Kalman necesita nalgebra o implementación manual de álgebra lineal. ~150 líneas para Kalman 7D.
+- **Negative:** Kalman requiere implementación manual de álgebra lineal sin
+  dependencias (`src/kalman.rs`, ~250 líneas con matrices f32 fijas + inversa).
 - **Negative:** Hungarian O(n³) es aceptable para n≤20. Si hay 100+ detecciones (multitud), necesitamos cascaded matching o greedy fallback.
 
 ## References

@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 
+use crate::assignment::hungarian_min;
 use crate::detection::{ConsolidatedObservation, DetectionEvidence};
+use crate::kalman::Kalman7;
 use crate::logger::Event;
 
 /// Per-track state: position, motion model, lifecycle.
@@ -12,7 +14,7 @@ pub struct Track {
     pub bbox: [f32; 4],
     pub confidence: f32,
     pub evidence: Vec<DetectionEvidence>,
-    pub(crate) velocity: [f32; 4],
+    pub(crate) kalman: Kalman7,
     pub hits: u32,
     pub hit_streak: u32,
     pub misses: u32,
@@ -169,7 +171,8 @@ impl Tracker {
 
     fn predict_all(&mut self) {
         for track in self.tracks.values_mut() {
-            track.predict();
+            track.kalman.predict();
+            track.bbox = track.kalman.bbox();
         }
     }
 
@@ -177,44 +180,26 @@ impl Tracker {
         &self,
         detections: &[TrackObservation],
     ) -> (Vec<bool>, HashMap<u64, usize>) {
+        let track_ids: Vec<u64> = self.tracks.keys().copied().collect();
+        let mut cost = vec![vec![f32::INFINITY; detections.len()]; track_ids.len()];
+        for (row, &track_id) in track_ids.iter().enumerate() {
+            let track = &self.tracks[&track_id];
+            for (col, detection) in detections.iter().enumerate() {
+                if track.class != detection.class {
+                    continue;
+                }
+                cost[row][col] = 1.0 - compute_iou(&track.bbox, &detection.bbox);
+            }
+        }
+
+        let max_cost = 1.0 - self.iou_threshold;
+        let (matched, _, _) = hungarian_min(&cost, max_cost);
+
         let mut det_matched = vec![false; detections.len()];
         let mut track_matched: HashMap<u64, usize> = HashMap::new();
-
-        let mut det_indices: Vec<usize> = (0..detections.len()).collect();
-        det_indices.sort_by(|&a, &b| {
-            detections[b]
-                .confidence
-                .partial_cmp(&detections[a].confidence)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
-
-        for &det_idx in &det_indices {
-            if det_matched[det_idx] {
-                continue;
-            }
-            let det_bbox = &detections[det_idx].bbox;
-
-            let mut best_iou = self.iou_threshold;
-            let mut best_track: Option<u64> = None;
-
-            for (&track_id, track) in &self.tracks {
-                if track_matched.contains_key(&track_id) {
-                    continue;
-                }
-                if track.class != detections[det_idx].class {
-                    continue;
-                }
-                let iou = compute_iou(&track.bbox, det_bbox);
-                if iou > best_iou {
-                    best_iou = iou;
-                    best_track = Some(track_id);
-                }
-            }
-
-            if let Some(track_id) = best_track {
-                track_matched.insert(track_id, det_idx);
-                det_matched[det_idx] = true;
-            }
+        for (row, col) in matched {
+            track_matched.insert(track_ids[row], col);
+            det_matched[col] = true;
         }
 
         (det_matched, track_matched)
@@ -232,8 +217,16 @@ impl Tracker {
                 .get_mut(&track_id)
                 .expect("track must exist after match");
             let observation = &detections[det_idx];
-            track.update_bbox(observation.bbox, self.min_hits);
+            track.kalman.update(bbox_to_measurement(observation.bbox));
+            track.bbox = track.kalman.bbox();
             track.confidence = observation.confidence;
+            track.hits += 1;
+            track.hit_streak += 1;
+            track.misses = 0;
+            track.age += 1;
+            if track.hit_streak >= self.min_hits {
+                track.is_confirmed = true;
+            }
             merge_evidence(&mut track.evidence, &observation.evidence);
             events.push(TrackEvent::Updated {
                 id: track_id,
@@ -264,7 +257,7 @@ impl Tracker {
                     bbox: observation.bbox,
                     confidence: observation.confidence,
                     evidence: observation.evidence.clone(),
-                    velocity: [0.0; 4],
+                    kalman: Kalman7::from_bbox(observation.bbox),
                     hits: 1,
                     hit_streak: 1,
                     misses: 0,
@@ -352,33 +345,11 @@ fn merge_evidence(target: &mut Vec<DetectionEvidence>, incoming: &[DetectionEvid
     }
 }
 
-impl Track {
-    /// Predict next position using simple velocity model.
-    fn predict(&mut self) {
-        for i in 0..4 {
-            self.bbox[i] += self.velocity[i];
-        }
-        // Clamp to avoid runaway
-        for i in 0..4 {
-            self.bbox[i] = self.bbox[i].clamp(0.0, 10_000.0);
-        }
-    }
-
-    /// Update position and recompute velocity from displacement.
-    fn update_bbox(&mut self, new_bbox: [f32; 4], min_hits: u32) {
-        let prev = self.bbox;
-        self.bbox = new_bbox;
-        for i in 0..4 {
-            self.velocity[i] = new_bbox[i] - prev[i];
-        }
-        self.hits += 1;
-        self.hit_streak += 1;
-        self.misses = 0;
-        self.age += 1;
-        if self.hit_streak >= min_hits {
-            self.is_confirmed = true;
-        }
-    }
+fn bbox_to_measurement(bbox: [f32; 4]) -> [f32; 4] {
+    let [x1, y1, x2, y2] = bbox;
+    let w = (x2 - x1).max(1e-3);
+    let h = (y2 - y1).max(1e-3);
+    [(x1 + x2) * 0.5, (y1 + y2) * 0.5, w * h, w / h]
 }
 
 /// Intersection over Union for axis-aligned bounding boxes.
@@ -609,5 +580,64 @@ mod tests {
             TrackEvent::Deleted { id: 1, reason, .. } if reason == "unconfirmed"
         )));
         assert_eq!(tracker.track_count(), 0);
+    }
+
+    #[test]
+    fn optimal_matching_avoids_identity_split_that_greedy_would_cause() {
+        let mut tracker = Tracker::new();
+        let a = observation("person", [0.0, 0.0, 100.0, 100.0]);
+        let b = observation("person", [80.0, 0.0, 180.0, 100.0]);
+        tracker.update(&[a.clone(), b.clone()]);
+        tracker.update(&[a, b]);
+
+        // Frame conflictivo: d_high (confianza alta) superpone a y b (0.667
+        // vs 0.25); d_low (confianza baja) solo superpone a (1.0). El greedy
+        // por confianza tomaria d_high->a y dejaria d_low sin track
+        // (identidad partida); el hungaro asigna d_high->b y d_low->a.
+        let mut d_high = observation("person", [20.0, 0.0, 120.0, 100.0]);
+        d_high.confidence = 0.95;
+        let mut d_low = observation("person", [0.0, 0.0, 100.0, 100.0]);
+        d_low.confidence = 0.3;
+
+        let events = tracker.update(&[d_high, d_low]);
+        assert_eq!(tracker.track_count(), 2, "no identity split");
+        assert!(
+            !events
+                .iter()
+                .any(|event| matches!(event, TrackEvent::Created { .. })),
+            "no new track created"
+        );
+        assert!(
+            !events
+                .iter()
+                .any(|event| matches!(event, TrackEvent::Lost { .. })),
+            "no track lost"
+        );
+    }
+
+    #[test]
+    fn kalman_smooths_jittery_detections() {
+        let mut tracker = Tracker::new();
+        let jittered = |dx: f32| {
+            observation("person", [100.0 + dx, 100.0 + dx, 200.0 + dx, 300.0 + dx])
+        };
+        tracker.update(&[jittered(0.0)]);
+        tracker.update(&[jittered(4.0)]);
+        tracker.update(&[jittered(-3.0)]);
+        tracker.update(&[jittered(2.0)]);
+        tracker.update(&[jittered(-1.0)]);
+
+        let track = tracker.current_tracks()[0];
+        let bbox = track.bbox;
+        assert!(
+            (bbox[0] - 100.0).abs() < 3.0,
+            "smoothed x1 should stay near the mean: {}",
+            bbox[0]
+        );
+        assert!(
+            (bbox[2] - 200.0).abs() < 3.0,
+            "smoothed x2 should stay near the mean: {}",
+            bbox[2]
+        );
     }
 }

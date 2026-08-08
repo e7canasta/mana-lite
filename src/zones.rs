@@ -167,7 +167,7 @@ mod tests {
             bbox,
             confidence: 0.9,
             evidence: Vec::new(),
-            velocity: [0.0; 4],
+            kalman: crate::kalman::Kalman7::default(),
             hits: if confirmed { 3 } else { 1 },
             hit_streak: if confirmed { 3 } else { 1 },
             misses: 0,

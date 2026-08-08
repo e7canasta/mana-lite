@@ -1,6 +1,6 @@
 # Mana Lite Roadmap
 
-*Última actualización: 2026-08-07 — baseline: depth ROI-local, FP16 benchmark matrix, máscaras seg*
+*Última actualización: 2026-08-08 — baseline: depth ROI-local, FP16 benchmark matrix, máscaras seg, tracking SORT completo*
 
 ---
 
@@ -21,7 +21,7 @@ observación consolidada, sin identidad temporal.
 | Depth ROI-local (root independiente) | ✅ | ADR-024, `specs/depth-standard.md` |
 | Pose: keypoints + skeleton en Rerun | ✅ | — |
 | Matriz FP16 (4 tasks × 4 tamaños × 2 resoluciones) | ✅ registrada, deshabilitada | `config/models.toml`, `tools/model-tools` |
-| Tracking | 🧪 prototipo (predicción lineal + greedy IoU; primera etapa de SORT, ADR-013) | opcional, `track = false` por defecto |
+| Tracking | ✅ Kalman 7D + Hungarian (ADR-013); validación con video real pendiente | opcional, `track = false` por defecto |
 | Zonas + FSM | ✅ motores; validación end-to-end pendiente con tracking | ADR-014/015 |
 | JSONL + métricas + Rerun | ✅ | `docs/observability.md` |
 
@@ -71,10 +71,14 @@ Priorizadas. Cada etapa cambia un solo contrato o habilita un solo rol.
 
 ### 4. Tracking: completar SORT y validar
 
-- Kalman 7D + Hungarian del ADR-013 (la interfaz ya está probada con
-  predicción lineal + greedy IoU).
-- Validar con video real: paciente inmóvil sin drift, oclusión parcial,
-  frecuencias distintas entre modelos.
+- Kalman 7D + Hungarian del ADR-013 ✅ (2026-08-07): `src/kalman.rs` sin
+  dependencias (matrices f32, `F·P·Fᵀ`, `R = I4`) y `src/assignment.rs`
+  (Kuhn-Munkres e-maxx 1-based, sentinela `FORBIDDEN`). Matching por
+  `1 - IoU` con filtrado por `iou_threshold` (0.2 en `mana.toml`).
+- Tests de integración: convergencia al measurement, suavizado de jitter,
+  y split de identidad que el greedy causaría y el Hungarian evita.
+- Pendiente: validar con video real (paciente inmóvil sin drift, oclusión
+  parcial, frecuencias distintas entre modelos) — requiere cámara RTSP.
 - Recién después: zones/FSM end-to-end y eventos `entity` como salida estándar.
 
 ### 5. Reglas clínicas con calibración
@@ -101,7 +105,7 @@ Priorizadas. Cada etapa cambia un solo contrato o habilita un solo rol.
 | [010](adrs/010-preprocess-cache.md) | Preprocess tensor cache | 🏗️ Draft (sin implementar) |
 | [011](adrs/011-inference-engine.md) | Inference engine (ORT pool) | ✅ Accepted |
 | [012](adrs/012-postprocess-pipeline.md) | Postprocess (NMS, unified Detection) | ✅ Accepted |
-| [013](adrs/013-sort-tracking.md) | SORT tracking for clinical scenes | 🏗️ Draft (primera etapa implementada) |
+| [013](adrs/013-sort-tracking.md) | SORT tracking for clinical scenes | ✅ Accepted (2026-08-07) |
 | [014](adrs/014-zone-engine.md) | Zone engine (spatial + hysteresis) | ✅ Accepted |
 | [015](adrs/015-fsm-engine.md) | FSM engine (guards, dwell) | ✅ Accepted |
 | [016](adrs/016-cascade-scheduler.md) | Cascade scheduler (interval + requires) | ✅ Accepted |
@@ -119,7 +123,7 @@ Priorizadas. Cada etapa cambia un solo contrato o habilita un solo rol.
 | Item | Prioridad | ADR |
 |---|---|---|
 | Preprocess tensor cache | Baja | 010 |
-| Completar SORT (Kalman + Hungarian) | Media | 013 |
+| Validación tracking con video real (cámara RTSP) | Media | 013 |
 | Migrar serializador a serde | Baja | 009 |
 | Sistema de errores tipados completo | Media | — |
 | VAAPI/NVDec hardware decode | Baja | — |

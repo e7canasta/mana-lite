@@ -1,3 +1,4 @@
+mod assignment;
 mod cascade;
 mod config;
 mod depth;
@@ -6,6 +7,7 @@ mod error;
 mod fsm;
 mod infer;
 mod ingest;
+mod kalman;
 mod logger;
 mod metrics;
 mod pipeline;
