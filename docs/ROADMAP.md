@@ -47,12 +47,15 @@ Priorizadas. Cada etapa cambia un solo contrato o habilita un solo rol.
   `specs/depth-standard.md` §14).
 - Definir el presupuesto de latencia de producción antes de elegir.
 
-### 2. `DepthRegionStats` versionado
+### 2. `DepthRegionStats` versionado ✅ (2026-08-07)
 
-- Renombrar el contrato interno a `DepthRoiMap` con `roi`, `map_width`,
-  `map_height`, `valid_ratio` en el evento JSONL (spec §8/§10).
-- Consultas por región: mediana, p10, p90 con intersección global→local (§7).
-- Conservar el contrato ROI-local (ADR-024).
+- Contrato interno `DepthRoiMap` en `src/depth.rs` (`mana_lite::depth`):
+  `region_intersection` (§7), `region_stats` (mediana/p10/p90) y `map_dims`.
+- Evento JSONL `depth` versionado (`version: 2`) con `roi`, `map_width`,
+  `map_height` y `valid_ratio` (spec §8/§10).
+- Consultas por región con intersección global→local validadas con el probe
+  (`--region`) sobre escena real: `local=[208,180,340,360]` (spec §7).
+- Conserva el contrato ROI-local (ADR-024).
 
 ### 3. Reglas depth funcionales (`DepthRegionRule`)
 

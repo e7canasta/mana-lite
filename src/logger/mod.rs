@@ -217,6 +217,59 @@ mod tests {
     }
 
     #[test]
+    fn depth_event_v2_has_version_roi_and_map_dims() {
+        let mut log = test_logger();
+        log.emit(Event::depth(
+            123,
+            "depth-standard",
+            268,
+            281,
+            Some([560, 140, 1240, 820]),
+            680,
+            680,
+            462400,
+            Some(1.0),
+            Some(2.19),
+            Some(5.16),
+        ));
+        let out = collect(&mut log);
+        assert!(out.contains("\"type\":\"depth\""));
+        assert!(out.contains("\"version\":2"));
+        assert!(out.contains("\"roi\":[560,140,1240,820]"));
+        assert!(out.contains("\"map_width\":680"));
+        assert!(out.contains("\"map_height\":680"));
+        assert!(out.contains("\"valid_pixels\":462400"));
+        assert!(out.contains("\"valid_ratio\":1"));
+        assert!(out.contains("\"min_depth_m\":2.19"));
+        assert!(out.contains("\"max_depth_m\":5.16"));
+        assert!(!out.contains("\"width\":680"));
+    }
+
+    #[test]
+    fn depth_event_v2_allows_nullable_fields() {
+        let mut log = test_logger();
+        log.emit(Event::depth(
+            1,
+            "depth-standard",
+            1,
+            1,
+            None,
+            0,
+            0,
+            0,
+            None,
+            None,
+            None,
+        ));
+        let out = collect(&mut log);
+        assert!(out.contains("\"version\":2"));
+        assert!(out.contains("\"roi\":null"));
+        assert!(out.contains("\"valid_ratio\":null"));
+        assert!(out.contains("\"min_depth_m\":null"));
+        assert!(out.contains("\"max_depth_m\":null"));
+    }
+
+    #[test]
     fn detection_emits_class_and_bbox() {
         let det = vec![DetRecord {
             class: "person".into(),
@@ -430,16 +483,22 @@ mod tests {
             "depth-standard",
             180,
             190,
-            1920,
-            1080,
-            2,
+            Some([560, 140, 1240, 820]),
+            680,
+            680,
+            462400,
+            Some(0.9999),
             Some(0.42),
             Some(8.31),
         ));
         let out = collect(&mut log);
         assert!(out.contains("\"type\":\"depth\""));
-        assert!(out.contains("\"width\":1920"));
-        assert!(out.contains("\"valid_pixels\":2"));
+        assert!(out.contains("\"version\":2"));
+        assert!(out.contains("\"roi\":[560,140,1240,820]"));
+        assert!(out.contains("\"map_width\":680"));
+        assert!(out.contains("\"map_height\":680"));
+        assert!(out.contains("\"valid_pixels\":462400"));
+        assert!(out.contains("\"valid_ratio\":0.9999"));
         assert!(out.contains("\"min_depth_m\":0.42"));
         assert!(out.contains("\"max_depth_m\":8.31"));
     }
@@ -452,14 +511,18 @@ mod tests {
             "depth-standard",
             10,
             12,
-            4,
-            3,
+            None,
             0,
+            0,
+            0,
+            None,
             None,
             None,
         ));
         let out = collect(&mut log);
+        assert!(out.contains("\"roi\":null"));
         assert!(out.contains("\"valid_pixels\":0"));
+        assert!(out.contains("\"valid_ratio\":null"));
         assert!(out.contains("\"min_depth_m\":null"));
         assert!(out.contains("\"max_depth_m\":null"));
     }

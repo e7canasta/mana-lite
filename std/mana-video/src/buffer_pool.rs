@@ -16,9 +16,9 @@
 //!
 //! If more buffers are released than acquired (error-path leak), excess
 //! buffers are dropped — the pool never grows unbounded.
+use std::sync::Mutex;
 #[cfg(debug_assertions)]
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Mutex;
 
 /// A bounded pool of reusable `Vec<u8>` buffers that avoids the
 /// `malloc(6MB) + free(6MB)` churn on every frame decode.

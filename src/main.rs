@@ -690,6 +690,8 @@ impl App {
     ) {
         let (width, height, valid_pixels, min_depth_m, max_depth_m) =
             depth_summary(output.depth.as_ref(), frame_w, frame_h);
+        let map_area = (width as u64) * (height as u64);
+        let valid_ratio = (map_area > 0).then(|| valid_pixels as f32 / map_area as f32);
         self.metrics.tick_inference_depth(
             model_key,
             output.pipeline_us,
@@ -707,9 +709,11 @@ impl App {
             model_key,
             output.infer_ms,
             output.pipeline_us / 1000,
+            crop_rect.map(|rect| rect.to_array()),
             width,
             height,
             valid_pixels,
+            valid_ratio,
             min_depth_m,
             max_depth_m,
         ));
@@ -847,7 +851,7 @@ fn depth_summary(
     let Some(depth) = depth else {
         return (fallback_width, fallback_height, 0, None, None);
     };
-    let (height, width) = depth.orig_shape;
+    let (width, height) = mana_lite::depth::map_dims(depth);
     let mut valid_pixels = 0;
     let mut min_depth = f32::INFINITY;
     let mut max_depth: f32 = 0.0;

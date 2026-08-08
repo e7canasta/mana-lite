@@ -260,7 +260,8 @@ DepthRegionStats {
 | Capacidad | Estado |
 |---|---|
 | Inferencia solo sobre ROI | implementada |
-| Estadisticas validas y eventos JSONL | implementada |
+| Estadisticas validas y eventos JSONL versionados (v2) | implementada |
+| Consultas por region con mediana/p10/p90 (§7 global->local) | implementada |
 | Depth como raiz independiente | implementada |
 | Mapa materializado en frame completo | eliminado para ROI activo |
 | Consulta ROI-local sin expansion | baseline aprobado |
@@ -269,6 +270,20 @@ DepthRegionStats {
 La expansion a `1920x1080` no agrega inferencia, pero multiplica memoria,
 colorizacion y ancho de banda visual por aproximadamente `4.5`. Debe ser una
 operacion exclusiva de visualizacion cuando Rerun esta habilitado.
+
+### Consulta De Region
+
+El contrato interno `DepthRoiMap` y las consultas `DepthRegionStats` viven en
+`src/depth.rs` (`mana_lite::depth`), compartidos por el runtime y por el probe:
+
+```text
+region_intersection(roi, region) -> Option<[u32; 4]>   # §7 global->local
+region_stats(depth, roi, region)  -> Option<DepthRoiStats>
+map_dims(depth)                   -> (width, height)
+```
+
+`region_stats` devuelve `None` si la region no interseca el ROI o no hay
+ningun valor valido. El probe expone la consulta con `--region x1 y1 x2 y2`.
 
 ## 9. Cascada Y Reglas
 
@@ -300,38 +315,33 @@ informacion en una dependencia de modelo.
 
 ## 10. Publicacion JSONL
 
-El evento actual conserva estadisticas, no la matriz completa:
+El evento conserva estadisticas, no la matriz completa. Es versionado
+(`version: 2`): agrega `roi`, `map_width`, `map_height` y `valid_ratio` al
+esquema original (contrato `DepthRoiMap`):
 
 ```json
 {
   "type": "depth",
+  "version": 2,
   "frame_id": 123,
   "model": "depth-standard",
-  "infer_ms": 268,
-  "pipeline_ms": 281,
-  "width": 680,
-  "height": 680,
-  "valid_pixels": 462400,
-  "min_depth_m": 2.19,
-  "max_depth_m": 5.16
-}
-```
-
-El evento debe interpretarse en el espacio local del ROI:
-
-```json
-{
-  "map_space": "roi",
+  "infer_ms": 172,
+  "pipeline_ms": 185,
   "roi": [560, 140, 1240, 820],
   "map_width": 680,
   "map_height": 680,
-  "valid_ratio": 1.0
+  "valid_pixels": 462400,
+  "valid_ratio": 1.0,
+  "min_depth_m": 1.96,
+  "max_depth_m": 3.44
 }
 ```
 
-El `roi` sigue viajando por la metrica del modelo y permite transformar
-coordenadas globales a locales. No se debe reconstruir el frame completo para
-consumir este evento.
+El evento debe interpretarse en el espacio local del ROI: el campo `roi`
+vuelve a ser las coordenadas globales del mapa (inferidas del crop del
+modelo) y `map_width`/`map_height` las dimensiones del mapa local. Con eso se
+puede transformar cualquier coordenada global a local (interseccion §7) sin
+reconstruir el frame completo.
 
 ## 11. Rerun Y Blueprint Visual
 
@@ -467,10 +477,8 @@ las reglas funcionales sin una solicitud separada.
 
 ### Proximo Incremento
 
-- Introducir `DepthRoiMap` como nombre explicito del contrato interno.
-- Agregar `roi`, `map_width`, `map_height` y `valid_ratio` al evento versionado.
-- Implementar consultas por region con mediana y percentiles.
 - Evitar materializar full-frame depth incluso en el adaptador Rerun.
+- Reglas `DepthRegionRule` funcionales (§9).
 
 ### Siguiente Etapa
 

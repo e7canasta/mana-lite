@@ -1,10 +1,10 @@
 use anyhow::Result;
 use mana_types::bbox;
-use mana_types::{DetectionBatchV1, SceneMsgV1, RoiCommandV1};
+use mana_types::{DetectionBatchV1, RoiCommandV1, SceneMsgV1};
 
 use rerun::datatypes::Vec2D;
 
-use super::util::{log_archetype, log_many, FrameSize};
+use super::util::{FrameSize, log_archetype, log_many};
 
 pub fn log_detections_2d(
     rec: &rerun::RecordingStream,
@@ -86,8 +86,10 @@ pub fn log_roi_2d(
             log_archetype(rec, &format!("{scope}/box"), &roi, || "roi_box".into())?;
         }
         RoiCommandV1::BED => {
-            rec.log(format!("{scope}/trapezoid").as_str(), &rerun::Clear::flat()).ok();
-            rec.log(format!("{scope}/bbox").as_str(), &rerun::Clear::flat()).ok();
+            rec.log(format!("{scope}/trapezoid").as_str(), &rerun::Clear::flat())
+                .ok();
+            rec.log(format!("{scope}/bbox").as_str(), &rerun::Clear::flat())
+                .ok();
 
             let cx = cmd.x * fw;
             let ty = cmd.y * fh;
@@ -102,7 +104,9 @@ pub fn log_roi_2d(
             let strip = rerun::LineStrips2D::new([vec![tl, tr, br, bl, tl]]).with_colors([
                 rerun::datatypes::Rgba32::from_unmultiplied_rgba(255, 80, 80, 200),
             ]);
-            log_archetype(rec, &format!("{scope}/trapezoid"), &strip, || "roi_trap".into())?;
+            log_archetype(rec, &format!("{scope}/trapezoid"), &strip, || {
+                "roi_trap".into()
+            })?;
 
             let bbox = rerun::Boxes2D::from_centers_and_half_sizes(
                 [Vec2D([cx, ty + th / 2.0])],

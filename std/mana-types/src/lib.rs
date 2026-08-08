@@ -307,7 +307,11 @@ impl RoiCommandV1 {
     pub const BED: u8 = 3;
 
     pub fn target_name_str(&self) -> &str {
-        let end = self.target_name.iter().position(|&b| b == 0).unwrap_or(self.target_name.len());
+        let end = self
+            .target_name
+            .iter()
+            .position(|&b| b == 0)
+            .unwrap_or(self.target_name.len());
         core::str::from_utf8(&self.target_name[..end]).unwrap_or("<invalid>")
     }
 }
@@ -321,7 +325,14 @@ pub mod bbox {
     }
 
     #[inline]
-    pub fn box_halfsize_to_pixels(cx: f32, cy: f32, w: f32, h: f32, frame_w: u32, frame_h: u32) -> (f32, f32, f32, f32) {
+    pub fn box_halfsize_to_pixels(
+        cx: f32,
+        cy: f32,
+        w: f32,
+        h: f32,
+        frame_w: u32,
+        frame_h: u32,
+    ) -> (f32, f32, f32, f32) {
         let fw = frame_w as f32;
         let fh = frame_h as f32;
         (cx * fw, cy * fh, w * fw / 2.0, h * fh / 2.0)
@@ -346,12 +357,18 @@ mod tests {
 
     #[test]
     fn byte_size_4k() {
-        assert_eq!(PixelFormat::Rgb8.frame_byte_size(3840, 2160), 3840 * 2160 * 3);
+        assert_eq!(
+            PixelFormat::Rgb8.frame_byte_size(3840, 2160),
+            3840 * 2160 * 3
+        );
     }
 
     #[test]
     fn byte_size_nv12() {
-        assert_eq!(PixelFormat::Nv12.frame_byte_size(1920, 1080), 1920 * 1080 * 3 / 2);
+        assert_eq!(
+            PixelFormat::Nv12.frame_byte_size(1920, 1080),
+            1920 * 1080 * 3 / 2
+        );
     }
 
     #[test]
@@ -369,13 +386,19 @@ mod tests {
 
     #[test]
     fn detection_batch_valid() {
-        let mut batch = DetectionBatchV1 { count: 3, ..Default::default() };
+        let mut batch = DetectionBatchV1 {
+            count: 3,
+            ..Default::default()
+        };
         assert_eq!(batch.valid().len(), 3);
     }
 
     #[test]
     fn detection_batch_valid_clamped() {
-        let batch = DetectionBatchV1 { count: 999, ..Default::default() };
+        let batch = DetectionBatchV1 {
+            count: 999,
+            ..Default::default()
+        };
         assert_eq!(batch.valid().len(), MAX_DETECTIONS);
     }
 
@@ -390,19 +413,28 @@ mod tests {
     fn zone_name_str() {
         let mut name = [0u8; 32];
         name[..7].copy_from_slice(b"cama_01");
-        let z = ZoneV1 { name, ..Default::default() };
+        let z = ZoneV1 {
+            name,
+            ..Default::default()
+        };
         assert_eq!(z.name_str(), "cama_01");
     }
 
     #[test]
     fn scene_msg_valid_entities_clamped() {
-        let m = SceneMsgV1 { entity_count: 999, ..Default::default() };
+        let m = SceneMsgV1 {
+            entity_count: 999,
+            ..Default::default()
+        };
         assert_eq!(m.valid_entities().len(), MAX_SCENE_ENTITIES);
     }
 
     #[test]
     fn scene_msg_valid_zones_clamped() {
-        let m = SceneMsgV1 { zone_count: 999, ..Default::default() };
+        let m = SceneMsgV1 {
+            zone_count: 999,
+            ..Default::default()
+        };
         assert_eq!(m.valid_zones().len(), MAX_ZONES);
     }
 

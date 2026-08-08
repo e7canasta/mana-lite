@@ -193,17 +193,22 @@ pub fn write_event(event: &Event, ts: &str, buf: &mut Vec<u8>) {
             }
         }
         Event::Depth {
+            version,
             frame_id,
             model,
             infer_ms,
             pipeline_ms,
-            width,
-            height,
+            roi,
+            map_width,
+            map_height,
             valid_pixels,
+            valid_ratio,
             min_depth_m,
             max_depth_m,
         } => {
-            buf.extend_from_slice(b"\"type\":\"depth\",\"frame_id\":");
+            buf.extend_from_slice(b"\"type\":\"depth\",\"version\":");
+            write_u64(*version as u64, buf);
+            buf.extend_from_slice(b",\"frame_id\":");
             write_u64(*frame_id, buf);
             buf.extend_from_slice(b",\"model\":\"");
             write_json_string(model, buf);
@@ -211,12 +216,32 @@ pub fn write_event(event: &Event, ts: &str, buf: &mut Vec<u8>) {
             write_u64(*infer_ms, buf);
             buf.extend_from_slice(b",\"pipeline_ms\":");
             write_u64(*pipeline_ms, buf);
-            buf.extend_from_slice(b",\"width\":");
-            write_u64(*width as u64, buf);
-            buf.extend_from_slice(b",\"height\":");
-            write_u64(*height as u64, buf);
+            buf.extend_from_slice(b",\"roi\":");
+            if let Some([x1, y1, x2, y2]) = roi {
+                buf.extend_from_slice(b"[");
+                write_u64(*x1 as u64, buf);
+                buf.extend_from_slice(b",");
+                write_u64(*y1 as u64, buf);
+                buf.extend_from_slice(b",");
+                write_u64(*x2 as u64, buf);
+                buf.extend_from_slice(b",");
+                write_u64(*y2 as u64, buf);
+                buf.extend_from_slice(b"]");
+            } else {
+                buf.extend_from_slice(b"null");
+            }
+            buf.extend_from_slice(b",\"map_width\":");
+            write_u64(*map_width as u64, buf);
+            buf.extend_from_slice(b",\"map_height\":");
+            write_u64(*map_height as u64, buf);
             buf.extend_from_slice(b",\"valid_pixels\":");
             write_u64(*valid_pixels, buf);
+            buf.extend_from_slice(b",\"valid_ratio\":");
+            if let Some(value) = valid_ratio {
+                write_f32(*value, buf);
+            } else {
+                buf.extend_from_slice(b"null");
+            }
             buf.extend_from_slice(b",\"min_depth_m\":");
             if let Some(value) = min_depth_m {
                 write_f32(*value, buf);

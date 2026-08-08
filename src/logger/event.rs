@@ -1,5 +1,9 @@
 use crate::metrics::{MetricsReport, PerClassFrameStats};
 
+/// Version del esquema del evento `depth`. v2 agrega `roi`, `map_width`,
+/// `map_height` y `valid_ratio` (contrato `DepthRoiMap`, spec §8/§10).
+pub const DEPTH_EVENT_VERSION: u8 = 2;
+
 pub enum Event {
     Meta {
         event: String,
@@ -30,13 +34,16 @@ pub enum Event {
         crop: Option<[u32; 4]>,
     },
     Depth {
+        version: u8,
         frame_id: u64,
         model: String,
         infer_ms: u64,
         pipeline_ms: u64,
-        width: u32,
-        height: u32,
+        roi: Option<[u32; 4]>,
+        map_width: u32,
+        map_height: u32,
         valid_pixels: u64,
+        valid_ratio: Option<f32>,
         min_depth_m: Option<f32>,
         max_depth_m: Option<f32>,
     },
@@ -247,20 +254,25 @@ impl Event {
         model: &str,
         infer_ms: u64,
         pipeline_ms: u64,
-        width: u32,
-        height: u32,
+        roi: Option<[u32; 4]>,
+        map_width: u32,
+        map_height: u32,
         valid_pixels: u64,
+        valid_ratio: Option<f32>,
         min_depth_m: Option<f32>,
         max_depth_m: Option<f32>,
     ) -> Self {
         Event::Depth {
+            version: DEPTH_EVENT_VERSION,
             frame_id,
             model: model.into(),
             infer_ms,
             pipeline_ms,
-            width,
-            height,
+            roi,
+            map_width,
+            map_height,
             valid_pixels,
+            valid_ratio,
             min_depth_m,
             max_depth_m,
         }
