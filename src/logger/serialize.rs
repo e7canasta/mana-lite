@@ -433,6 +433,39 @@ pub fn write_event(event: &Event, ts: &str, buf: &mut Vec<u8>) {
             buf.extend_from_slice(b"\",\"dwell_ms\":");
             write_u64(*dwell_ms, buf);
         }
+        Event::Presence {
+            frame_id,
+            state,
+            second_person,
+            raw_count,
+            confirmed_count,
+            signal_valid,
+            held,
+            empty_ticks,
+            candidate_ticks,
+            exit_ticks,
+        } => {
+            buf.extend_from_slice(b"\"type\":\"presence\",\"frame_id\":");
+            write_u64(*frame_id, buf);
+            buf.extend_from_slice(b",\"state\":\"");
+            write_json_string(state, buf);
+            buf.extend_from_slice(b"\",\"second_person\":\"");
+            write_json_string(second_person, buf);
+            buf.extend_from_slice(b"\",\"raw_count\":");
+            write_u64(*raw_count as u64, buf);
+            buf.extend_from_slice(b",\"confirmed_count\":");
+            write_u64(*confirmed_count as u64, buf);
+            buf.extend_from_slice(b",\"signal_valid\":");
+            buf.extend_from_slice(if *signal_valid { b"true" } else { b"false" });
+            buf.extend_from_slice(b",\"held\":");
+            buf.extend_from_slice(if *held { b"true" } else { b"false" });
+            buf.extend_from_slice(b",\"empty_ticks\":");
+            write_u64(*empty_ticks as u64, buf);
+            buf.extend_from_slice(b",\"candidate_ticks\":");
+            write_u64(*candidate_ticks as u64, buf);
+            buf.extend_from_slice(b",\"exit_ticks\":");
+            write_u64(*exit_ticks as u64, buf);
+        }
         Event::Metrics(r) => {
             buf.extend_from_slice(b"\"type\":\"metrics\"");
             append_field(buf, "window_s", r.window_s);

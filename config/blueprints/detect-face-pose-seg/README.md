@@ -16,6 +16,8 @@ Este perfil requiere:
 - Dos detecciones consecutivas por defecto para confirmar un track.
 - Un track visible (`misses = 0`) y de clase `person`.
 - Exactamente un track elegible en la escena configurada.
+- La segunda persona debe superar la politica de ocupacion antes de que el
+  estado de sala pase a `multiple`.
 
 El tracking evita activar los modelos hijos por un falso positivo aislado.
 `max_age` conserva la identidad para tracking, pero no permite inferencia hija

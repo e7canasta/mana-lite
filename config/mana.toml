@@ -3,9 +3,9 @@ viz_file = "config/viz.toml"
 rerun_file = "config/rerun.toml"
 
 [source]
-# url = "rtsp://192.168.1.6:8554/mana015"
-# url = "rtsp://192.168.1.15:8554/clip1"
-url = "rtsp://192.168.1.6:8554/home"
+#url = "rtsp://192.168.1.6:8554/mana015"
+url = "rtsp://192.168.1.15:8554/clip1"
+#url = "rtsp://192.168.1.6:8554/home"
 username = "admin"
 password = ""
 transport = "tcp"
@@ -33,8 +33,18 @@ face_max_center_y_ratio = 0.65
 [presence]
 enabled = true
 class = "person"
+
+[presence.poi]
 on_ticks = 1
-off_ticks = 4
+# Initial calibration: keep the POI through brief detector dropouts.
+off_ticks = 8
+
+[presence.occupancy]
+# Applied after POI release; this policy is intentionally independent.
+empty_ticks = 4
+# A second person needs two valid candidate ticks and confirmed tracks.
+multiple_candidate_ticks = 2
+multiple_exit_ticks = 2
 
 [tracking]
 min_hits = 2

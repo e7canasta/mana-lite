@@ -1,4 +1,4 @@
-use crate::config::PresenceConfig;
+use crate::config::PresencePoiPolicy;
 use crate::detection::ConsolidatedObservation;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -17,7 +17,9 @@ pub struct PresenceUpdate {
 
 /// Debounces the primary presence signal without assigning identity.
 pub struct PresenceFilter {
-    config: PresenceConfig,
+    enabled: bool,
+    class: String,
+    policy: PresencePoiPolicy,
     state: PresenceState,
     positive_ticks: u32,
     empty_ticks: u32,
@@ -25,9 +27,11 @@ pub struct PresenceFilter {
 }
 
 impl PresenceFilter {
-    pub fn new(config: PresenceConfig) -> Self {
+    pub fn new(enabled: bool, class: impl Into<String>, policy: PresencePoiPolicy) -> Self {
         Self {
-            config,
+            enabled,
+            class: class.into(),
+            policy,
             state: PresenceState::Absent,
             positive_ticks: 0,
             empty_ticks: 0,
@@ -42,7 +46,7 @@ impl PresenceFilter {
         observations: &[ConsolidatedObservation],
         signal_valid: bool,
     ) -> (Vec<ConsolidatedObservation>, PresenceUpdate) {
-        if !self.config.enabled {
+        if !self.enabled {
             return (
                 observations.to_vec(),
                 PresenceUpdate {
@@ -65,7 +69,7 @@ impl PresenceFilter {
 
         let person_count = observations
             .iter()
-            .filter(|observation| observation.class == self.config.class)
+            .filter(|observation| observation.class == self.class)
             .count();
 
         if person_count > 1 {
@@ -85,12 +89,12 @@ impl PresenceFilter {
 
         if let Some(person) = observations
             .iter()
-            .find(|observation| observation.class == self.config.class)
+            .find(|observation| observation.class == self.class)
         {
             self.positive_ticks = self.positive_ticks.saturating_add(1);
             self.empty_ticks = 0;
             self.last_person = Some(person.clone());
-            if self.positive_ticks >= self.config.on_ticks {
+            if self.positive_ticks >= self.policy.on_ticks {
                 self.state = PresenceState::Present;
             }
             return (
@@ -107,7 +111,7 @@ impl PresenceFilter {
         self.empty_ticks = self.empty_ticks.saturating_add(1);
         if self.state == PresenceState::Present
             && self.last_person.is_some()
-            && self.empty_ticks < self.config.off_ticks
+            && self.empty_ticks < self.policy.off_ticks
         {
             let mut held = observations.to_vec();
             held.push(self.last_person.as_ref().expect("checked above").clone());
@@ -121,7 +125,7 @@ impl PresenceFilter {
             );
         }
 
-        if self.empty_ticks >= self.config.off_ticks {
+        if self.empty_ticks >= self.policy.off_ticks {
             self.state = PresenceState::Absent;
             self.last_person = None;
         }
@@ -147,10 +151,8 @@ mod tests {
     use super::*;
     use crate::detection::DetectionEvidence;
 
-    fn config(off_ticks: u32) -> PresenceConfig {
-        PresenceConfig {
-            enabled: true,
-            class: "person".into(),
+    fn config(off_ticks: u32) -> PresencePoiPolicy {
+        PresencePoiPolicy {
             on_ticks: 1,
             off_ticks,
         }
@@ -175,7 +177,7 @@ mod tests {
 
     #[test]
     fn holds_one_person_during_short_valid_dropout() {
-        let mut filter = PresenceFilter::new(config(4));
+        let mut filter = PresenceFilter::new(true, "person", config(4));
         let one = [person()];
         let (observations, update) = filter.update(&one, true);
         assert_eq!(observations.len(), 1);
@@ -190,7 +192,7 @@ mod tests {
 
     #[test]
     fn releases_presence_after_configured_empty_ticks() {
-        let mut filter = PresenceFilter::new(config(3));
+        let mut filter = PresenceFilter::new(true, "person", config(3));
         filter.update(&[person()], true);
         filter.update(&[], true);
         filter.update(&[], true);
@@ -202,7 +204,7 @@ mod tests {
 
     #[test]
     fn invalid_signal_does_not_count_as_absence() {
-        let mut filter = PresenceFilter::new(config(2));
+        let mut filter = PresenceFilter::new(true, "person", config(2));
         filter.update(&[person()], true);
         let (observations, update) = filter.update(&[], false);
         assert!(observations.is_empty());
@@ -213,7 +215,7 @@ mod tests {
 
     #[test]
     fn multiple_people_are_ambiguous_and_never_held() {
-        let mut filter = PresenceFilter::new(config(4));
+        let mut filter = PresenceFilter::new(true, "person", config(4));
         let two = [person(), person()];
         let (observations, update) = filter.update(&two, true);
         assert_eq!(observations.len(), 2);

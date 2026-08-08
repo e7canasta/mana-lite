@@ -136,6 +136,7 @@ Controlado por `config/metrics.toml` seccion `[metrics.jsonl]`.
 [metrics.jsonl]
 frame_events = true              # {"type":"frame", frame_id, decode_ms, gap_ms}
 detection_events = true          # {"type":"detection", model, infer_ms, pipeline_ms, det, per_class}
+presence_events = true           # {"type":"presence", state, second_person, counts}
 zone_events = true               # {"type":"zone", zone, event, class, confidence}
 fsm_events = true                # {"type":"fsm", from, to, trigger, dwell_ms}
 metrics_event = true             # {"type":"metrics", ...} — reporte de ventana
@@ -189,6 +190,17 @@ frame, sin memoria ni `track_id`:
 {"type":"consolidated_detection","frame_id":10,"class":"person",
  "confidence":0.73,"bbox":[875,149,1187,726],
  "primary_model":"detect-fast","sources":["detect-fast"]}
+```
+
+**Presence event** — evidencia y estado de la maquina de cardinalidad por
+frame. El evento permite calibrar las politicas sin inferirlas desde labels de
+bbox:
+
+```json
+{"type":"presence","frame_id":10,"state":"single",
+ "second_person":"candidate","raw_count":2,"confirmed_count":1,
+ "signal_valid":true,"held":false,"empty_ticks":0,
+ "candidate_ticks":1,"exit_ticks":0}
 ```
 
 **Depth event** — estadisticas del mapa depth local al ROI, nunca la matriz:
@@ -249,7 +261,7 @@ keyframe_drops = true               # keyframes replaced by a fresher one
 
 ### Que ves en cada panel del blueprint
 
-**Camera** — la imagen + las observaciones consolidadas. Si `frames=true` y `boxes=true`. En modo stateless las boxes viven bajo `/world/camera/observations`, no tienen `track_id` y el label muestra clase, confianza y modelo primario.
+**Camera** — la imagen + las observaciones consolidadas. Si `frames=true` y `boxes=true`. En modo stateless las boxes viven bajo `/world/camera/observations`, no tienen `track_id` y el label muestra clase, confianza y modelo primario. Las entidades trackeadas conservan solo clase y `track_id`; el estado temporal vive en la timeline.
 
 **Counts** — cuantas detecciones de cada clase por frame. Si ves `person: 0→1→0→2→0`, el modelo esta flickereando — probablemente el threshold de confianza esta muy alto.
 
@@ -272,6 +284,12 @@ que latest-frame-wins descarta keyframes viejos cuando la inferencia no termina
 a tiempo. `gap_ms` es el intervalo entre keyframes procesados, no una medicion
 pura del stream cuando hubo drops. Para una lectura de salud comun, usar
 `drop_ratio`, `throughput_ratio` y `freshness`.
+
+**Room state** — la timeline muestra la maquina de cardinalidad. `single` es la
+persona de interes mantenida por la politica POI; `multiple` solo aparece cuando
+la segunda persona supera la politica de candidatos y tiene track confirmado.
+Los lanes `second_person` y `signal` explican si la maquina esta esperando
+confirmacion o si el frame no era valido.
 
 ---
 
@@ -314,6 +332,9 @@ Solo las entidades que Rerun recibe actualmente:
   infer/{model}/pipeline_us          ─ tiempo wall-clock del modelo
   infer/{model}/hz                   ─ frecuencia de llamadas del modelo
   decode/latency_us                  ─ tiempo de decode
+  state/room/cardinality              ─ StateChange: unknown/empty/single/multiple
+  state/room/second_person            ─ StateChange: none/candidate/confirmed
+  state/room/signal                   ─ StateChange: valid/invalid
 
 /infer/
   {model}/
@@ -338,7 +359,7 @@ Notas:
 
 ## 6. Blueprint: layout del dashboard
 
-Tres filas. Nada mas.
+El tab de metricas contiene series de rendimiento y una timeline de estado.
 
 ```
 ┌─────────────────────────────────────────────┐
@@ -347,6 +368,8 @@ Tres filas. Nada mas.
 │ Counts   │Confidence│ Area                  │  share 1
 ├──────────┴──────────┴───────────────────────┤
 │ Latency              │ Stream               │  share 1
+├─────────────────────────────────────────────┤
+│ Room state timeline                           │  share 1.5
 └──────────────────────┴──────────────────────┘
 ```
 
@@ -482,6 +505,7 @@ Los eventos opcionales se filtran antes de entrar al buffer JSONL. Los eventos
 |---|---|---|
 | `frame_events` | true | frame_id, decode_ms, **gap_ms** |
 | `detection_events` | true | model, infer_ms, pipeline_ms, det[], **per_class{}** |
+| `presence_events` | true | cardinality, second-person evidence and temporal counters |
 | `consolidated_detection` | `jsonl_level=debug` | frame, class, bbox, primary_model, sources |
 | `depth_events` | true | model, infer_ms, pipeline_ms, width, height, valid_pixels, min/max_depth_m |
 | `zone_events` | true | zone, event, class, confidence |

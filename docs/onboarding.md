@@ -64,7 +64,8 @@ Cada archivo TOML tiene una responsabilidad unica:
 | `mana.toml` | Streaming, salud, output, paths a demas configs | Si |
 | `models.toml` | Que modelos ONNX cargar y con que parametros | Si |
 | `blueprints/<name>/blueprint.toml` | Perfil seleccionado: modelos activos, root y gates | Recomendado |
-| `[presence]` en `mana.toml` | Histeresis de presencia ante ticks vacios | Recomendado en 24/7 |
+| `[presence.poi]` en `mana.toml` | Histeresis de la persona de interes | Recomendado en 24/7 |
+| `[presence.occupancy]` en `mana.toml` | Confirmacion de empty/single/multiple | Recomendado en calibracion |
 | `cascade.toml` | Orden y dependencias entre modelos | No (usa default) |
 | `fsm.toml` | Que modelos correr en cada estado operacional | No |
 | `zones.toml` | Regiones de interes para tracks y FSM | No |
@@ -96,11 +97,17 @@ RTSP Stream
                                    └──────────┘
                                         │
                                         ▼
-                                   ┌──────────┐       tracking=true
-                                   │  Track   │──────────────┐
-                                   │ optional │              │
-                                   └──────────┘              ▼
-                                   ┌──────────┐    ┌──────────┐
+                                    ┌──────────┐       tracking=true
+                                    │  Track   │──────────────┐
+                                    │ optional │              │
+                                    └──────────┘              ▼
+                                    ┌──────────┐
+                                    │Occupancy │  empty/single/multiple
+                                    │  state   │  policy separada
+                                    └──────────┘
+                                         │
+                                         ▼
+                                    ┌──────────┐    ┌──────────┐
                                    │  Zones   │◀───│  Entity  │
                                    │ (optional)    │ (tracked) │
                                    └──────────┘    └──────────┘
@@ -122,9 +129,11 @@ RTSP Stream
 2. **Decode**: H.264 → RGB via ffmpeg (swscaler). ~10-15ms tipico.
 3. **Infer**: El cascade decide que modelos correr y en que orden. Cada modelo recibe el frame RGB (o su crop). `depth-standard` recibe el crop de su ROI fijo y produce el mapa depth local; no depende de detecciones.
 4. **Consolidate**: `Detection` de cada modelo se fusiona, sin memoria temporal, en `ConsolidatedObservation` y sus evidencias se asocian por relación espacial. Depth no entra aquí.
-5. **Publish observations**: JSONL emite `consolidated_detection` y Rerun dibuja `/world/camera/observations`.
+5. **POI signal**: `presence.poi` adquiere y sostiene la persona de interes antes del tracker.
 6. **Track (opcional)**: con `pipeline.track = true`, el tracker asigna IDs y mantiene `TrackedEntity` entre frames.
-7. **Zones/FSM (opcionales)**: consumen tracks y solo son útiles cuando el tracking está habilitado.
+7. **Occupancy state**: la maquina clasifica `unknown`, `empty`, `single` o `multiple`; la segunda persona requiere dos ticks candidatos y dos tracks confirmados.
+8. **Publish observations**: JSONL emite detecciones y presencia; Rerun dibuja `/world/camera/observations`, entidades y la timeline `/pipeline/state/room`.
+9. **Zones/FSM (opcionales)**: consumen tracks y siguen representando eventos clinicos de cama, separados de cardinalidad.
 
 ---
 
@@ -760,7 +769,7 @@ infer:  2.0 Hz — 10 calls in 5s | 38ms avg | 2-145ms | 12 dets | skips:2, empt
 | `skips` | 0 | Cascade no funciona |
 | `empty` | < 30% | Threshold muy alto |
 
-### Rerun — 7 paneles
+### Rerun — 8 paneles
 
 1. **Camera** — imagen + cajas con clase y confianza
 2. **Counts** — per-class detecciones por frame (flickereo = threshold mal)
@@ -769,6 +778,8 @@ infer:  2.0 Hz — 10 calls in 5s | 38ms avg | 2-145ms | 12 dets | skips:2, empt
 5. **Latency** — inferencia + decode per frame (picos = thermal throttling)
 6. **Stream** — `source_hz`, `processed_hz` y `gap_ms` en unidades crudas
 7. **Pipeline health** — `drop_ratio`, `throughput_ratio` y `freshness` en escala `0..1`
+8. **Room state** — timeline `empty/single/multiple`, candidato de segunda
+   persona y validez de la señal
 
 La frecuencia de cada modelo vive bajo `/pipeline/infer/<model>/hz`. En el
 primer experimento debe verse `detect-fast` en cada ciclo procesado y
@@ -792,6 +803,9 @@ jq 'select(.type=="detection" and .per_class.person.conf_min < 0.5)' mana-*.json
 
 # Timeline detecciones
 jq -c 'select(.type=="detection") | {f: .frame_id, m: .model, c: [.det[]?.class]}' mana-*.jsonl
+
+# Timeline de cardinalidad de habitacion
+jq -c 'select(.type=="presence") | {f: .frame_id, s: .state, second: .second_person, raw: .raw_count, confirmed: .confirmed_count}' mana-*.jsonl
 ```
 
 ---

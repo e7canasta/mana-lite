@@ -165,15 +165,27 @@ leave the allowlist empty.
 [presence]
 enabled = true
 class = "person"
+
+[presence.poi]
 on_ticks = 1
-off_ticks = 4
+off_ticks = 8
+
+[presence.occupancy]
+empty_ticks = 4
+multiple_candidate_ticks = 2
+multiple_exit_ticks = 2
 ```
 
-This filter runs after spatial consolidation of primary observations and before
-the classic tracker. Empty valid inference ticks shorter than `off_ticks` hold
-the last person observation. Missing/invalid input does not count as absence.
-Two or more accepted persons enter an ambiguous state immediately and are not
-held as a single person.
+The `poi` policy runs after spatial consolidation of primary observations and
+before the classic tracker. Empty valid inference ticks shorter than
+`poi.off_ticks` hold the last person observation. Missing/invalid input does not
+count as absence.
+
+The independent occupancy policy classifies the room as `unknown`, `empty`,
+`single` or `multiple`. A second person requires the configured number of valid
+candidate ticks and at least two confirmed tracks. This prevents one raw false
+positive from changing the room state while still allowing the POI signal to be
+held permissively.
 
 ### `cascade.toml` - Cascaded Model Eligibility
 

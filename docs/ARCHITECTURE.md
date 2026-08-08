@@ -76,7 +76,7 @@
    DetectionConsolidator (fusion + enrichment, stateless)
         │  ConsolidatedObservation { bbox canónico, evidence, components }
         ▼
-   PresenceFilter (optional signal debounce + short dropout hold)
+   PresenceFilter (POI signal debounce + short dropout hold)
         │
         ▼
    ┌──────────────────────────────────────────────────────────────┐
@@ -92,7 +92,11 @@
        ├─▶ CascadeScheduler ──▶ semantic gates + child model crop
        │
        ▼
- ZoneEngine (intersección + histéresis)
+  OccupancyStateMachine (empty / single / multiple)
+       │  StateChange timeline + Presence JSONL event
+       │
+       ▼
+  ZoneEngine (intersección + histéresis)
       │  ZoneEvent { Occupied, Vacated }
       │
       ▼
@@ -120,7 +124,8 @@ src/
 ├── snapshot.rs           H.264 decode + RGB buffer + PNG saver ✅
 ├── infer.rs              Model execution + filters + NMS + masks ✅
 ├── detection.rs          Stateless cross-model consolidation       ✅
-├── presence.rs           Temporal presence/signal debounce          ✅
+├── presence.rs           POI signal debounce + dropout hold         ✅
+├── occupancy.rs          Room cardinality state machine              ✅
 ├── track.rs              Linear prediction + greedy IoU tracker    🧪 optional
 ├── zones.rs              Spatial zone evaluation + hysteresis      ✅
 ├── fsm.rs                Clinical FSM engine + guard evaluation    ✅

@@ -178,24 +178,50 @@ valida:
 [presence]
 enabled = true
 class = "person"
+
+[presence.poi]
 on_ticks = 1
-off_ticks = 4
+off_ticks = 8
+
+[presence.occupancy]
+empty_ticks = 4
+multiple_candidate_ticks = 2
+multiple_exit_ticks = 2
 ```
 
-Su comportamiento es asimetrico:
+`poi` y `occupancy` son politicas distintas. El mecanismo recibe la evidencia
+del frame y aplica cada politica en su propia capa:
+
+- `poi` es permisiva: adquiere rapido la persona de interes y sostiene su bbox
+  durante dropouts cortos antes del tracker.
+- `occupancy` es conservadora para confirmar una segunda persona: requiere
+  `multiple_candidate_ticks` con conteo `2+` y al menos dos tracks confirmados.
+- `multiple_exit_ticks` evita volver a `single` por una perdida aislada de la
+  segunda persona.
+
+La maquina de cardinalidad publica estados independientes del FSM clinico:
 
 ```text
-1 persona         -> PRESENT
-0 personas, tick 1..3 -> mantiene la ultima observacion
-0 personas, tick 4 -> ABSENT
-2 personas         -> AMBIGUOUS, no se sostiene una persona
-sin frame valido   -> no cambia el estado
+UNKNOWN -> EMPTY | SINGLE | MULTIPLE
+SINGLE  + segundo candidato breve      -> SINGLE
+SINGLE  + segundo track confirmado     -> MULTIPLE
+MULTIPLE + perdida breve de la segunda -> MULTIPLE
+MULTIPLE + salida confirmada           -> SINGLE o EMPTY
+sin frame valido                       -> no cambia el estado
 ```
 
 La observacion sostenida no crea una identidad nueva. Solo evita que un hueco
 breve de la senal haga perder la presencia y permite que el tracker continue
 con su continuidad espacial. El `track_id`, la prediccion y el matching siguen
 siendo responsabilidad del tracker clasico.
+
+La maquina se visualiza en Rerun con `StateChange` y `StateTimelineView` bajo:
+
+```text
+/pipeline/state/room/cardinality
+/pipeline/state/room/second_person
+/pipeline/state/room/signal
+```
 
 ## 7. Anti-parpadeo
 

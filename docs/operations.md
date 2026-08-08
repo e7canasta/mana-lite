@@ -63,7 +63,8 @@ raiz si las rutas son relativas.
 | `config/mana.toml` | RTSP, pipeline, tracking, consolidacion, salida, Rerun | Credenciales y rutas de produccion |
 | `config/models.toml` | ONNX, confianza, NMS, filtros, crops | `allow_classes`, areas y `iou` |
 | `config/blueprints/<name>/blueprint.toml` | Perfil activo, modelos y gates | Cambiar en 24/7 solo con validacion |
-| `[presence]` en `config/mana.toml` | Histeresis de señal de presencia | `off_ticks` y modelo primario |
+| `[presence.poi]` en `config/mana.toml` | Histeresis de señal del POI | `on_ticks` y `off_ticks` |
+| `[presence.occupancy]` en `config/mana.toml` | Confirmacion de cardinalidad | `multiple_candidate_ticks` y `multiple_exit_ticks` |
 | `config/cascade.toml` | Dependencias entre modelos | `requires` y clase padre |
 | `config/metrics.toml` | Resumen terminal y eventos JSONL | Desactivar eventos necesarios para diagnostico |
 | `config/viz.toml` | Frames, boxes, ROI y series Rerun | `boxes` si se necesita inspeccion visual |
@@ -364,6 +365,9 @@ inferencia. Los paths de datos los escribe `src/viz.rs`:
 | `/pipeline/infer/<model>/pipeline_us` | Tiempo wall-clock del modelo completo | Si `infer_latency = true` |
 | `/pipeline/infer/<model>/hz` | Frecuencia de llamadas del modelo | Si `infer_rate = true` |
 | `/pipeline/decode/latency_us` | Tiempo de decode | Si `decode_latency = true` |
+| `/pipeline/state/room/cardinality` | Timeline `unknown/empty/single/multiple` | Siempre con Rerun conectado |
+| `/pipeline/state/room/second_person` | Timeline `none/candidate/confirmed` | Siempre con Rerun conectado |
+| `/pipeline/state/room/signal` | Timeline `valid/invalid` | Siempre con Rerun conectado |
 
 Metricas derivadas recomendadas para el dashboard, aun no emitidas como paths
 independientes por `src/viz.rs`:
@@ -416,9 +420,10 @@ tracking activo.
 
 - [ ] `cargo test` pasa antes de desplegar.
 - [ ] Los modelos configurados existen y cargan.
-- [ ] `track = false` durante calibracion.
-- [ ] `detection` y `consolidated_detection` aparecen en JSONL.
+- [ ] `track = true` durante calibracion de `multiple`.
+- [ ] `detection`, `consolidated_detection` y `presence` aparecen en JSONL.
 - [ ] Rerun muestra `/world/camera/observations`.
+- [ ] Rerun muestra la timeline `/pipeline/state/room`.
 - [ ] La tasa de keyframes vistos y procesados es interpretable.
 - [ ] Los drops de keyframes ocurren cuando la inferencia se alarga, sin backlog creciente.
 - [ ] `gap_ms` y `Hz` se visualizan en paneles separados; la salud usa ratios `0..1`.

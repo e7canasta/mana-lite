@@ -10,6 +10,7 @@ mod ingest;
 mod kalman;
 mod logger;
 mod metrics;
+mod occupancy;
 mod pipeline;
 mod presence;
 mod snapshot;
@@ -31,6 +32,7 @@ use ingest::{IngestEngine, RawKeyframe, RetinaReader};
 use logger::{DetRecord, Event, JsonlLevel, Logger};
 use mana_types::RawFrameV1;
 use metrics::{Health, MetricsEngine, PerClassFrameStats};
+use occupancy::{OccupancyEvidence, OccupancyStateMachine};
 use pipeline::PipelineState;
 use presence::PresenceFilter;
 use snapshot::{FrameBuffer, FrameDecoder, SnapshotSaver};
@@ -68,6 +70,7 @@ struct App {
     metrics: MetricsEngine,
     health: Health,
     presence: PresenceFilter,
+    occupancy: OccupancyStateMachine,
     depth_roi: Option<CropRect>,
     depth_rules: depth::DepthRules,
     depth_rule_snapshot: depth::DepthRuleSnapshot,
@@ -106,7 +109,7 @@ impl App {
         if !config.presence.is_valid() {
             return Err(ManaError::Config(ConfigError::InvalidValue {
                 field: "presence".into(),
-                msg: "class must be non-empty and on_ticks/off_ticks must be positive".into(),
+                msg: "class must be non-empty and presence policies must be positive".into(),
             }));
         }
         let model_catalog = load_model_catalog(&config.inference.model_catalog)?;
@@ -444,7 +447,12 @@ impl App {
             ingest,
             metrics,
             health,
-            presence: PresenceFilter::new(config.presence.clone()),
+            presence: PresenceFilter::new(
+                config.presence.enabled,
+                config.presence.class.clone(),
+                config.presence.poi.clone(),
+            ),
+            occupancy: OccupancyStateMachine::new(config.presence.occupancy.clone()),
             depth_roi,
             depth_rules,
             depth_rule_snapshot: depth::DepthRuleSnapshot::default(),
@@ -588,6 +596,47 @@ impl App {
         if config.pipeline.track {
             self.run_tracking(&effective_root_observations);
         }
+        let raw_person_count = root_observations
+            .iter()
+            .filter(|observation| observation.class == config.presence.class)
+            .count();
+        let confirmed_person_count = if config.pipeline.track {
+            self.tracker
+                .current_tracks()
+                .into_iter()
+                .filter(|track| track.class == config.presence.class)
+                .count()
+        } else {
+            0
+        };
+        let poi_present = if config.presence.enabled {
+            matches!(presence_update.state, presence::PresenceState::Present)
+        } else {
+            raw_person_count == 1
+        };
+        let occupancy_update = self.occupancy.update(OccupancyEvidence {
+            signal_valid: primary_root_valid,
+            raw_person_count,
+            poi_present,
+            confirmed_person_count,
+        });
+        self.viz.log_occupancy_state(
+            occupancy_update.state,
+            occupancy_update.second_person,
+            primary_root_valid,
+        );
+        self.log.emit(Event::presence(
+            self.state.frame_number(),
+            occupancy_update.state.as_str(),
+            occupancy_update.second_person.as_str(),
+            raw_person_count,
+            confirmed_person_count,
+            primary_root_valid,
+            presence_update.held,
+            occupancy_update.empty_ticks,
+            occupancy_update.multiple_candidate_ticks,
+            occupancy_update.multiple_exit_ticks,
+        ));
 
         let children: Vec<String> = ordered
             .iter()

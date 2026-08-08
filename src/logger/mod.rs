@@ -172,6 +172,7 @@ impl MetricsJsonlConfig {
             Event::Depth { .. } | Event::DepthRegion { .. } => self.depth_events,
             Event::Zone { .. } => self.zone_events,
             Event::Fsm { .. } => self.fsm_events,
+            Event::Presence { .. } => self.presence_events,
             Event::Metrics(_) => self.metrics_event,
             Event::Meta { .. } | Event::Health { .. } | Event::Entity { .. } => true,
         }
@@ -486,6 +487,29 @@ mod tests {
         assert!(out.contains("\"from\":\"idle\""));
         assert!(out.contains("\"to\":\"monitoring\""));
         assert!(out.contains("\"trigger\":\"bed_occupied\""));
+    }
+
+    #[test]
+    fn presence_event_serializes_cardinality_evidence() {
+        let mut log = test_logger();
+        log.emit(Event::presence(
+            10,
+            "single",
+            "candidate",
+            2,
+            1,
+            true,
+            false,
+            0,
+            1,
+            0,
+        ));
+        let out = collect(&mut log);
+        assert!(out.contains("\"type\":\"presence\""));
+        assert!(out.contains("\"state\":\"single\""));
+        assert!(out.contains("\"second_person\":\"candidate\""));
+        assert!(out.contains("\"raw_count\":2"));
+        assert!(out.contains("\"confirmed_count\":1"));
     }
 
     #[test]

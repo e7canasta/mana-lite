@@ -8,6 +8,7 @@ use crate::config::{RerunRoot, VizSendToggles};
 use crate::detection::ConsolidatedObservation;
 use crate::infer::{CropFrameInfo, CropRect, Detection};
 use crate::metrics::PerClassFrameStats;
+use crate::occupancy::{RoomCardinality, SecondPersonState};
 use crate::track::Track;
 use image::{Rgb, RgbImage};
 use imageproc::drawing::draw_line_segment_mut;
@@ -32,6 +33,9 @@ pub struct VizBridge {
     addr: String,
     toggles: VizSendToggles,
     last_infer_at: HashMap<String, Instant>,
+    last_occupancy_state: Option<RoomCardinality>,
+    last_second_person_state: Option<SecondPersonState>,
+    last_signal_state: Option<bool>,
 }
 
 const DEPTH_OVERLAY_ALPHA: u8 = 150;
@@ -79,6 +83,9 @@ impl VizBridge {
             addr: rerun_addr.to_string(),
             toggles: toggles.clone(),
             last_infer_at: HashMap::new(),
+            last_occupancy_state: None,
+            last_second_person_state: None,
+            last_signal_state: None,
         }
     }
 
@@ -88,6 +95,9 @@ impl VizBridge {
             addr: String::new(),
             toggles: VizSendToggles::default(),
             last_infer_at: HashMap::new(),
+            last_occupancy_state: None,
+            last_second_person_state: None,
+            last_signal_state: None,
         }
     }
 
@@ -102,6 +112,10 @@ impl VizBridge {
         match rec {
             Ok(rec) => {
                 Self::send_default_blueprint(&rec);
+                Self::send_presence_state_configuration(&rec);
+                self.last_occupancy_state = None;
+                self.last_second_person_state = None;
+                self.last_signal_state = None;
                 log::info!("viz: connected to {}", self.addr);
                 self.inner = Inner::Connected {
                     rec,
@@ -131,7 +145,8 @@ impl VizBridge {
     fn send_default_blueprint(rec: &rerun::RecordingStream) {
         use rerun::blueprint::components::PanelState;
         use rerun::blueprint::{
-            ContainerLike, Horizontal, Spatial2DView, Tabs, TimeSeriesView, Vertical,
+            ContainerLike, Horizontal, Spatial2DView, StateTimelineView, Tabs, TimeSeriesView,
+            Vertical,
         };
 
         let main_camera = Spatial2DView::new("Main frame")
@@ -181,13 +196,17 @@ impl VizBridge {
         let class_stats = TimeSeriesView::new("Class stats")
             .with_origin("/infer")
             .with_contents(["+ $origin/**"]);
+        let room_state = StateTimelineView::new("Room state")
+            .with_origin("/pipeline/state/room")
+            .with_contents(["+ $origin/**"]);
         let metrics_tab = Vertical::new(vec![
             stream_view.into(),
             inference_view.into(),
             depth_stats.into(),
             class_stats.into(),
+            room_state.into(),
         ])
-        .with_row_shares([1.0, 1.0, 1.0, 1.0]);
+        .with_row_shares([1.0, 1.0, 1.0, 1.0, 1.5]);
 
         let viewport = Tabs::new(vec![
             ContainerLike::from(camera_tab),
@@ -206,6 +225,37 @@ impl VizBridge {
 
         if let Err(e) = blueprint.send(rec, Default::default()) {
             log::warn!("viz blueprint send failed: {e}");
+        }
+    }
+
+    fn send_presence_state_configuration(rec: &rerun::RecordingStream) {
+        let configs = [
+            (
+                "/pipeline/state/room/cardinality",
+                rerun::StateConfiguration::new()
+                    .with_values(["unknown", "empty", "single", "multiple"])
+                    .with_labels(["Unknown", "Empty", "Single person", "Multiple people"])
+                    .with_colors([0x9E9E9EFF, 0x607D8BFF, 0x4CAF50FF, 0xFF9800FF]),
+            ),
+            (
+                "/pipeline/state/room/second_person",
+                rerun::StateConfiguration::new()
+                    .with_values(["none", "candidate", "confirmed"])
+                    .with_labels(["No second person", "Second candidate", "Second confirmed"])
+                    .with_colors([0x607D8BFF, 0xFFEB3BFF, 0xF44336FF]),
+            ),
+            (
+                "/pipeline/state/room/signal",
+                rerun::StateConfiguration::new()
+                    .with_values(["valid", "invalid"])
+                    .with_labels(["Valid inference", "Invalid inference"])
+                    .with_colors([0x4CAF50FF, 0xF44336FF]),
+            ),
+        ];
+        for (path, config) in configs {
+            if let Err(e) = rec.log_static(path, &config) {
+                log::warn!("viz presence state configuration {path} failed: {e}");
+            }
         }
     }
 
@@ -240,6 +290,41 @@ impl VizBridge {
         if let Inner::Connected { ref rec, .. } = self.inner {
             let ts = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
             rec.set_time_sequence("frame_ns", ts);
+        }
+    }
+
+    pub fn log_occupancy_state(
+        &mut self,
+        state: RoomCardinality,
+        second_person: SecondPersonState,
+        signal_valid: bool,
+    ) {
+        let rec = match &self.inner {
+            Inner::Connected { rec, .. } => rec,
+            _ => return,
+        };
+
+        if self.last_occupancy_state != Some(state) {
+            let path = "/pipeline/state/room/cardinality";
+            if let Err(e) = rec.log(path, &rerun::StateChange::single(state.as_str())) {
+                log::warn!("viz occupancy state failed: {e}");
+            }
+            self.last_occupancy_state = Some(state);
+        }
+        if self.last_second_person_state != Some(second_person) {
+            let path = "/pipeline/state/room/second_person";
+            if let Err(e) = rec.log(path, &rerun::StateChange::single(second_person.as_str())) {
+                log::warn!("viz second person state failed: {e}");
+            }
+            self.last_second_person_state = Some(second_person);
+        }
+        if self.last_signal_state != Some(signal_valid) {
+            let path = "/pipeline/state/room/signal";
+            let state = if signal_valid { "valid" } else { "invalid" };
+            if let Err(e) = rec.log(path, &rerun::StateChange::single(state)) {
+                log::warn!("viz presence signal state failed: {e}");
+            }
+            self.last_signal_state = Some(signal_valid);
         }
     }
 
@@ -396,14 +481,7 @@ impl VizBridge {
 
         for track in tracks {
             let [x1, y1, x2, y2] = track.bbox;
-            let label = if track.misses == 0 {
-                format!("{} #{} {:.2}", track.class, track.id, track.confidence)
-            } else {
-                format!(
-                    "{} #{} predicted misses={}",
-                    track.class, track.id, track.misses
-                )
-            };
+            let label = format!("{} #{}", track.class, track.id);
             let color = if track.misses == 0 {
                 rerun::Color::from_unmultiplied_rgba(0, 255, 0, 255)
             } else {

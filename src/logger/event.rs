@@ -91,6 +91,18 @@ pub enum Event {
         trigger: String,
         dwell_ms: u64,
     },
+    Presence {
+        frame_id: u64,
+        state: String,
+        second_person: String,
+        raw_count: usize,
+        confirmed_count: usize,
+        signal_valid: bool,
+        held: bool,
+        empty_ticks: u32,
+        candidate_ticks: u32,
+        exit_ticks: u32,
+    },
     Metrics(MetricsReport),
 }
 
@@ -122,6 +134,7 @@ impl Event {
             Event::Meta { .. } => JsonlLevel::Info,
             Event::Health { .. } => JsonlLevel::Info,
             Event::Fsm { .. } => JsonlLevel::Info,
+            Event::Presence { .. } => JsonlLevel::Debug,
             Event::Metrics { .. } => JsonlLevel::Info,
             Event::Frame { .. } => JsonlLevel::Debug,
             Event::Detection { .. } => JsonlLevel::Debug,
@@ -386,6 +399,32 @@ impl Event {
             to_label: to_label.map(str::to_string),
             trigger: trigger.into(),
             dwell_ms,
+        }
+    }
+
+    pub fn presence(
+        frame_id: u64,
+        state: &str,
+        second_person: &str,
+        raw_count: usize,
+        confirmed_count: usize,
+        signal_valid: bool,
+        held: bool,
+        empty_ticks: u32,
+        candidate_ticks: u32,
+        exit_ticks: u32,
+    ) -> Self {
+        Event::Presence {
+            frame_id,
+            state: state.into(),
+            second_person: second_person.into(),
+            raw_count,
+            confirmed_count,
+            signal_valid,
+            held,
+            empty_ticks,
+            candidate_ticks,
+            exit_ticks,
         }
     }
 

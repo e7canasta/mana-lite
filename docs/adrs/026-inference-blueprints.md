@@ -42,7 +42,7 @@ para cada despliegue.
 
 ## Activation policies
 
-### Presence signal debounce
+### Presence signal debounce and room cardinality
 
 Before the classic tracker, the consolidated primary observations pass through
 the temporal presence filter. It is a signal-quality policy, not identity
@@ -54,9 +54,22 @@ ambiguous immediately; an invalid tick does not count as absence.
 [presence]
 enabled = true
 class = "person"
+
+[presence.poi]
 on_ticks = 1
-off_ticks = 4
+off_ticks = 8
+
+[presence.occupancy]
+empty_ticks = 4
+multiple_candidate_ticks = 2
+multiple_exit_ticks = 2
 ```
+
+The POI signal policy and room-cardinality policy are deliberately separate.
+The first is permissive and protects continuity for the person of interest. The
+second is conservative: `multiple` requires two valid candidate ticks and two
+confirmed tracks. The cardinality state machine is visualized through Rerun
+`StateChange` lanes and does not replace the clinical FSM for bed events.
 
 The filter may feed a held observation to the classic tracker for a short
 dropout. It does not create a new `track_id` and it does not replace IoU/Kalman

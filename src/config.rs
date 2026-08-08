@@ -128,10 +128,49 @@ pub struct PresenceConfig {
     pub enabled: bool,
     #[serde(default = "default_presence_class")]
     pub class: String,
+    #[serde(default)]
+    pub poi: PresencePoiPolicy,
+    #[serde(default)]
+    pub occupancy: OccupancyPolicy,
+}
+
+/// Policy for retaining the person-of-interest signal before tracking.
+#[derive(Debug, Clone, Deserialize)]
+pub struct PresencePoiPolicy {
     #[serde(default = "default_presence_on_ticks")]
     pub on_ticks: u32,
     #[serde(default = "default_presence_off_ticks")]
     pub off_ticks: u32,
+}
+
+impl Default for PresencePoiPolicy {
+    fn default() -> Self {
+        Self {
+            on_ticks: default_presence_on_ticks(),
+            off_ticks: default_presence_off_ticks(),
+        }
+    }
+}
+
+/// Policy for confirming and releasing room cardinality states.
+#[derive(Debug, Clone, Deserialize)]
+pub struct OccupancyPolicy {
+    #[serde(default = "default_occupancy_empty_ticks")]
+    pub empty_ticks: u32,
+    #[serde(default = "default_occupancy_multiple_candidate_ticks")]
+    pub multiple_candidate_ticks: u32,
+    #[serde(default = "default_occupancy_multiple_exit_ticks")]
+    pub multiple_exit_ticks: u32,
+}
+
+impl Default for OccupancyPolicy {
+    fn default() -> Self {
+        Self {
+            empty_ticks: default_occupancy_empty_ticks(),
+            multiple_candidate_ticks: default_occupancy_multiple_candidate_ticks(),
+            multiple_exit_ticks: default_occupancy_multiple_exit_ticks(),
+        }
+    }
 }
 
 impl Default for PresenceConfig {
@@ -139,15 +178,20 @@ impl Default for PresenceConfig {
         Self {
             enabled: false,
             class: default_presence_class(),
-            on_ticks: default_presence_on_ticks(),
-            off_ticks: default_presence_off_ticks(),
+            poi: PresencePoiPolicy::default(),
+            occupancy: OccupancyPolicy::default(),
         }
     }
 }
 
 impl PresenceConfig {
     pub fn is_valid(&self) -> bool {
-        !self.class.trim().is_empty() && self.on_ticks > 0 && self.off_ticks > 0
+        !self.class.trim().is_empty()
+            && self.poi.on_ticks > 0
+            && self.poi.off_ticks > 0
+            && self.occupancy.empty_ticks > 0
+            && self.occupancy.multiple_candidate_ticks > 0
+            && self.occupancy.multiple_exit_ticks > 0
     }
 }
 
@@ -161,6 +205,18 @@ fn default_presence_on_ticks() -> u32 {
 
 fn default_presence_off_ticks() -> u32 {
     4
+}
+
+fn default_occupancy_empty_ticks() -> u32 {
+    4
+}
+
+fn default_occupancy_multiple_candidate_ticks() -> u32 {
+    2
+}
+
+fn default_occupancy_multiple_exit_ticks() -> u32 {
+    2
 }
 
 #[derive(Debug, Deserialize)]
@@ -882,6 +938,8 @@ pub struct MetricsJsonlConfig {
     #[serde(default = "default_true")]
     pub fsm_events: bool,
     #[serde(default = "default_true")]
+    pub presence_events: bool,
+    #[serde(default = "default_true")]
     pub metrics_event: bool,
     #[serde(default = "default_true")]
     pub per_model_in_window: bool,
@@ -900,6 +958,7 @@ impl Default for MetricsJsonlConfig {
             detection_events: true,
             zone_events: true,
             fsm_events: true,
+            presence_events: true,
             metrics_event: true,
             per_model_in_window: true,
             class_counts_in_window: true,
@@ -1219,7 +1278,8 @@ mod tests {
         assert_eq!(config.source.transport, "tcp");
         assert!(config.source.keyframes_only);
         assert!(config.presence.enabled);
-        assert_eq!(config.presence.off_ticks, 4);
+        assert_eq!(config.presence.poi.off_ticks, 8);
+        assert_eq!(config.presence.occupancy.multiple_candidate_ticks, 2);
         assert_eq!(
             config.inference.blueprint_file,
             Some(PathBuf::from(

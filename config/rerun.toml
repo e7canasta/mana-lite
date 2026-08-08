@@ -1,3 +1,9 @@
 [rerun]
 app = "mana-lite"
 auto_views = true
+
+[[rerun.rows]]
+kind = "state_timeline"
+name = "Room state"
+origin = "/pipeline/state/room"
+share = 1.5
