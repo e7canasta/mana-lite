@@ -1,19 +1,24 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 
 use mana_types::RawFrameV1;
 use mana_viz::logging;
+use mana_viz::util::FrameSize;
 
 use crate::config::{RerunRoot, VizSendToggles};
+use crate::depth_map::DepthFrame;
 use crate::detection::ConsolidatedObservation;
+use crate::domain::{ModelRegistry, ModelRole};
 use crate::infer::{CropFrameInfo, CropRect, Detection};
 use crate::metrics::PerClassFrameStats;
-use crate::occupancy::{RoomCardinality, SecondPersonState};
+use crate::occupancy::{RoomCardinality, SecondPersonState, SignalValidity};
 use crate::track::Track;
 use image::{Rgb, RgbImage};
 use imageproc::drawing::draw_line_segment_mut;
-use ultralytics_inference::DepthMap;
 use ultralytics_inference::visualizer::color::{Colormap, DepthViz};
+
+mod masks;
+use masks::{build_mask_overlay, frame_strip, polygon_in_roi, render_mask_debug_images};
 
 enum Inner {
     Connected {
@@ -33,10 +38,12 @@ pub struct VizBridge {
     addr: String,
     toggles: VizSendToggles,
     fixed_rois: Vec<FixedRoi>,
+    roles: HashMap<String, ModelRole>,
+    face_models: HashSet<String>,
     last_infer_at: HashMap<String, Instant>,
     last_occupancy_state: Option<RoomCardinality>,
     last_second_person_state: Option<SecondPersonState>,
-    last_signal_state: Option<bool>,
+    last_signal_state: Option<SignalValidity>,
     last_face_state: Option<String>,
 }
 
@@ -107,7 +114,7 @@ const INITIAL_BACKOFF_MS: u64 = 1_000;
 const MAX_BACKOFF_MS: u64 = 30_000;
 
 /// Instance-mask palette, keyed by (class-id − 1) mod len (ADR-022).
-const PALETTE: [[u8; 3]; 8] = [
+pub(super) const PALETTE: [[u8; 3]; 8] = [
     [230, 25, 75],
     [60, 180, 75],
     [255, 225, 25],
@@ -124,6 +131,7 @@ impl VizBridge {
         toggles: &VizSendToggles,
         _blueprint: &RerunRoot,
         fixed_rois: Vec<FixedRoi>,
+        models: &ModelRegistry,
     ) -> Self {
         Self {
             inner: Inner::Disconnected {
@@ -134,6 +142,15 @@ impl VizBridge {
             addr: rerun_addr.to_string(),
             toggles: toggles.clone(),
             fixed_rois,
+            roles: models
+                .iter()
+                .map(|(id, entry)| (id.as_str().to_owned(), entry.semantics.role))
+                .collect(),
+            face_models: models
+                .iter()
+                .filter(|(id, _)| models.is_face_model(id.as_str()))
+                .map(|(id, _)| id.as_str().to_owned())
+                .collect(),
             last_infer_at: HashMap::new(),
             last_occupancy_state: None,
             last_second_person_state: None,
@@ -148,12 +165,25 @@ impl VizBridge {
             addr: String::new(),
             toggles: VizSendToggles::default(),
             fixed_rois: Vec::new(),
+            roles: HashMap::new(),
+            face_models: HashSet::new(),
             last_infer_at: HashMap::new(),
             last_occupancy_state: None,
             last_second_person_state: None,
             last_signal_state: None,
             last_face_state: None,
         }
+    }
+
+    fn role_of(&self, model: &str) -> ModelRole {
+        self.roles
+            .get(model)
+            .copied()
+            .unwrap_or(ModelRole::Boxes)
+    }
+
+    fn is_face_model(&self, model: &str) -> bool {
+        self.face_models.contains(model)
     }
 
     fn try_connect(&mut self) {
@@ -362,13 +392,7 @@ impl VizBridge {
             let hw = (x2 - x1).abs() / 2.0;
             let hh = (y2 - y1).abs() / 2.0;
             let label = format!("fixed {model} [{:.0},{:.0} {:.0},{:.0}]", x1, y1, x2, y2);
-            let color = if model.contains("face") {
-                rerun::Color::from_unmultiplied_rgba(255, 0, 255, 255)
-            } else if model.contains("depth") {
-                rerun::Color::from_unmultiplied_rgba(0, 200, 255, 255)
-            } else {
-                rerun::Color::from_unmultiplied_rgba(255, 200, 0, 255)
-            };
+            let color = rerun::Color::from_unmultiplied_rgba(255, 200, 0, 255);
             let bbox = rerun::Boxes2D::from_centers_and_half_sizes(
                 [rerun::datatypes::Vec2D([cx, cy])],
                 [rerun::datatypes::Vec2D([hw, hh])],
@@ -421,7 +445,7 @@ impl VizBridge {
         &mut self,
         state: RoomCardinality,
         second_person: SecondPersonState,
-        signal_valid: bool,
+        signal: SignalValidity,
     ) {
         let rec = match &self.inner {
             Inner::Connected { rec, .. } => rec,
@@ -442,13 +466,12 @@ impl VizBridge {
             }
             self.last_second_person_state = Some(second_person);
         }
-        if self.last_signal_state != Some(signal_valid) {
+        if self.last_signal_state != Some(signal) {
             let path = "/pipeline/state/room/signal";
-            let state = if signal_valid { "valid" } else { "invalid" };
-            if let Err(e) = rec.log(path, &rerun::StateChange::single(state)) {
+            if let Err(e) = rec.log(path, &rerun::StateChange::single(signal.as_str())) {
                 log::warn!("viz presence signal state failed: {e}");
             }
-            self.last_signal_state = Some(signal_valid);
+            self.last_signal_state = Some(signal);
         }
     }
 
@@ -500,7 +523,7 @@ impl VizBridge {
         }
     }
 
-    pub fn log_model_depth(&self, model: &str, depth: Option<&DepthMap>) {
+    pub fn log_model_depth(&self, model: &str, depth: Option<&DepthFrame>) {
         if !self.toggles.depth && !self.toggles.depth_stats {
             return;
         }
@@ -517,8 +540,8 @@ impl VizBridge {
                 .ok();
         }
         if let Some(depth) = depth {
-            let shape = depth.data.shape();
-            if self.toggles.depth && shape.len() == 2 && shape[0] > 0 && shape[1] > 0 {
+            let (width, height) = depth.dims();
+            if self.toggles.depth && width > 0 && height > 0 {
                 let (viz, suffix) = match self.toggles.depth_viz.to_ascii_lowercase().as_str() {
                     "metric" => (DepthViz::Metric, "metric"),
                     "disparity" | "depthanything" => (DepthViz::Disparity, "disparity"),
@@ -530,10 +553,9 @@ impl VizBridge {
                 let path = format!("{visual_path}/{suffix}");
                 let colors = depth.colorize(Colormap::Inferno, viz);
                 let rgba: Vec<u8> = depth
-                    .data
-                    .iter()
+                    .iter_values()
                     .zip(colors.iter())
-                    .flat_map(|(&value, color)| {
+                    .flat_map(|(value, color)| {
                         let alpha = if value.is_finite() && value > 0.0 {
                             DEPTH_OVERLAY_ALPHA
                         } else {
@@ -542,7 +564,7 @@ impl VizBridge {
                         [color[0], color[1], color[2], alpha]
                     })
                     .collect();
-                let image = rerun::Image::from_rgba32(rgba, [shape[1] as u32, shape[0] as u32]);
+                let image = rerun::Image::from_rgba32(rgba, [width, height]);
                 if let Err(e) = rec.log(path.as_str(), &image) {
                     log::warn!("viz depth {model} failed: {e}");
                 }
@@ -550,9 +572,8 @@ impl VizBridge {
 
             if self.toggles.depth_stats {
                 let valid_pixels = depth
-                    .data
-                    .iter()
-                    .filter(|&&value| value.is_finite() && value > 0.0)
+                    .iter_values()
+                    .filter(|&value| value.is_finite() && value > 0.0)
                     .count();
                 self.log_scalar_inner(
                     rec,
@@ -645,8 +666,7 @@ impl VizBridge {
     pub fn log_consolidated_observations(
         &self,
         observations: &[ConsolidatedObservation],
-        frame_w: u32,
-        frame_h: u32,
+        frame: FrameSize,
     ) {
         if !self.toggles.boxes {
             return;
@@ -666,8 +686,8 @@ impl VizBridge {
                     &observation.class,
                     observation.confidence,
                     observation.bbox,
-                    frame_w,
-                    frame_h,
+                    frame.w,
+                    frame.h,
                 ),
                 observation.primary_model,
             );
@@ -693,8 +713,7 @@ impl VizBridge {
         model: &str,
         detections: &[Detection],
         crop_rect: Option<CropRect>,
-        frame_w: u32,
-        frame_h: u32,
+        frame: FrameSize,
     ) {
         if !self.toggles.boxes {
             return;
@@ -703,10 +722,11 @@ impl VizBridge {
             Inner::Connected { rec, .. } => rec,
             _ => return,
         };
+        let is_face_model = self.is_face_model(model);
         let model = sanitize_entity_name(model);
         let path = format!("/world/camera/detections/{model}");
         let crop_path = format!("/world/camera/crops/{model}/detections");
-        if !(model == "face-yolo" && detections.is_empty()) {
+        if !(is_face_model && detections.is_empty()) {
             rec.log(path.as_str(), &rerun::Clear::recursive()).ok();
             rec.log(crop_path.as_str(), &rerun::Clear::recursive()).ok();
         }
@@ -716,8 +736,8 @@ impl VizBridge {
                 &detection.class,
                 detection.confidence,
                 detection.bbox,
-                frame_w,
-                frame_h,
+                frame.w,
+                frame.h,
             );
             let log_box = |entity: String, [x1, y1, x2, y2]: [f32; 4]| {
                 let bbox = rerun::Boxes2D::from_centers_and_half_sizes(
@@ -745,7 +765,7 @@ impl VizBridge {
     }
 
     pub fn log_model_pose(&self, model: &str, detections: &[Detection]) {
-        if !self.toggles.boxes || model != "pose-standard" {
+        if !self.toggles.boxes || self.role_of(model) != ModelRole::Skeleton {
             return;
         }
         let rec = match &self.inner {
@@ -827,7 +847,7 @@ impl VizBridge {
         detections: &[Detection],
         depth_context_roi: Option<CropRect>,
     ) {
-        if !self.toggles.boxes || !matches!(model, "detect-fast" | "face-yolo") {
+        if !self.toggles.boxes || self.role_of(model) != ModelRole::Boxes {
             return;
         }
         let Some(depth_context_roi) = depth_context_roi else {
@@ -837,18 +857,19 @@ impl VizBridge {
             Inner::Connected { rec, .. } => rec,
             _ => return,
         };
+        let is_face_model = self.is_face_model(model);
         let model = sanitize_entity_name(model);
         let path = format!("/world/camera/crops/depth-standard/depth/context/{model}");
-        if !(model == "face-yolo" && detections.is_empty()) {
+        if !(is_face_model && detections.is_empty()) {
             rec.log(path.as_str(), &rerun::Clear::recursive()).ok();
         }
 
-        let color = if model == "face-yolo" {
+        let color = if is_face_model {
             rerun::Color::from_unmultiplied_rgba(255, 220, 0, 165)
         } else {
             rerun::Color::from_unmultiplied_rgba(0, 255, 100, 165)
         };
-        let label_prefix = if model == "face-yolo" { "face" } else { "body" };
+        let label_prefix = if is_face_model { "face" } else { "body" };
 
         for (index, detection) in detections.iter().enumerate() {
             let Some([x1, y1, x2, y2]) = bbox_in_roi(detection.bbox, depth_context_roi) else {
@@ -864,7 +885,7 @@ impl VizBridge {
             )
             .with_colors([color])
             .with_radii([3.0]);
-            let bbox = if model == "face-yolo" {
+            let bbox = if is_face_model {
                 bbox
             } else {
                 bbox.with_labels([label.as_str()])
@@ -884,9 +905,12 @@ impl VizBridge {
             Inner::Connected { rec, .. } => rec,
             _ => return,
         };
-        for model in ["detect-fast"] {
-            let path = format!("/world/camera/crops/depth-standard/depth/context/{model}");
-            rec.log(path.as_str(), &rerun::Clear::recursive()).ok();
+        for (model, role) in &self.roles {
+            if *role == ModelRole::Boxes {
+                let model = sanitize_entity_name(model);
+                let path = format!("/world/camera/crops/depth-standard/depth/context/{model}");
+                rec.log(path.as_str(), &rerun::Clear::recursive()).ok();
+            }
         }
     }
 
@@ -895,10 +919,9 @@ impl VizBridge {
         model: &str,
         detections: &[Detection],
         depth_context_roi: Option<CropRect>,
-        frame_w: u32,
-        frame_h: u32,
+        frame: FrameSize,
     ) {
-        if !self.toggles.mask_polygons || model != "seg-standard" {
+        if !self.toggles.mask_polygons || self.role_of(model) != ModelRole::Mask {
             return;
         }
         let Some(depth_context_roi) = depth_context_roi else {
@@ -913,8 +936,8 @@ impl VizBridge {
         }
         let base = "/world/camera/crops/depth-standard/depth/context/seg-standard/polygon";
         rec.log(base, &rerun::Clear::recursive()).ok();
-        let fw = frame_w.max(1) as f32;
-        let fh = frame_h.max(1) as f32;
+        let fw = frame.w.max(1) as f32;
+        let fh = frame.h.max(1) as f32;
 
         for (index, detection) in detections.iter().enumerate() {
             let Some(mask) = &detection.mask else {
@@ -950,8 +973,7 @@ impl VizBridge {
         &self,
         model: &str,
         detections: &[Detection],
-        frame_w: u32,
-        frame_h: u32,
+        frame: FrameSize,
     ) {
         if !self.toggles.masks {
             return;
@@ -976,7 +998,7 @@ impl VizBridge {
             return;
         }
 
-        let mut overlay = build_mask_overlay(&masked, mask_w, mask_h, frame_w, frame_h);
+        let overlay = build_mask_overlay(&masked, mask_w, mask_h, frame.w, frame.h);
 
         let mut rgba = Vec::with_capacity(overlay.len() * 4);
         for pixel in &overlay {
@@ -997,8 +1019,8 @@ impl VizBridge {
             log::warn!("viz crop mask overlay {model} failed: {e}");
         }
 
-        self.log_mask_debug(rec, &model, &masked, frame_w, frame_h);
-        self.log_mask_polygons(rec, &model, &masked, frame_w, frame_h);
+        self.log_mask_debug(rec, &model, &masked, frame.w, frame.h);
+        self.log_mask_polygons(rec, &model, &masked, frame.w, frame.h);
     }
 
     /// Log the simplified contour polygons as real 2D primitives on the
@@ -1295,6 +1317,8 @@ mod tests {
             addr: String::new(),
             toggles: VizSendToggles::default(),
             fixed_rois: Vec::new(),
+            roles: HashMap::new(),
+            face_models: HashSet::new(),
             last_infer_at: HashMap::new(),
             last_occupancy_state: None,
             last_second_person_state: None,
@@ -1303,9 +1327,9 @@ mod tests {
         };
 
         bridge.set_frame_time(1, 1_000);
-        bridge.log_occupancy_state(RoomCardinality::Empty, SecondPersonState::None, true);
+        bridge.log_occupancy_state(RoomCardinality::Empty, SecondPersonState::None, SignalValidity::Valid);
         bridge.set_frame_time(2, 2_000);
-        bridge.log_occupancy_state(RoomCardinality::Single, SecondPersonState::None, true);
+        bridge.log_occupancy_state(RoomCardinality::Single, SecondPersonState::None, SignalValidity::Valid);
 
         let state_chunks = storage
             .take()
@@ -1341,20 +1365,16 @@ mod tests {
     }
 }
 
-fn finite_depth_min(depth: &DepthMap) -> Option<f32> {
+fn finite_depth_min(depth: &DepthFrame) -> Option<f32> {
     depth
-        .data
-        .iter()
-        .copied()
+        .iter_values()
         .filter(|value| value.is_finite() && *value > 0.0)
         .reduce(f32::min)
 }
 
-fn finite_depth_max(depth: &DepthMap) -> Option<f32> {
+fn finite_depth_max(depth: &DepthFrame) -> Option<f32> {
     depth
-        .data
-        .iter()
-        .copied()
+        .iter_values()
         .filter(|value| value.is_finite() && *value > 0.0)
         .reduce(f32::max)
 }
@@ -1370,213 +1390,6 @@ fn bbox_in_roi(bbox: [f32; 4], roi: CropRect) -> Option<[f32; 4]> {
     let x2 = (bbox[2] - roi.x1 as f32).clamp(0.0, width);
     let y2 = (bbox[3] - roi.y1 as f32).clamp(0.0, height);
     (x2 > x1 && y2 > y1).then_some([x1, y1, x2, y2])
-}
-
-fn polygon_in_roi(poly: &[[f32; 2]], fw: f32, fh: f32, roi: CropRect) -> Vec<[f32; 2]> {
-    let roi_x1 = roi.x1 as f32;
-    let roi_y1 = roi.y1 as f32;
-    let roi_x2 = roi.x2 as f32;
-    let roi_y2 = roi.y2 as f32;
-    let global: Vec<[f32; 2]> = poly
-        .iter()
-        .map(|point| [point[0] * fw, point[1] * fh])
-        .collect();
-    let min_x = global.iter().map(|point| point[0]).reduce(f32::min);
-    let max_x = global.iter().map(|point| point[0]).reduce(f32::max);
-    let min_y = global.iter().map(|point| point[1]).reduce(f32::min);
-    let max_y = global.iter().map(|point| point[1]).reduce(f32::max);
-    if !matches!((min_x, max_x, min_y, max_y), (Some(min_x), Some(max_x), Some(min_y), Some(max_y))
-        if max_x >= roi_x1 && min_x <= roi_x2 && max_y >= roi_y1 && min_y <= roi_y2)
-    {
-        return Vec::new();
-    }
-
-    let mut local: Vec<[f32; 2]> = global
-        .into_iter()
-        .map(|[x, y]| {
-            [
-                (x - roi_x1).clamp(0.0, roi_x2 - roi_x1),
-                (y - roi_y1).clamp(0.0, roi_y2 - roi_y1),
-            ]
-        })
-        .collect();
-    if let Some(first) = local.first().copied() {
-        local.push(first);
-    }
-    local
-}
-
-/// Frame-pixel vertices of a frame-normalized contour, closed by repeating
-/// the first vertex so Rerun renders a full polygon outline.
-fn frame_strip(poly: &[[f32; 2]], fw: f32, fh: f32) -> Vec<[f32; 2]> {
-    let mut strip: Vec<[f32; 2]> = poly.iter().map(|v| [v[0] * fw, v[1] * fh]).collect();
-    if let Some(first) = strip.first().copied() {
-        strip.push(first);
-    }
-    strip
-}
-
-fn mask_space_points(
-    poly: &[[f32; 2]],
-    fw: f32,
-    fh: f32,
-    origin: [u32; 2],
-    mask_w: u32,
-    mask_h: u32,
-) -> Vec<(f32, f32)> {
-    poly.iter()
-        .map(|v| {
-            let mx = ((v[0] * fw - origin[0] as f32) / mask_w as f32).clamp(0.0, 1.0);
-            let my = ((v[1] * fh - origin[1] as f32) / mask_h as f32).clamp(0.0, 1.0);
-            (mx * mask_w as f32, my * mask_h as f32)
-        })
-        .collect()
-}
-
-fn draw_overlay_line(buf: &mut [u8], mask_w: u32, mask_h: u32, a: (f32, f32), b: (f32, f32)) {
-    let dist = ((b.0 - a.0).powi(2) + (b.1 - a.1).powi(2)).sqrt();
-    let steps = dist.ceil().max(1.0) as u32;
-    for s in 0..=steps {
-        let t = s as f32 / steps as f32;
-        for dx in -1..=1i32 {
-            for dy in -1..=1i32 {
-                let x = (a.0 + (b.0 - a.0) * t + dx as f32).round() as i64;
-                let y = (a.1 + (b.1 - a.1) * t + dy as f32).round() as i64;
-                if x >= 0 && y >= 0 && x < mask_w as i64 && y < mask_h as i64 {
-                    buf[(y as usize) * (mask_w as usize) + x as usize] = 0xFF;
-                }
-            }
-        }
-    }
-}
-
-/// Class-id buffer in mask space: 0 = background, 1..8 = instance id,
-/// `0xFF` = polygon contour drawn on top of the mask fill.
-fn build_mask_overlay(
-    masked: &[&Detection],
-    mask_w: u32,
-    mask_h: u32,
-    frame_w: u32,
-    frame_h: u32,
-) -> Vec<u8> {
-    let mut overlay = vec![0u8; (mask_w * mask_h) as usize];
-    let fw = frame_w.max(1) as f32;
-    let fh = frame_h.max(1) as f32;
-
-    for (index, detection) in masked.iter().enumerate() {
-        let Some(mask) = &detection.mask else {
-            continue;
-        };
-        let Ok(raster) = mask.compact.decode_crop(0) else {
-            continue;
-        };
-        let Some(rle) = mask.compact.rles.first() else {
-            continue;
-        };
-        let (off_x, off_y) = mask.compact.offsets.first().copied().unwrap_or((0, 0));
-        let (bbox_w, bbox_h) = (rle.w as usize, rle.h as usize);
-        let class_id = ((index % 7) + 1) as u8;
-        for row in 0..bbox_h {
-            for col in 0..bbox_w {
-                if raster[row * bbox_w + col] != 0 {
-                    let x = off_x as usize + col;
-                    let y = off_y as usize + row;
-                    if x < mask_w as usize && y < mask_h as usize {
-                        overlay[y * mask_w as usize + x] = class_id;
-                    }
-                }
-            }
-        }
-
-        for poly in mask.polygons.as_ref() {
-            if poly.len() < 2 {
-                continue;
-            }
-            let pts = mask_space_points(poly, fw, fh, mask.origin, mask_w, mask_h);
-            for i in 0..pts.len() {
-                draw_overlay_line(
-                    &mut overlay,
-                    mask_w,
-                    mask_h,
-                    pts[i],
-                    pts[(i + 1) % pts.len()],
-                );
-            }
-        }
-    }
-    overlay
-}
-
-fn draw_thick_line(img: &mut RgbImage, a: (f32, f32), b: (f32, f32), color: Rgb<u8>) {
-    for dx in -1..=1i32 {
-        for dy in -1..=1i32 {
-            draw_line_segment_mut(
-                img,
-                (a.0 + dx as f32, a.1 + dy as f32),
-                (b.0 + dx as f32, b.1 + dy as f32),
-                color,
-            );
-        }
-    }
-}
-
-fn render_mask_debug_images(
-    masked: &[&Detection],
-    frame_w: u32,
-    frame_h: u32,
-) -> Option<(RgbImage, RgbImage, u32, u32)> {
-    let [mask_w, mask_h] = masked
-        .first()
-        .and_then(|d| d.mask.as_ref())
-        .map(|m| m.mask_dims)?;
-    if mask_w == 0 || mask_h == 0 {
-        return None;
-    }
-
-    let mut mask_img = RgbImage::new(mask_w, mask_h);
-    let mut poly_img = RgbImage::new(mask_w, mask_h);
-    let fw = frame_w.max(1) as f32;
-    let fh = frame_h.max(1) as f32;
-
-    for (index, detection) in masked.iter().enumerate() {
-        let Some(mask) = &detection.mask else {
-            continue;
-        };
-        let color = Rgb(PALETTE[index % PALETTE.len()]);
-
-        if let Ok(raster) = mask.compact.decode_crop(0) {
-            let Some(rle) = mask.compact.rles.first() else {
-                continue;
-            };
-            let (off_x, off_y) = mask.compact.offsets.first().copied().unwrap_or((0, 0));
-            let (bbox_w, bbox_h) = (rle.w, rle.h);
-            for row in 0..bbox_h {
-                for col in 0..bbox_w {
-                    if raster[(row * bbox_w + col) as usize] != 0 {
-                        let x = off_x as u32 + col;
-                        let y = off_y as u32 + row;
-                        if x < mask_w && y < mask_h {
-                            mask_img.put_pixel(x, y, color);
-                        }
-                    }
-                }
-            }
-        }
-
-        for poly in mask.polygons.as_ref() {
-            if poly.len() < 2 {
-                continue;
-            }
-            let pts = mask_space_points(poly, fw, fh, mask.origin, mask_w, mask_h);
-            for i in 0..pts.len() {
-                let (a, b) = (pts[i], pts[(i + 1) % pts.len()]);
-                draw_thick_line(&mut poly_img, a, b, color);
-                draw_thick_line(&mut mask_img, a, b, Rgb([255, 255, 255]));
-            }
-        }
-    }
-
-    Some((mask_img, poly_img, mask_w, mask_h))
 }
 
 #[cfg(test)]

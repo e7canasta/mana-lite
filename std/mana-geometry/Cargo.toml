@@ -5,11 +5,17 @@ edition = "2024"
 description = "Spatial geometry commons: CompactMask, polygons, primitives"
 license = "AGPL-3.0"
 
+[features]
+default = ["polygonize"]
+polygonize = ["dep:image", "dep:imageproc"]
+
 [dependencies]
 vernier-mask = "0.2"
 thiserror = "2"
-image = "0.25"
-imageproc = "0.25"
+image = { version = "0.25", optional = true }
+imageproc = { version = "0.25", optional = true }
 
 [dev-dependencies]
 proptest = "1"
+image = "0.25"
+imageproc = "0.25"

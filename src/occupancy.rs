@@ -1,4 +1,5 @@
 use crate::config::OccupancyPolicy;
+use crate::timing::Dwell;
 use std::time::Instant;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -6,6 +7,37 @@ pub enum RoomCardinality {
     Empty,
     Single,
     Multiple,
+}
+
+/// Validity of the primary detection signal published alongside occupancy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SignalValidity {
+    Valid,
+    Invalid,
+}
+
+impl SignalValidity {
+    #[must_use]
+    pub const fn from_bool(valid: bool) -> Self {
+        if valid {
+            Self::Valid
+        } else {
+            Self::Invalid
+        }
+    }
+
+    #[must_use]
+    pub const fn is_valid(self) -> bool {
+        matches!(self, Self::Valid)
+    }
+
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Valid => "valid",
+            Self::Invalid => "invalid",
+        }
+    }
 }
 
 impl RoomCardinality {
@@ -43,6 +75,56 @@ pub struct OccupancyEvidence {
     pub confirmed_person_count: usize,
 }
 
+/// Inputs used to derive [`OccupancyEvidence`] from presence + tracking.
+#[derive(Debug, Clone, Copy)]
+pub struct OccupancyEvidenceInputs {
+    pub tracking_enabled: bool,
+    pub presence_enabled: bool,
+    pub signal_valid: bool,
+    pub raw_person_count: usize,
+    pub confirmed_person_count: usize,
+    pub presence_is_present: bool,
+    pub presence_held: bool,
+}
+
+/// Pure clinical policy: how presence hold + tracking combine into occupancy
+/// evidence. Extracted from the orchestrator so it can be table-tested.
+#[must_use]
+pub fn build_evidence(inputs: OccupancyEvidenceInputs) -> OccupancyEvidence {
+    let poi_present = if inputs.presence_enabled {
+        if inputs.tracking_enabled {
+            inputs.presence_is_present
+        } else {
+            // Raw calibration uses the POI entry timer, but a missing raw
+            // person starts the room exit timer immediately instead of
+            // being held by presence.poi.off_ms.
+            inputs.raw_person_count == 1 && inputs.presence_is_present
+        }
+    } else {
+        inputs.raw_person_count == 1
+    };
+
+    let occupancy_person_count = if inputs.tracking_enabled
+        && inputs.raw_person_count == 0
+        && inputs.presence_held
+        && inputs.confirmed_person_count == 1
+        && poi_present
+    {
+        // Keep a confirmed single-person session alive across the short
+        // detector dropouts already retained by PresenceFilter.
+        1
+    } else {
+        inputs.raw_person_count
+    };
+
+    OccupancyEvidence {
+        signal_valid: inputs.signal_valid,
+        raw_person_count: occupancy_person_count,
+        poi_present,
+        confirmed_person_count: inputs.confirmed_person_count,
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct OccupancyUpdate {
     pub state: RoomCardinality,
@@ -57,10 +139,10 @@ pub struct OccupancyStateMachine {
     policy: OccupancyPolicy,
     state: RoomCardinality,
     second_person: SecondPersonState,
-    single_since: Option<Instant>,
-    empty_since: Option<Instant>,
-    multiple_candidate_since: Option<Instant>,
-    multiple_exit_since: Option<Instant>,
+    single: Dwell,
+    empty: Dwell,
+    multiple_candidate: Dwell,
+    multiple_exit: Dwell,
 }
 
 impl OccupancyStateMachine {
@@ -71,10 +153,10 @@ impl OccupancyStateMachine {
             // empty; signal validity is published on its own lane.
             state: RoomCardinality::Empty,
             second_person: SecondPersonState::None,
-            single_since: None,
-            empty_since: None,
-            multiple_candidate_since: None,
-            multiple_exit_since: None,
+            single: Dwell::new(),
+            empty: Dwell::new(),
+            multiple_candidate: Dwell::new(),
+            multiple_exit: Dwell::new(),
         }
     }
 
@@ -82,22 +164,24 @@ impl OccupancyStateMachine {
         if !evidence.signal_valid {
             // A TON/TOF requires a continuous valid condition. An invalid
             // inference freezes room state but cannot satisfy a timer.
-            self.single_since = None;
-            self.empty_since = None;
-            self.multiple_candidate_since = None;
-            self.multiple_exit_since = None;
+            self.single.clear();
+            self.empty.clear();
+            self.multiple_candidate.clear();
+            self.multiple_exit.clear();
             return self.snapshot(now);
         }
 
         if evidence.raw_person_count >= 2 {
-            self.single_since = None;
-            self.empty_since = None;
-            self.multiple_exit_since = None;
+            self.single.clear();
+            self.empty.clear();
+            self.multiple_exit.clear();
             let second_person_ready =
                 !self.policy.require_confirmed_tracks || evidence.confirmed_person_count >= 2;
             if second_person_ready {
-                self.multiple_candidate_since.get_or_insert(now);
-                if elapsed_ms(self.multiple_candidate_since, now) >= self.policy.multiple_confirm_ms
+                self.multiple_candidate.start_or_keep(now);
+                if self
+                    .multiple_candidate
+                    .ready(now, self.policy.multiple_confirm_ms)
                 {
                     self.state = RoomCardinality::Multiple;
                     self.second_person = SecondPersonState::Confirmed;
@@ -105,56 +189,58 @@ impl OccupancyStateMachine {
                     self.second_person = SecondPersonState::Candidate;
                 }
             } else {
-                self.multiple_candidate_since = None;
+                self.multiple_candidate.clear();
                 self.second_person = SecondPersonState::Candidate;
             }
         } else {
-            self.multiple_candidate_since = None;
+            self.multiple_candidate.clear();
             self.second_person = SecondPersonState::None;
 
             if self.state == RoomCardinality::Multiple {
-                self.single_since = None;
-                self.empty_since = None;
-                self.multiple_exit_since.get_or_insert(now);
-                if elapsed_ms(self.multiple_exit_since, now) >= self.policy.multiple_exit_ms {
+                self.single.clear();
+                self.empty.clear();
+                self.multiple_exit.start_or_keep(now);
+                if self.multiple_exit.ready(now, self.policy.multiple_exit_ms) {
                     self.state = if evidence.raw_person_count > 0 || evidence.poi_present {
                         RoomCardinality::Single
                     } else {
                         RoomCardinality::Empty
                     };
-                    self.multiple_exit_since = None;
+                    self.multiple_exit.clear();
                 }
             } else if evidence.raw_person_count == 0
                 && evidence.poi_present
                 && self.state == RoomCardinality::Single
             {
-                // The tracked profile may hold a recently confirmed POI
-                // through a short dropout. Raw calibration passes false here.
-                self.single_since = None;
-                self.empty_since = None;
-                self.multiple_exit_since = None;
+                // Tracked profile may hold a recently confirmed POI through a
+                // short dropout. Raw calibration passes false here.
+                self.single.clear();
+                self.empty.clear();
+                self.multiple_exit.clear();
             } else if evidence.raw_person_count == 1 && evidence.poi_present {
-                self.empty_since = None;
-                self.multiple_exit_since = None;
-                self.single_since.get_or_insert(now);
-                if elapsed_ms(self.single_since, now) >= self.policy.single_confirm_ms {
+                self.empty.clear();
+                self.multiple_exit.clear();
+                self.single.start_or_keep(now);
+                if self.single.ready(now, self.policy.single_confirm_ms) {
                     self.state = RoomCardinality::Single;
                 }
             } else if evidence.raw_person_count > 0 {
                 // A raw candidate blocks the empty timer but cannot start
                 // the room entry timer until POI presence is confirmed.
-                self.single_since = None;
-                self.empty_since = None;
-                self.multiple_exit_since = None;
+                self.single.clear();
+                self.empty.clear();
+                self.multiple_exit.clear();
             } else {
-                self.single_since = None;
-                self.multiple_exit_since = None;
+                self.single.clear();
+                self.multiple_exit.clear();
                 if self.state != RoomCardinality::Empty {
-                    self.empty_since.get_or_insert(now);
-                    if elapsed_ms(self.empty_since, now) >= self.policy.empty_confirm_ms {
+                    self.empty.start_or_keep(now);
+                    if self.empty.ready(now, self.policy.empty_confirm_ms) {
                         self.state = RoomCardinality::Empty;
-                        self.empty_since = None;
+                        self.empty.clear();
                     }
+                } else {
+                    self.empty.clear();
                 }
             }
         }
@@ -166,10 +252,10 @@ impl OccupancyStateMachine {
         OccupancyUpdate {
             state: self.state,
             second_person: self.second_person,
-            single_timer_ms: elapsed_ms(self.single_since, now),
-            empty_timer_ms: elapsed_ms(self.empty_since, now),
-            multiple_candidate_timer_ms: elapsed_ms(self.multiple_candidate_since, now),
-            multiple_exit_timer_ms: elapsed_ms(self.multiple_exit_since, now),
+            single_timer_ms: self.single.elapsed_ms(now),
+            empty_timer_ms: self.empty.elapsed_ms(now),
+            multiple_candidate_timer_ms: self.multiple_candidate.elapsed_ms(now),
+            multiple_exit_timer_ms: self.multiple_exit.elapsed_ms(now),
         }
     }
 
@@ -177,12 +263,6 @@ impl OccupancyStateMachine {
     fn state(&self) -> RoomCardinality {
         self.state
     }
-}
-
-fn elapsed_ms(since: Option<Instant>, now: Instant) -> u64 {
-    since
-        .map(|start| now.saturating_duration_since(start).as_millis() as u64)
-        .unwrap_or(0)
 }
 
 #[cfg(test)]
@@ -398,5 +478,50 @@ mod tests {
                 .state,
             RoomCardinality::Empty
         );
+    }
+
+    #[test]
+    fn build_evidence_holds_single_across_detector_dropout() {
+        let evidence = build_evidence(OccupancyEvidenceInputs {
+            tracking_enabled: true,
+            presence_enabled: true,
+            signal_valid: true,
+            raw_person_count: 0,
+            confirmed_person_count: 1,
+            presence_is_present: true,
+            presence_held: true,
+        });
+        assert_eq!(evidence.raw_person_count, 1);
+        assert!(evidence.poi_present);
+    }
+
+    #[test]
+    fn build_evidence_raw_mode_requires_exact_one_person_for_poi() {
+        let evidence = build_evidence(OccupancyEvidenceInputs {
+            tracking_enabled: false,
+            presence_enabled: true,
+            signal_valid: true,
+            raw_person_count: 0,
+            confirmed_person_count: 0,
+            presence_is_present: true,
+            presence_held: false,
+        });
+        assert!(!evidence.poi_present);
+        assert_eq!(evidence.raw_person_count, 0);
+    }
+
+    #[test]
+    fn build_evidence_without_presence_uses_raw_count() {
+        let evidence = build_evidence(OccupancyEvidenceInputs {
+            tracking_enabled: false,
+            presence_enabled: false,
+            signal_valid: true,
+            raw_person_count: 1,
+            confirmed_person_count: 0,
+            presence_is_present: false,
+            presence_held: false,
+        });
+        assert!(evidence.poi_present);
+        assert_eq!(evidence.raw_person_count, 1);
     }
 }

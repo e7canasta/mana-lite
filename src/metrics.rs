@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::time::Instant;
 
 use crate::infer::Detection;
-use ultralytics_inference::DepthMap;
+use crate::depth_map::DepthFrame;
 
 // ── Per-frame per-class stats (transient, computed each keyframe) ──
 
@@ -398,7 +398,7 @@ impl MetricsEngine {
         &mut self,
         model_key: &str,
         elapsed_us: u64,
-        depth: Option<&DepthMap>,
+        depth: Option<&DepthFrame>,
         crop_rect: Option<[u32; 4]>,
     ) {
         self.current.inferences += 1;
@@ -422,7 +422,7 @@ impl MetricsEngine {
         let mut min_depth = f64::INFINITY;
         let mut max_depth: f64 = 0.0;
         if let Some(map) = depth {
-            for &value in &map.data {
+            for value in map.iter_values() {
                 if value.is_finite() && value > 0.0 {
                     let value = f64::from(value);
                     valid_pixels += 1;
@@ -617,14 +617,15 @@ impl Health {
 mod tests {
     use super::*;
     use ndarray::array;
+    use ultralytics_inference::DepthMap;
 
     #[test]
     fn depth_metrics_count_only_finite_positive_pixels() {
         let mut engine = MetricsEngine::new(0, 50);
-        let depth = DepthMap::new(
+        let depth = DepthFrame::from_ultralytics(DepthMap::new(
             array![[0.0, 1.0, 2.0], [f32::NAN, 3.0, f32::INFINITY]],
             (2, 3),
-        );
+        ));
 
         engine.tick_inference_depth("depth-standard", 190_000, Some(&depth), None);
         let (report, order) = engine.take_report().expect("zero-second report");

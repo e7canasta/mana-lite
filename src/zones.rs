@@ -3,6 +3,7 @@ use std::time::Instant;
 
 use crate::config::ZoneCatalog;
 use crate::logger::Event;
+use crate::timing::Dwell;
 use crate::track::Track;
 
 #[derive(Debug, Clone)]
@@ -30,7 +31,7 @@ struct ZoneState {
     hysteresis_ms: u64,
     is_occupied: bool,
     occupied_by: Vec<u64>,
-    vacated_since: Option<Instant>,
+    vacated: Dwell,
 }
 
 pub struct ZoneEngine {
@@ -54,7 +55,7 @@ impl ZoneEngine {
                     hysteresis_ms: entry.hysteresis_ms,
                     is_occupied: false,
                     occupied_by: Vec::new(),
-                    vacated_since: None,
+                    vacated: Dwell::new(),
                 },
             );
         }
@@ -62,6 +63,10 @@ impl ZoneEngine {
     }
 
     pub fn evaluate(&mut self, tracks: &[&Track]) -> Vec<ZoneEvent> {
+        self.evaluate_at(tracks, Instant::now())
+    }
+
+    pub fn evaluate_at(&mut self, tracks: &[&Track], now: Instant) -> Vec<ZoneEvent> {
         let mut events = Vec::new();
 
         for (zone_name, state) in &mut self.zones {
@@ -76,7 +81,7 @@ impl ZoneEngine {
                 if !state.is_occupied {
                     state.is_occupied = true;
                     state.occupied_by = current.clone();
-                    state.vacated_since = None;
+                    state.vacated.clear();
                     for &track_id in &current {
                         let (class, conf) = find_class_confidence(tracks, track_id);
                         events.push(ZoneEvent::Occupied {
@@ -92,11 +97,11 @@ impl ZoneEngine {
             }
 
             if state.is_occupied {
-                let vacated_at = state.vacated_since.get_or_insert(Instant::now());
-                if vacated_at.elapsed().as_millis() as u64 >= state.hysteresis_ms {
+                state.vacated.start_or_keep(now);
+                if state.vacated.ready(now, state.hysteresis_ms) {
                     state.is_occupied = false;
                     let prev = std::mem::take(&mut state.occupied_by);
-                    state.vacated_since = None;
+                    state.vacated.clear();
                     for track_id in prev {
                         let (class, _) = find_class_confidence(tracks, track_id);
                         events.push(ZoneEvent::Vacated {

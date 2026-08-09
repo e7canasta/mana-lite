@@ -1,7 +1,8 @@
 use std::collections::HashMap;
 
 use serde::Deserialize;
-use ultralytics_inference::DepthMap;
+
+use crate::depth_map::DepthFrame;
 
 /// Version del esquema del evento `depth_region`.
 pub const DEPTH_REGION_EVENT_VERSION: u8 = 2;
@@ -143,7 +144,7 @@ impl DepthRegionRule {
     /// Con calibracion, `value` y `threshold_m` estan en unidades de escena;
     /// sin calibracion, en unidades del modelo (identidad).
     #[must_use]
-    pub fn evaluate(&self, depth: &DepthMap, roi: [u32; 4]) -> Option<DepthRuleResult> {
+    pub fn evaluate(&self, depth: &DepthFrame, roi: [u32; 4]) -> Option<DepthRuleResult> {
         let stats = region_stats(depth, roi, self.region)?;
         if stats
             .valid_ratio
@@ -201,7 +202,7 @@ impl DepthRules {
     /// solamente las reglas con evidencia valida (interseccion y cobertura
     /// suficientes).
     #[must_use]
-    pub fn evaluate(&self, depth: &DepthMap, roi: [u32; 4]) -> Vec<DepthRuleResult> {
+    pub fn evaluate(&self, depth: &DepthFrame, roi: [u32; 4]) -> Vec<DepthRuleResult> {
         self.rules
             .iter()
             .filter_map(|rule| rule.evaluate(depth, roi))
@@ -278,7 +279,7 @@ pub fn region_intersection(roi: [u32; 4], region: [u32; 4]) -> Option<[u32; 4]> 
 /// mapa local al ROI. `None` si la region no interseca el ROI o el mapa no
 /// tiene ningun valor valido.
 #[must_use]
-pub fn region_stats(depth: &DepthMap, roi: [u32; 4], region: [u32; 4]) -> Option<DepthRoiStats> {
+pub fn region_stats(depth: &DepthFrame, roi: [u32; 4], region: [u32; 4]) -> Option<DepthRoiStats> {
     let mut local = region_intersection(roi, region)?;
     let (map_height, map_width) = map_dims(depth);
     local[2] = local[2].min(map_width);
@@ -290,7 +291,7 @@ pub fn region_stats(depth: &DepthMap, roi: [u32; 4], region: [u32; 4]) -> Option
     let mut values: Vec<f32> = Vec::new();
     for y in local[1]..local[3] {
         for x in local[0]..local[2] {
-            let value = depth.data[[y as usize, x as usize]];
+            let value = depth.value_at(y as usize, x as usize);
             if value.is_finite() && value > 0.0 {
                 values.push(value);
             }
@@ -334,21 +335,23 @@ pub fn region_stats(depth: &DepthMap, roi: [u32; 4], region: [u32; 4]) -> Option
 
 /// Dimensiones del mapa (ancho, alto) en coordenadas locales al ROI.
 #[must_use]
-pub fn map_dims(depth: &DepthMap) -> (u32, u32) {
-    let shape = depth.data.shape();
-    #[allow(clippy::cast_possible_truncation)]
-    (shape[1] as u32, shape[0] as u32)
+pub fn map_dims(depth: &DepthFrame) -> (u32, u32) {
+    depth.dims()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use ndarray::Array2;
+    use ultralytics_inference::DepthMap;
 
     #[allow(clippy::cast_possible_truncation)]
-    fn map_from_rows(rows: &[&[f32]]) -> DepthMap {
+    fn map_from_rows(rows: &[&[f32]]) -> DepthFrame {
         let data = Array2::from_shape_fn((rows.len(), rows[0].len()), |(y, x)| rows[y][x]);
-        DepthMap::new(data, (rows.len() as u32, rows[0].len() as u32))
+        DepthFrame::from_ultralytics(DepthMap::new(
+            data,
+            (rows.len() as u32, rows[0].len() as u32),
+        ))
     }
 
     #[test]

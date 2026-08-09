@@ -129,16 +129,6 @@ fn validate_fsm_roles(fsm: &FsmCatalog, errors: &mut Vec<String>) {
             fsm.fsm.roles.reset
         ));
     }
-    for state in &fsm.fsm.roles.latch_set {
-        if !fsm.fsm.states.contains_key(state) {
-            errors.push(format!("latch_set state '{state}' not found in states"));
-        }
-    }
-    for state in &fsm.fsm.roles.latch_maybe {
-        if !fsm.fsm.states.contains_key(state) {
-            errors.push(format!("latch_maybe state '{state}' not found in states"));
-        }
-    }
 }
 
 pub fn validate_model_catalog(models: &ModelCatalog) -> Vec<String> {

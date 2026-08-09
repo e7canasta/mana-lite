@@ -14,10 +14,12 @@ pub struct Kalman7 {
 
 #[derive(Debug, Clone, Copy)]
 pub struct KalmanConfig {
-    /// Paso nominal en segundos. Viene de `tracking.nominal_dt_ms` y debe
-    /// desaparecer cuando el scan sea la base de tiempo del pipeline.
+    /// Paso nominal en segundos usado exclusivamente para escalar Q respecto
+    /// de la cadencia de scan configurada.
     pub nominal_dt_s: f32,
-    /// Más allá de este intervalo la extrapolación es ruido.
+    /// Más allá de este intervalo la extrapolación es ruido. Este clamp de
+    /// ghosts debe desaparecer cuando el ciclo de scan sea la única base
+    /// temporal y la política de vida de tracks cubra los huecos largos.
     pub max_dt_s: f32,
     pub measurement_noise: f32,
     pub process_position_noise: f32,
@@ -106,6 +108,34 @@ impl Kalman7 {
         state_to_bbox(self.x)
     }
 
+    /// Configure the nominal scan period used only to scale process noise Q.
+    pub fn set_nominal_dt_s(&mut self, nominal_dt_s: f32) {
+        self.config.nominal_dt_s = nominal_dt_s.max(1e-3);
+    }
+
+    /// Innovation squared Mahalanobis distance for measurement
+    /// `[cx, cy, scale, aspect_ratio]`.
+    #[must_use]
+    pub fn mahalanobis_sq(&self, z: [f32; 4]) -> f32 {
+        let innovation = measurement_innovation(self.x, z);
+        let s_inv = invert4(innovation_covariance(self.p, self.config.measurement_noise));
+        let projected = mat4_vec4(s_inv, innovation);
+        innovation
+            .iter()
+            .zip(projected)
+            .fold(0.0, |sum, (value, projected)| value.mul_add(projected, sum))
+    }
+
+    /// Position/measurement block of the state covariance.
+    #[must_use]
+    pub fn covariance_position_block(&self) -> [[f32; 4]; 4] {
+        let mut block = [[0.0; 4]; 4];
+        for (i, row) in block.iter_mut().enumerate() {
+            row.copy_from_slice(&self.p[i][..4]);
+        }
+        block
+    }
+
     /// Paso de prediccion (modelo de velocidad constante, `dt` en segundos).
     #[allow(clippy::needless_range_loop)]
     pub fn predict(&mut self, dt_s: f32) {
@@ -127,26 +157,10 @@ impl Kalman7 {
     /// Paso de actualizacion con una medicion [cx, cy, s, r].
     #[allow(clippy::needless_range_loop)]
     pub fn update(&mut self, z: [f32; 4]) {
-        let innovation: [f32; 4] = [
-            z[0] - self.x[0],
-            z[1] - self.x[1],
-            z[2] - self.x[2],
-            z[3] - self.x[3],
-        ];
+        let innovation = measurement_innovation(self.x, z);
 
         // S = H P H^T + R  (4x4): H selecciona las primeras 4 filas/cols de P.
-        let mut s = [[0.0f32; 4]; 4];
-        for i in 0..4 {
-            for j in 0..4 {
-                let measurement = if i == j {
-                    self.config.measurement_noise
-                } else {
-                    0.0
-                };
-                s[i][j] = measurement + self.p[i][j];
-            }
-        }
-        let s_inv = invert4(s);
+        let s_inv = invert4(innovation_covariance(self.p, self.config.measurement_noise));
 
         // K = P H^T S^-1 (7x4): PH^T son las primeras 4 columnas de P.
         let mut k = [[0.0f32; 7]; 4];
@@ -208,6 +222,31 @@ fn bbox_to_state(bbox: [f32; 4]) -> [f32; 7] {
         0.0,
         0.0,
     ]
+}
+
+fn measurement_innovation(x: [f32; 7], z: [f32; 4]) -> [f32; 4] {
+    [z[0] - x[0], z[1] - x[1], z[2] - x[2], z[3] - x[3]]
+}
+
+fn innovation_covariance(p: [[f32; 7]; 7], measurement_noise: f32) -> [[f32; 4]; 4] {
+    let mut s = [[0.0f32; 4]; 4];
+    for i in 0..4 {
+        for j in 0..4 {
+            s[i][j] = p[i][j] + if i == j { measurement_noise } else { 0.0 };
+        }
+    }
+    s
+}
+
+fn mat4_vec4(a: [[f32; 4]; 4], v: [f32; 4]) -> [f32; 4] {
+    let mut out = [0.0; 4];
+    for i in 0..4 {
+        out[i] = a[i]
+            .iter()
+            .zip(v)
+            .fold(0.0, |sum, (value, component)| value.mul_add(component, sum));
+    }
+    out
 }
 
 #[allow(clippy::many_single_char_names)]
@@ -341,6 +380,14 @@ mod tests {
         assert!((bbox[1] - 179.3).abs() < 1.0, "y1={}", bbox[1]);
         assert!((bbox[2] - 120.7).abs() < 1.0, "x2={}", bbox[2]);
         assert!((bbox[3] - 320.7).abs() < 1.0, "y2={}", bbox[3]);
+    }
+
+    #[test]
+    fn mahalanobis_is_zero_at_predicted_measurement_and_grows_with_distance() {
+        let kalman = Kalman7::from_bbox([0.0, 0.0, 100.0, 200.0]);
+        let expected = [50.0, 100.0, 20_000.0, 0.5];
+        assert!(kalman.mahalanobis_sq(expected) < 1e-6);
+        assert!(kalman.mahalanobis_sq([60.0, 100.0, 20_000.0, 0.5]) > 0.0);
     }
 
     #[test]

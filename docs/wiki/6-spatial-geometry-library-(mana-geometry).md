@@ -8,7 +8,6 @@ Relevant source files
 - [](std/mana-geometry/src/lib.rs)
 - [](std/mana-geometry/src/polygon.rs)
 - [](std/mana-geometry/src/polygonize.rs)
-- [](std/mana-geometry/src/primitives.rs)
 - [](std/mana-geometry/src/transform.rs)
 
 The `mana-geometry` crate serves as the central spatial algebra library for the `mana-lite` workspace. It provides a set of primitives and algorithms for handling bounding boxes, pixel-level masks, and vector polygons. The library is designed to be high-performance, often operating in normalized coordinate space ($[0, 1]$) to maintain consistency across different video resolutions and model input sizes.
@@ -19,7 +18,7 @@ The library bridges the gap between raw inference outputs (rasters and coordinat
 
 **Spatial Entity Mapping**
 
-**Sources:** [std/mana-geometry/src/lib.rs1-20](std/mana-geometry/src/lib.rs#L1-L20) [std/mana-geometry/src/primitives.rs1-15](std/mana-geometry/src/primitives.rs#L1-L15)
+**Sources:** [std/mana-geometry/src/lib.rs1-20](std/mana-geometry/src/lib.rs#L1-L20)
 
 ---
 
@@ -43,7 +42,7 @@ For pixel-perfect spatial reasoning, `mana-geometry` provides tools to handle 
 
 - **CompactMask (Crop-RLE):** To avoid the memory overhead of full-frame bitmasks, the `CompactMask` struct [std/mana-geometry/src/compact_mask.rs65-69](std/mana-geometry/src/compact_mask.rs#L65-L69) stores masks as column-major Run-Length Encoded (RLE) data scoped strictly to the object's bounding box.
 - **Polygonization:** The library can convert raster masks into simplified vector contours using the Suzuki-Abe border following algorithm and Ramer-Douglas-Peucker (RDP) simplification [std/mana-geometry/src/polygonize.rs37-45](std/mana-geometry/src/polygonize.rs#L37-L45)
-- **Geometric Algebra:** The `Polygon` primitive [std/mana-geometry/src/primitives.rs143-145](std/mana-geometry/src/primitives.rs#L143-L145) supports area calculation via the Shoelace formula [std/mana-geometry/src/polygon.rs48-61](std/mana-geometry/src/polygon.rs#L48-L61) and point-in-polygon tests [std/mana-geometry/src/primitives.rs214-217](std/mana-geometry/src/primitives.rs#L214-L217)
+- **Geometric Algebra:** The `Polygon` type supports area calculation via the Shoelace formula and point-in-polygon tests in `polygon.rs`.
 
 For details on RLE storage and contour extraction, see **[Masks and Polygons](https://deepwiki.com/ernestovisiona-netizen/kik8/6.2-masks-and-polygons)**.
 

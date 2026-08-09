@@ -4,6 +4,7 @@ use crate::assignment::hungarian_min;
 use crate::detection::{ConsolidatedObservation, DetectionEvidence};
 use crate::kalman::{Kalman7, KalmanConfig};
 use crate::logger::Event;
+use mana_geometry::iou::{box_overlap, OverlapMetric};
 
 /// Per-track state: position, motion model, lifecycle.
 #[derive(Debug, Clone)]
@@ -78,6 +79,7 @@ pub struct TrackerConfig {
     pub max_age_ms: u64,
     pub tentative_max_age_ms: u64,
     pub iou_threshold: f32,
+    pub mahalanobis_threshold: f32,
     pub ghost_max_ms: u64,
     pub nominal_dt_ms: u64,
     pub measurement_noise: f32,
@@ -92,6 +94,7 @@ impl Default for TrackerConfig {
             max_age_ms: 4_000,
             tentative_max_age_ms: 600,
             iou_threshold: 0.2,
+            mahalanobis_threshold: 9.5,
             ghost_max_ms: 6_000,
             nominal_dt_ms: 2_000,
             measurement_noise: 1.0,
@@ -118,6 +121,7 @@ pub struct Tracker {
     max_age_ms: u64,
     tentative_max_age_ms: u64,
     iou_threshold: f32,
+    mahalanobis_threshold: f32,
     min_hits: u32,
     kalman_config: KalmanConfig,
 }
@@ -136,6 +140,7 @@ impl Tracker {
             max_age_ms: config.max_age_ms,
             tentative_max_age_ms: config.tentative_max_age_ms,
             iou_threshold: config.iou_threshold,
+            mahalanobis_threshold: config.mahalanobis_threshold,
             min_hits: config.min_hits.max(1),
             kalman_config,
         }
@@ -151,17 +156,30 @@ impl Tracker {
         allow_single_reacquire: bool,
         dt_ms: u64,
     ) -> Vec<TrackEvent> {
-        let mut events = Vec::new();
+        self.predict_at(dt_ms);
+        self.associate_and_update(detections, allow_single_reacquire, dt_ms)
+    }
 
+    /// Advance every active motion model without associating observations.
+    pub fn predict_at(&mut self, dt_ms: u64) {
         self.predict_all(dt_ms);
+    }
+
+    /// Associate observations against already-predicted tracks, then correct,
+    /// age, delete, and create tracks.
+    pub fn associate_and_update(
+        &mut self,
+        detections: &[TrackObservation],
+        allow_single_reacquire: bool,
+        dt_ms: u64,
+    ) -> Vec<TrackEvent> {
+        let mut events = Vec::new();
         let (det_matched, track_matched) =
             self.match_detections(detections, allow_single_reacquire);
-
         self.update_matched(&track_matched, detections, &mut events);
         self.age_unmatched(&track_matched, dt_ms, &mut events);
         self.delete_expired(&mut events);
         self.create_tracks(&det_matched, detections, &mut events);
-
         events
     }
 
@@ -173,6 +191,18 @@ impl Tracker {
         let track_observations: Vec<TrackObservation> =
             observations.iter().map(TrackObservation::from).collect();
         self.update_with_mode(&track_observations, false, dt_ms)
+    }
+
+    /// Associate already-predicted consolidated observations.
+    pub fn associate_observations(
+        &mut self,
+        observations: &[ConsolidatedObservation],
+        allow_single_reacquire: bool,
+        dt_ms: u64,
+    ) -> Vec<TrackEvent> {
+        let track_observations: Vec<TrackObservation> =
+            observations.iter().map(TrackObservation::from).collect();
+        self.associate_and_update(&track_observations, allow_single_reacquire, dt_ms)
     }
 
     /// Reacquire the existing confirmed identity when the room is expected to
@@ -239,12 +269,14 @@ impl Tracker {
                 if track.class != detection.class {
                     continue;
                 }
-                cost[row][col] = 1.0 - compute_iou(&track.bbox, &detection.bbox);
+                let distance = track.kalman.mahalanobis_sq(bbox_to_measurement(detection.bbox));
+                if distance.is_finite() && distance <= self.mahalanobis_threshold {
+                    cost[row][col] = distance;
+                }
             }
         }
 
-        let max_cost = 1.0 - self.iou_threshold;
-        let (matched, _, _) = hungarian_min(&cost, max_cost);
+        let (matched, _, _) = hungarian_min(&cost, self.mahalanobis_threshold);
 
         let mut det_matched = vec![false; detections.len()];
         let mut track_matched: HashMap<u64, usize> = HashMap::new();
@@ -431,20 +463,11 @@ fn bbox_to_measurement(bbox: [f32; 4]) -> [f32; 4] {
 
 /// Intersection over Union for axis-aligned bounding boxes.
 fn compute_iou(a: &[f32; 4], b: &[f32; 4]) -> f32 {
-    let ix1 = a[0].max(b[0]);
-    let iy1 = a[1].max(b[1]);
-    let ix2 = a[2].min(b[2]);
-    let iy2 = a[3].min(b[3]);
-
-    let iw = (ix2 - ix1).max(0.0);
-    let ih = (iy2 - iy1).max(0.0);
-    let inter = iw * ih;
-
-    let area_a = (a[2] - a[0]) * (a[3] - a[1]);
-    let area_b = (b[2] - b[0]) * (b[3] - b[1]);
-    let union = area_a + area_b - inter;
-
-    if union <= 0.0 { 0.0 } else { inter / union }
+    box_overlap(
+        (a[0], a[1], a[2], a[3]),
+        (b[0], b[1], b[2], b[3]),
+        OverlapMetric::Iou,
+    )
 }
 
 /// Convert tracker events to logger events.
@@ -588,8 +611,11 @@ mod tests {
     }
 
     #[test]
-    fn high_iou_matches_across_small_displacement() {
-        let mut tracker = Tracker::new();
+    fn configurable_mahalanobis_gate_matches_small_displacement() {
+        let mut tracker = Tracker::with_config(TrackerConfig {
+            mahalanobis_threshold: 10_000.0,
+            ..TrackerConfig::default()
+        });
         tracker.update(&[observation("person", [100.0, 200.0, 300.0, 500.0])], DT_MS);
         tracker.update(&[observation("person", [100.0, 200.0, 300.0, 500.0])], DT_MS);
 
@@ -729,7 +755,10 @@ mod tests {
 
     #[test]
     fn optimal_matching_avoids_identity_split_that_greedy_would_cause() {
-        let mut tracker = Tracker::new();
+        let mut tracker = Tracker::with_config(TrackerConfig {
+            mahalanobis_threshold: 10_000.0,
+            ..TrackerConfig::default()
+        });
         let a = observation("person", [0.0, 0.0, 100.0, 100.0]);
         let b = observation("person", [80.0, 0.0, 180.0, 100.0]);
         tracker.update(&[a.clone(), b.clone()], DT_MS);

@@ -21,22 +21,6 @@ pub fn to_pixels(norm_x: f32, norm_y: f32, frame_w: u32, frame_h: u32) -> (f32, 
     (norm_x * frame_w as f32, norm_y * frame_h as f32)
 }
 
-/// Scale normalized centre+size to pixel (centre, half_w, half_h) for
-/// Rerun `Boxes2D::from_centers_and_half_sizes`.
-#[inline]
-pub fn box_halfsize_to_pixels(
-    cx: f32,
-    cy: f32,
-    w: f32,
-    h: f32,
-    frame_w: u32,
-    frame_h: u32,
-) -> (f32, f32, f32, f32) {
-    let fw = frame_w as f32;
-    let fh = frame_h as f32;
-    (cx * fw, cy * fh, w * fw / 2.0, h * fh / 2.0)
-}
-
 /// Clamp a normalized value to [0.0, 1.0].
 #[inline]
 pub fn clamp01(v: f32) -> f32 {
@@ -246,24 +230,6 @@ mod tests {
     fn xcycarh_zero_height() {
         let (_, _, ar, _) = xyxy_to_xcycarh(0.0, 0.0, 10.0, 0.0);
         assert!((ar - 0.0).abs() < 1e-6);
-    }
-
-    #[test]
-    fn halfsize_to_pixels_1080p() {
-        let (cx, cy, hw, hh) = box_halfsize_to_pixels(0.5, 0.5, 0.2, 0.4, 1920, 1080);
-        assert!((cx - 960.0).abs() < 1.0);
-        assert!((cy - 540.0).abs() < 1.0);
-        assert!((hw - 192.0).abs() < 1.0);
-        assert!((hh - 216.0).abs() < 1.0);
-    }
-
-    #[test]
-    fn halfsize_to_pixels_zero_dims_handled() {
-        let (cx, cy, hw, hh) = box_halfsize_to_pixels(0.0, 0.0, 1.0, 1.0, 0, 0);
-        assert!((cx - 0.0).abs() < f32::EPSILON);
-        assert!((cy - 0.0).abs() < f32::EPSILON);
-        assert!((hw - 0.0).abs() < f32::EPSILON);
-        assert!((hh - 0.0).abs() < f32::EPSILON);
     }
 }
 

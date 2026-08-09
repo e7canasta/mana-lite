@@ -7,6 +7,11 @@ use std::time::Instant;
 
 pub trait FrameReader {
     async fn next_frame(&mut self) -> Option<Frame>;
+
+    /// Optional Retina-specific counters; default readers return `None`.
+    fn take_retina_counters(&mut self) -> Option<RetinaCounters> {
+        None
+    }
 }
 
 /// Raw frame as delivered by the RTSP demuxer (Annex-B H.264).
@@ -120,21 +125,9 @@ impl<R: FrameReader> IngestEngine<R> {
         self.last_keyframe_at = now;
         Some(raw)
     }
-}
 
-fn h264_digest(h264: &[u8]) -> u64 {
-    let mut hasher = DefaultHasher::new();
-    h264.hash(&mut hasher);
-    hasher.finish()
-}
-
-impl IngestEngine<RetinaReader> {
     pub fn drain_ingest_counters(&mut self) -> IngestCounters {
-        let retina = {
-            let counters = self.reader.counters.clone();
-            self.reader.counters = RetinaCounters::default();
-            Some(counters)
-        };
+        let retina = self.reader.take_retina_counters();
         let c = IngestCounters {
             pframes_dropped: self.pframes_dropped,
             keyframes_dup: self.keyframes_dup,
@@ -149,6 +142,14 @@ impl IngestEngine<RetinaReader> {
         c
     }
 }
+
+fn h264_digest(h264: &[u8]) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    h264.hash(&mut hasher);
+    hasher.finish()
+}
+
+
 
 pub struct RetinaReader {
     demuxed: retina::client::Demuxed,
@@ -334,32 +335,44 @@ impl FrameReader for RetinaReader {
             }
         }
     }
+
+    fn take_retina_counters(&mut self) -> Option<RetinaCounters> {
+        let counters = self.counters.clone();
+        self.counters = RetinaCounters::default();
+        Some(counters)
+    }
+}
+
+
+/// In-memory frame source for integration tests (no RTSP).
+pub struct SyntheticReader {
+    frames: std::collections::VecDeque<Frame>,
+}
+
+impl SyntheticReader {
+    #[must_use]
+    pub fn new(frames: Vec<Frame>) -> Self {
+        Self {
+            frames: frames.into(),
+        }
+    }
+
+    #[must_use]
+    pub fn empty() -> Self {
+        Self::new(Vec::new())
+    }
+}
+
+impl FrameReader for SyntheticReader {
+    async fn next_frame(&mut self) -> Option<Frame> {
+        self.frames.pop_front()
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::VecDeque;
-
-    struct TestReader {
-        frames: VecDeque<Frame>,
-    }
-
-    impl TestReader {
-        fn new(frames: Vec<Frame>) -> Self {
-            Self {
-                frames: frames.into(),
-            }
-        }
-    }
-
-    impl FrameReader for TestReader {
-        async fn next_frame(&mut self) -> Option<Frame> {
-            self.frames.pop_front()
-        }
-    }
-
-    fn make_keyframe(id: u8) -> Frame {
+            fn make_keyframe(id: u8) -> Frame {
         Frame {
             h264: vec![id; 64],
             is_keyframe: true,
@@ -373,8 +386,8 @@ mod tests {
         }
     }
 
-    fn make_reader(frames: Vec<Frame>) -> IngestEngine<TestReader> {
-        IngestEngine::new(TestReader::new(frames))
+    fn make_reader(frames: Vec<Frame>) -> IngestEngine<SyntheticReader> {
+        IngestEngine::new(SyntheticReader::new(frames))
     }
 
     #[tokio::test]

@@ -10,7 +10,7 @@ proyecto). Reescribir sería duplicar lógica y riesgo.
 **Decisión:** importar por copia (vender) los módulos std necesarios de
 mana-os a la nueva crate workspace `std/mana-geometry` de mana-lite:
 
-- `compact_mask.rs`, `polygon.rs`, `primitives.rs`, `transform.rs`,
+- `compact_mask.rs`, `polygon.rs`, `transform.rs`,
   `bbox.rs`, `iou.rs` — de `mana-os/crates/std/mana-geometry`.
 - `mask_to_polygons` + `compute_mask_obb`/`compute_polygon_obb` — de
   `mana-os/crates/std/mana-annotate/src/geom/` (módulo `polygonize`).

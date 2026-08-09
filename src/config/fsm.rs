@@ -19,10 +19,6 @@ pub struct FsmRoot {
 pub struct FsmRoles {
     pub safe: String,
     pub reset: String,
-    #[serde(default)]
-    pub latch_set: Vec<String>,
-    #[serde(default)]
-    pub latch_maybe: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -33,6 +29,12 @@ pub struct FsmState {
     pub models: Vec<String>,
     #[serde(default)]
     pub dwell_min_ms: Option<u64>,
+    /// When true, entering or remaining in this state sets the face-inside latch.
+    #[serde(default)]
+    pub face_inside: bool,
+    /// When true, this state sets the latch only while a face is present.
+    #[serde(default)]
+    pub face_inside_maybe: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]

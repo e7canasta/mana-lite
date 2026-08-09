@@ -24,7 +24,7 @@ mana-rtsp = { path = "std/mana-rtsp" }
 mana-video = { path = "std/mana-video" }
 mana-viz = { path = "std/mana-viz" }
 mana-types = { path = "std/mana-types" }
-mana-geometry = { path = "std/mana-geometry" }
+mana-geometry = { path = "std/mana-geometry", features = ["polygonize"] }
 retina = "0.4"
 tokio = { version = "1", features = ["macros", "rt", "net", "time", "signal"] }
 futures = "0.3"

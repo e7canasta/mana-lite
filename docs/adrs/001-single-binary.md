@@ -35,3 +35,14 @@ Producer thread decodes frames, consumer thread runs inference, `std::sync::mpsc
 - **Positive:** Easier to debug. `strace`, `perf`, `gdb` all work trivially on one process.
 - **Negative:** No fault isolation. A segfault in inference kills the entire pipeline. Mitigated by panic catching at phase boundaries and the `max_consecutive_panics` health check.
 - **Negative:** Single-threaded inference means frame throughput is limited to 1/(decode_time + infer_time). Acceptable for a single-camera lite deployment. Full Mana OS handles multi-camera via process-per-camera.
+
+## Clarification: library crate vs deployment binary
+
+ADR-001 constrains the **deployed artifact**: one process, one superloop, zero IPC. It does **not** forbid a Rust library crate (`src/lib.rs`) that the thin binary (`src/main.rs`) links against.
+
+The library surface exists so that:
+
+1. Integration tests under `tests/` can exercise pipeline stages without spawning the binary.
+2. Secondary bins (probes, tools) can reuse the same modules without duplicating them.
+
+The library is a **compile-time boundary**, not a deployment or process boundary. Production still ships a single statically-linked `mana-lite` binary.

@@ -1,5 +1,7 @@
 use crate::config::PresencePoiPolicy;
 use crate::detection::ConsolidatedObservation;
+use crate::timing::Debouncer;
+use std::time::Instant;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PresenceState {
@@ -32,8 +34,7 @@ pub struct PresenceFilter {
     class: String,
     policy: PresencePoiPolicy,
     state: PresenceState,
-    positive_ms: u64,
-    empty_ms: u64,
+    debouncer: Debouncer,
     last_person: Option<ConsolidatedObservation>,
 }
 
@@ -44,21 +45,19 @@ impl PresenceFilter {
             class: class.into(),
             policy,
             state: PresenceState::Absent,
-            positive_ms: 0,
-            empty_ms: 0,
+            debouncer: Debouncer::new(),
             last_person: None,
         }
     }
 
     /// Returns observations for the tracker. During a short valid dropout, the
     /// last consolidated person is held as a signal, not as a new identity.
-    /// `dt_ms` is the real elapsed time between processed keyframes; invalid
-    /// signal time (`signal_valid = false`) does not accumulate.
-    pub fn update(
+    /// Invalid signal time (`signal_valid = false`) does not accumulate.
+    pub fn update_at(
         &mut self,
         observations: &[ConsolidatedObservation],
         signal_valid: bool,
-        dt_ms: u64,
+        now: Instant,
     ) -> (Vec<ConsolidatedObservation>, PresenceUpdate) {
         if !self.enabled {
             return (
@@ -66,8 +65,8 @@ impl PresenceFilter {
                 PresenceUpdate {
                     state: self.state,
                     held: false,
-                    positive_ms: self.positive_ms,
-                    empty_ms: self.empty_ms,
+                    positive_ms: self.debouncer.elapsed_high_ms(now),
+                    empty_ms: self.debouncer.elapsed_low_ms(now),
                 },
             );
         }
@@ -77,8 +76,8 @@ impl PresenceFilter {
                 PresenceUpdate {
                     state: self.state,
                     held: false,
-                    positive_ms: self.positive_ms,
-                    empty_ms: self.empty_ms,
+                    positive_ms: self.debouncer.elapsed_high_ms(now),
+                    empty_ms: self.debouncer.elapsed_low_ms(now),
                 },
             );
         }
@@ -90,15 +89,14 @@ impl PresenceFilter {
 
         if person_count > 1 {
             self.state = PresenceState::Ambiguous;
-            self.positive_ms = 0;
-            self.empty_ms = 0;
+            self.debouncer.reset();
             self.last_person = None;
             return (
                 observations.to_vec(),
                 PresenceUpdate {
                     state: self.state,
                     held: false,
-                    positive_ms: self.positive_ms,
+                    positive_ms: 0,
                     empty_ms: 0,
                 },
             );
@@ -108,10 +106,11 @@ impl PresenceFilter {
             .iter()
             .find(|observation| observation.class == self.class)
         {
-            self.positive_ms = self.positive_ms.saturating_add(dt_ms);
-            self.empty_ms = 0;
+            let engaged =
+                self.debouncer
+                    .update_at(true, self.policy.on_ms, self.policy.off_ms, now);
             self.last_person = Some(person.clone());
-            if self.positive_ms >= self.policy.on_ms {
+            if engaged {
                 self.state = PresenceState::Present;
             }
             return (
@@ -119,17 +118,19 @@ impl PresenceFilter {
                 PresenceUpdate {
                     state: self.state,
                     held: false,
-                    positive_ms: self.positive_ms,
+                    positive_ms: self.debouncer.elapsed_high_ms(now),
                     empty_ms: 0,
                 },
             );
         }
 
-        self.positive_ms = 0;
-        self.empty_ms = self.empty_ms.saturating_add(dt_ms);
+        let engaged =
+            self.debouncer
+                .update_at(false, self.policy.on_ms, self.policy.off_ms, now);
+        let empty_ms = self.debouncer.elapsed_low_ms(now);
         if self.state == PresenceState::Present
             && self.last_person.is_some()
-            && self.empty_ms < self.policy.off_ms
+            && engaged
         {
             let mut held = observations.to_vec();
             held.push(self.last_person.as_ref().expect("checked above").clone());
@@ -138,13 +139,13 @@ impl PresenceFilter {
                 PresenceUpdate {
                     state: self.state,
                     held: true,
-                    positive_ms: self.positive_ms,
-                    empty_ms: self.empty_ms,
+                    positive_ms: self.debouncer.elapsed_high_ms(now),
+                    empty_ms,
                 },
             );
         }
 
-        if self.empty_ms >= self.policy.off_ms {
+        if !engaged {
             self.state = PresenceState::Absent;
             self.last_person = None;
         }
@@ -154,8 +155,8 @@ impl PresenceFilter {
             PresenceUpdate {
                 state: self.state,
                 held: false,
-                positive_ms: self.positive_ms,
-                empty_ms: self.empty_ms,
+                positive_ms: self.debouncer.elapsed_high_ms(now),
+                empty_ms,
             },
         )
     }
@@ -170,6 +171,7 @@ impl PresenceFilter {
 mod tests {
     use super::*;
     use crate::detection::DetectionEvidence;
+    use std::time::Duration;
 
     const DT_MS: u64 = 200;
 
@@ -201,14 +203,18 @@ mod tests {
     fn holds_one_person_during_short_valid_dropout() {
         let mut filter = PresenceFilter::new(true, "person", config(800));
         let one = [person()];
-        let (observations, update) = filter.update(&one, true, DT_MS);
+        let start = Instant::now();
+        filter.update_at(&one, true, start);
+        let (observations, update) =
+            filter.update_at(&one, true, start + Duration::from_millis(DT_MS));
         assert_eq!(observations.len(), 1);
         assert_eq!(update.state, PresenceState::Present);
 
-        let (observations, update) = filter.update(&[], true, DT_MS);
+        let (observations, update) =
+            filter.update_at(&[], true, start + Duration::from_millis(DT_MS * 2));
         assert_eq!(observations.len(), 1);
         assert!(update.held);
-        assert_eq!(update.empty_ms, DT_MS);
+        assert_eq!(update.empty_ms, 0);
         assert_eq!(filter.state(), PresenceState::Present);
     }
 
@@ -223,19 +229,23 @@ mod tests {
             },
         );
         let one = [person()];
+        let start = Instant::now();
 
-        assert_eq!(filter.update(&one, true, DT_MS).1.state, PresenceState::Absent);
-        assert_eq!(filter.update(&one, true, DT_MS).1.state, PresenceState::Absent);
-        assert_eq!(filter.update(&one, true, DT_MS).1.state, PresenceState::Present);
+        assert_eq!(filter.update_at(&one, true, start).1.state, PresenceState::Absent);
+        assert_eq!(filter.update_at(&one, true, start + Duration::from_millis(DT_MS)).1.state, PresenceState::Absent);
+        assert_eq!(filter.update_at(&one, true, start + Duration::from_millis(DT_MS * 3)).1.state, PresenceState::Present);
     }
 
     #[test]
     fn releases_presence_after_configured_empty_ms() {
         let mut filter = PresenceFilter::new(true, "person", config(600));
-        filter.update(&[person()], true, DT_MS);
-        filter.update(&[], true, DT_MS);
-        filter.update(&[], true, DT_MS);
-        let (observations, update) = filter.update(&[], true, DT_MS);
+        let start = Instant::now();
+        filter.update_at(&[person()], true, start);
+        filter.update_at(&[person()], true, start + Duration::from_millis(DT_MS));
+        filter.update_at(&[], true, start + Duration::from_millis(DT_MS * 2));
+        filter.update_at(&[], true, start + Duration::from_millis(DT_MS * 3));
+        let (observations, update) =
+            filter.update_at(&[], true, start + Duration::from_millis(DT_MS * 5));
         assert!(observations.is_empty());
         assert!(!update.held);
         assert_eq!(update.state, PresenceState::Absent);
@@ -244,8 +254,11 @@ mod tests {
     #[test]
     fn invalid_signal_does_not_count_as_absence() {
         let mut filter = PresenceFilter::new(true, "person", config(400));
-        filter.update(&[person()], true, DT_MS);
-        let (observations, update) = filter.update(&[], false, DT_MS);
+        let start = Instant::now();
+        filter.update_at(&[person()], true, start);
+        filter.update_at(&[person()], true, start + Duration::from_millis(DT_MS));
+        let (observations, update) =
+            filter.update_at(&[], false, start + Duration::from_millis(DT_MS * 2));
         assert!(observations.is_empty());
         assert!(!update.held);
         assert_eq!(update.empty_ms, 0);
@@ -256,7 +269,7 @@ mod tests {
     fn multiple_people_are_ambiguous_and_never_held() {
         let mut filter = PresenceFilter::new(true, "person", config(800));
         let two = [person(), person()];
-        let (observations, update) = filter.update(&two, true, DT_MS);
+        let (observations, update) = filter.update_at(&two, true, Instant::now());
         assert_eq!(observations.len(), 2);
         assert_eq!(update.state, PresenceState::Ambiguous);
         assert!(!update.held);
@@ -273,10 +286,14 @@ mod tests {
                 off_ms: 800,
             },
         );
-        filter.update(&[person()], true, 200);
+        let start = Instant::now();
+        filter.update_at(&[person()], true, start);
+        filter.update_at(&[person()], true, start + Duration::from_millis(200));
 
         // Un solo tick lento (camara degradada a 1 fps) ya agota la ventana.
-        let (observations, update) = filter.update(&[], true, 1_000);
+        filter.update_at(&[], true, start + Duration::from_millis(200));
+        let (observations, update) =
+            filter.update_at(&[], true, start + Duration::from_millis(1_200));
         assert!(!update.held, "1000 ms > off_ms: no debe retener");
         assert_eq!(update.state, PresenceState::Absent);
         assert!(observations.is_empty());

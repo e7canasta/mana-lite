@@ -18,6 +18,7 @@ models = ["detect-fast", "face-yolo"]
 [fsm.states.detected]
 label = "Cara detectada"
 models = ["detect-fast", "face-yolo"]
+face_inside = true
 
 [fsm.states.other]
 label = "Persona presente sin cara visible"
@@ -26,10 +27,12 @@ models = ["detect-fast", "face-yolo"]
 [fsm.states.in_bed]
 label = "Persona en cama"
 models = ["detect-fast", "face-yolo"]
+face_inside = true
 
 [fsm.states.edge]
 label = "Persona en el borde"
 models = ["detect-fast", "face-yolo"]
+face_inside_maybe = true
 
 [fsm.states.exiting]
 label = "Saliendo"
@@ -38,8 +41,6 @@ models = ["detect-fast", "face-yolo"]
 [fsm.roles]
 safe = "blind"
 reset = "idle"
-latch_set = ["detected", "in_bed"]
-latch_maybe = ["edge"]
 
 # A second person cancels the single-person face session.
 

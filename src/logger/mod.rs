@@ -19,6 +19,34 @@ pub trait LogSink {
     fn shutdown(&mut self, reason: &str);
 }
 
+/// In-memory sink for deterministic event assertions in tests.
+#[derive(Debug, Default)]
+pub struct RecordingSink {
+    pub events: Vec<Event>,
+}
+
+impl LogSink for RecordingSink {
+    fn emit(&mut self, event: Event) {
+        self.events.push(event);
+    }
+
+    fn flush(&mut self) {}
+
+    fn shutdown(&mut self, _reason: &str) {}
+}
+
+/// Render events as JSONL with a caller-provided deterministic timestamp.
+#[must_use]
+pub fn render_events_fixed_ts(events: &[Event], ts: &str) -> String {
+    let mut line = Vec::new();
+    let mut output = String::new();
+    for event in events {
+        write_event(event, ts, &mut line);
+        output.push_str(std::str::from_utf8(&line).expect("event JSON is UTF-8"));
+    }
+    output
+}
+
 /// Adapter contract for output backends. A manager can fan one event out to
 /// several handlers, such as a JSONL file and a narrow diagnostic stream.
 pub trait LogHandler {

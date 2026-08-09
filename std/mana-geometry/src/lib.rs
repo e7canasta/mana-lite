@@ -14,6 +14,6 @@ pub mod bbox;
 pub mod compact_mask;
 pub mod iou;
 pub mod polygon;
+#[cfg(feature = "polygonize")]
 pub mod polygonize;
-pub mod primitives;
 pub mod transform;

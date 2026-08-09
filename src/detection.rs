@@ -1,4 +1,5 @@
 use crate::infer::{Detection, DetectionMask};
+use mana_geometry::iou::{OverlapMetric, box_overlap};
 
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
@@ -159,17 +160,11 @@ fn bbox_coverage(inner: &[f32; 4], outer: &[f32; 4]) -> f32 {
 }
 
 fn bbox_iou(a: &[f32; 4], b: &[f32; 4]) -> f32 {
-    let ix1 = a[0].max(b[0]);
-    let iy1 = a[1].max(b[1]);
-    let ix2 = a[2].min(b[2]);
-    let iy2 = a[3].min(b[3]);
-    let intersection = (ix2 - ix1).max(0.0) * (iy2 - iy1).max(0.0);
-    let union = bbox_area(a) + bbox_area(b) - intersection;
-    if union <= 0.0 {
-        0.0
-    } else {
-        intersection / union
-    }
+    box_overlap(
+        (a[0], a[1], a[2], a[3]),
+        (b[0], b[1], b[2], b[3]),
+        OverlapMetric::Iou,
+    )
 }
 
 fn bbox_area(bbox: &[f32; 4]) -> f32 {

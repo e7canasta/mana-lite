@@ -12,9 +12,9 @@ mod validation;
 mod zones;
 
 pub use app::{
-    AppConfig, DetectionConfig, HealthConfig, InferenceConfig, IngestConfig, OccupancyPolicy,
-    OutputConfig, PipelineConfig, PresenceConfig, PresencePoiPolicy, Rotate, SourceConfig,
-    TrackingConfig, TrackingNoiseConfig, VizConfig,
+    AppConfig, DetectionConfig, HealthConfig, InferenceConfig, IngestConfig, MANA_TOML_SCHEMA_VERSION,
+    OccupancyPolicy, OutputConfig, PipelineConfig, PresenceConfig, PresencePoiPolicy, Rotate,
+    ScanConfigSection, SourceConfig, TrackingConfig, TrackingNoiseConfig, VizConfig,
 };
 pub use blueprint::{
     BlueprintConfig, BlueprintMetadata, CascadeConfig, CascadeRule, SemanticRegion,
@@ -114,8 +114,9 @@ mod tests {
         }
         assert_eq!(fsm.fsm.roles.safe, "blind");
         assert_eq!(fsm.fsm.roles.reset, "idle");
-        assert_eq!(fsm.fsm.roles.latch_set, ["detected", "in_bed"]);
-        assert_eq!(fsm.fsm.roles.latch_maybe, ["edge"]);
+        assert!(fsm.fsm.states["detected"].face_inside);
+        assert!(fsm.fsm.states["in_bed"].face_inside);
+        assert!(fsm.fsm.states["edge"].face_inside_maybe);
         for (from, to) in [
             ("searching", "in_bed"),
             ("detected", "in_bed"),
@@ -192,8 +193,6 @@ mod tests {
         assert_eq!(catalog.fsm.initial, "idle");
         assert_eq!(catalog.fsm.roles.safe, "blind");
         assert_eq!(catalog.fsm.roles.reset, "idle");
-        assert!(catalog.fsm.roles.latch_set.is_empty());
-        assert!(catalog.fsm.roles.latch_maybe.is_empty());
         assert!(catalog.fsm.states.contains_key("watching"));
         assert!(!catalog.fsm.transitions.is_empty());
     }
@@ -351,8 +350,6 @@ mod tests {
         let mut broken = load_fsm_catalog(Path::new("config/fsm.toml")).unwrap();
         broken.fsm.roles.safe = "ghost-safe".into();
         broken.fsm.roles.reset = "ghost-reset".into();
-        broken.fsm.roles.latch_set = vec!["ghost-latch".into()];
-        broken.fsm.roles.latch_maybe = vec!["ghost-maybe".into()];
 
         let errors = validate_fsm(&broken, &models, &None, &None);
         assert!(errors.iter().any(|e| e.contains("safe state 'ghost-safe'")));
@@ -360,16 +357,6 @@ mod tests {
             errors
                 .iter()
                 .any(|e| e.contains("reset state 'ghost-reset'"))
-        );
-        assert!(
-            errors
-                .iter()
-                .any(|e| e.contains("latch_set state 'ghost-latch'"))
-        );
-        assert!(
-            errors
-                .iter()
-                .any(|e| e.contains("latch_maybe state 'ghost-maybe'"))
         );
 
         let mut without_safe_exit = load_fsm_catalog(Path::new("config/fsm.toml")).unwrap();

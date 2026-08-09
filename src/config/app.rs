@@ -1,9 +1,17 @@
 use serde::Deserialize;
 use std::path::PathBuf;
 
+pub const MANA_TOML_SCHEMA_VERSION: u32 = 1;
+
+const fn default_schema_version() -> u32 {
+    MANA_TOML_SCHEMA_VERSION
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AppConfig {
+    #[serde(default = "default_schema_version")]
+    pub schema_version: u32,
     pub source: SourceConfig,
     #[serde(default)]
     pub ingest: IngestConfig,
@@ -21,6 +29,9 @@ pub struct AppConfig {
     pub presence: PresenceConfig,
     #[serde(default)]
     pub tracking: TrackingConfig,
+    /// Clinical scan clock (independent of camera I-frame cadence).
+    #[serde(default)]
+    pub scan: ScanConfigSection,
     #[serde(default)]
     pub metrics_file: Option<PathBuf>,
     #[serde(default)]
@@ -98,6 +109,36 @@ impl Default for PipelineConfig {
 
 fn default_true() -> bool {
     true
+}
+
+/// Scan clock section in `mana.toml` (`[scan]`).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ScanConfigSection {
+    /// Period of the clinical scan tick in milliseconds (default 200 → 5 Hz).
+    #[serde(default = "default_scan_period_ms")]
+    pub period_ms: u64,
+}
+
+impl Default for ScanConfigSection {
+    fn default() -> Self {
+        Self {
+            period_ms: default_scan_period_ms(),
+        }
+    }
+}
+
+const fn default_scan_period_ms() -> u64 {
+    200
+}
+
+impl ScanConfigSection {
+    #[must_use]
+    pub fn to_scan_config(&self) -> crate::scan::ScanConfig {
+        crate::scan::ScanConfig {
+            period_ms: self.period_ms.max(1),
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -263,6 +304,8 @@ pub struct TrackingConfig {
     pub tentative_max_age_ms: u64,
     #[serde(default = "default_tracking_iou")]
     pub iou_threshold: f32,
+    #[serde(default = "default_tracking_mahalanobis")]
+    pub mahalanobis_threshold: f32,
     #[serde(default = "default_tracking_ghost_max_ms")]
     pub ghost_max_ms: u64,
     /// Periodo nominal medido de keyframes. Desaparece cuando el scan sea la
@@ -291,6 +334,7 @@ impl Default for TrackingConfig {
             max_age_ms: default_tracking_max_age_ms(),
             tentative_max_age_ms: default_tracking_tentative_max_age_ms(),
             iou_threshold: default_tracking_iou(),
+            mahalanobis_threshold: default_tracking_mahalanobis(),
             ghost_max_ms: default_tracking_ghost_max_ms(),
             nominal_dt_ms: default_tracking_nominal_dt_ms(),
             noise: TrackingNoiseConfig::default(),
@@ -312,6 +356,8 @@ impl TrackingConfig {
     pub fn is_valid(&self) -> bool {
         self.ghost_max_ms > 0
             && self.nominal_dt_ms > 0
+            && self.mahalanobis_threshold.is_finite()
+            && self.mahalanobis_threshold > 0.0
             && self.noise.measurement.is_finite()
             && self.noise.measurement > 0.0
             && self.noise.process_position.is_finite()
@@ -335,6 +381,10 @@ fn default_tracking_tentative_max_age_ms() -> u64 {
 
 fn default_tracking_iou() -> f32 {
     0.2
+}
+
+const fn default_tracking_mahalanobis() -> f32 {
+    9.5
 }
 
 const fn default_tracking_ghost_max_ms() -> u64 {

@@ -3,6 +3,8 @@ use crate::metrics::{MetricsReport, PerClassFrameStats};
 /// Version del esquema del evento `depth`. v2 agrega `roi`, `map_width`,
 /// `map_height` y `valid_ratio` (contrato `DepthRoiMap`, spec §8/§10).
 pub const DEPTH_EVENT_VERSION: u8 = 2;
+/// Version of the top-level JSONL event stream schema.
+pub const JSONL_SCHEMA_VERSION: u8 = 1;
 
 #[derive(Debug, Clone)]
 pub enum Event {
@@ -217,6 +219,7 @@ impl Event {
             event: "startup".into(),
             detail: "mana-lite".into(),
             attrs: vec![
+                ("schema".into(), JSONL_SCHEMA_VERSION.to_string()),
                 ("version".into(), version.into()),
                 ("config".into(), config.into()),
             ],
