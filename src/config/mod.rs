@@ -14,12 +14,12 @@ mod zones;
 pub use app::{
     AppConfig, DetectionConfig, HealthConfig, InferenceConfig, IngestConfig, OccupancyPolicy,
     OutputConfig, PipelineConfig, PresenceConfig, PresencePoiPolicy, Rotate, SourceConfig,
-    TrackingConfig, VizConfig,
+    TrackingConfig, TrackingNoiseConfig, VizConfig,
 };
 pub use blueprint::{
     BlueprintConfig, BlueprintMetadata, CascadeConfig, CascadeRule, SemanticRegion,
 };
-pub use fsm::{FsmCatalog, FsmGuard, FsmRoot, FsmState, FsmTransition};
+pub use fsm::{FsmCatalog, FsmGuard, FsmRoles, FsmRoot, FsmState, FsmTransition};
 pub use loader::{
     load_app_config, load_config, load_depth_rules, load_fsm_catalog, load_metrics_log,
     load_rerun_blueprint, load_viz_data, load_zone_catalog,
@@ -108,9 +108,14 @@ mod tests {
             "in_bed",
             "edge",
             "exiting",
+            "blind",
         ] {
             assert!(fsm.fsm.states.contains_key(state), "missing state {state}");
         }
+        assert_eq!(fsm.fsm.roles.safe, "blind");
+        assert_eq!(fsm.fsm.roles.reset, "idle");
+        assert_eq!(fsm.fsm.roles.latch_set, ["detected", "in_bed"]);
+        assert_eq!(fsm.fsm.roles.latch_maybe, ["edge"]);
         for (from, to) in [
             ("searching", "in_bed"),
             ("detected", "in_bed"),
@@ -185,6 +190,10 @@ mod tests {
     fn test_load_fsm_catalog() {
         let catalog = load_fsm_catalog(Path::new("config/fsm.toml")).unwrap();
         assert_eq!(catalog.fsm.initial, "idle");
+        assert_eq!(catalog.fsm.roles.safe, "blind");
+        assert_eq!(catalog.fsm.roles.reset, "idle");
+        assert!(catalog.fsm.roles.latch_set.is_empty());
+        assert!(catalog.fsm.roles.latch_maybe.is_empty());
         assert!(catalog.fsm.states.contains_key("watching"));
         assert!(!catalog.fsm.transitions.is_empty());
     }
@@ -195,7 +204,7 @@ mod tests {
         assert_eq!(config.source.transport, "tcp");
         assert!(config.source.keyframes_only);
         assert!(config.presence.enabled);
-        assert_eq!(config.presence.poi.off_ms, 1600);
+        assert_eq!(config.presence.poi.off_ms, 16_000);
         assert_eq!(config.presence.occupancy.multiple_confirm_ms, 5_000);
         assert!(!config.presence.occupancy.require_confirmed_tracks);
         assert!(config.pipeline.track);
@@ -217,6 +226,18 @@ mod tests {
             Some(PathBuf::from("config/blueprints/detect-room-face/fsm.toml"))
         );
         assert_eq!(config.health.data_stale_ms, 10_000);
+        assert_eq!(config.health.stale_warn_ms, 5_000);
+        assert_eq!(config.health.panic_window_cycles, 20);
+        assert_eq!(config.health.max_panics_in_window, 3);
+        assert_eq!(config.health.cycle_budget_ms, 500);
+        assert_eq!(config.detection.same_class_iou, 0.5);
+        assert_eq!(config.tracking.ghost_max_ms, 6_000);
+        assert_eq!(config.tracking.nominal_dt_ms, 2_000);
+        assert_eq!(config.tracking.noise.measurement, 1.0);
+        assert_eq!(config.tracking.noise.process_position, 1.0);
+        assert_eq!(config.tracking.noise.process_velocity, 0.25);
+        assert!(config.health.is_valid());
+        assert!(config.tracking.is_valid());
         let model = load_model_catalog(Path::new("config/models.toml")).unwrap();
         assert!(model.models["detect-fast"].postprocess.is_valid());
         assert_eq!(
@@ -264,6 +285,34 @@ mod tests {
     }
 
     #[test]
+    fn app_config_rejects_unknown_health_fields() {
+        let result = toml::from_str::<AppConfig>(
+            r#"
+                [source]
+                url = "rtsp://example.invalid/stream"
+
+                [inference]
+                model_catalog = "config/models.toml"
+
+                [health]
+                max_consecutive_panics = 3
+            "#,
+        );
+
+        assert!(
+            result.is_err(),
+            "unknown health fields must fail at startup"
+        );
+    }
+
+    #[test]
+    fn health_rejects_warning_threshold_at_or_above_blind_threshold() {
+        let health: HealthConfig =
+            toml::from_str("data_stale_ms = 10_000\nstale_warn_ms = 10_000").unwrap();
+        assert!(!health.is_valid());
+    }
+
+    #[test]
     fn room_transition_metrics_profile_only_keeps_presence_events() {
         let config = load_metrics_log(Path::new("config/metrics-room-transition.toml")).unwrap();
         assert!(!config.metrics.jsonl.detection_events);
@@ -293,6 +342,48 @@ mod tests {
         assert!(
             errors.is_empty(),
             "config/fsm.toml should be valid: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn fsm_validation_requires_valid_roles_and_safe_exit() {
+        let models = load_model_catalog(Path::new("config/models.toml")).unwrap();
+        let mut broken = load_fsm_catalog(Path::new("config/fsm.toml")).unwrap();
+        broken.fsm.roles.safe = "ghost-safe".into();
+        broken.fsm.roles.reset = "ghost-reset".into();
+        broken.fsm.roles.latch_set = vec!["ghost-latch".into()];
+        broken.fsm.roles.latch_maybe = vec!["ghost-maybe".into()];
+
+        let errors = validate_fsm(&broken, &models, &None, &None);
+        assert!(errors.iter().any(|e| e.contains("safe state 'ghost-safe'")));
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.contains("reset state 'ghost-reset'"))
+        );
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.contains("latch_set state 'ghost-latch'"))
+        );
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.contains("latch_maybe state 'ghost-maybe'"))
+        );
+
+        let mut without_safe_exit = load_fsm_catalog(Path::new("config/fsm.toml")).unwrap();
+        without_safe_exit.fsm.roles.safe = "idle".into();
+        without_safe_exit
+            .fsm
+            .transitions
+            .retain(|transition| transition.from != "idle");
+        let errors = validate_fsm(&without_safe_exit, &models, &None, &None);
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.contains("safe state 'idle' has no outgoing transition")),
+            "missing safe exit was not rejected: {errors:?}"
         );
     }
 

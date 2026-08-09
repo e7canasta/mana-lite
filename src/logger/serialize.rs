@@ -558,6 +558,15 @@ pub fn write_event(event: &Event, ts: &str, buf: &mut Vec<u8>) {
             buf.extend_from_slice(b"\"type\":\"metrics\"");
             append_field(buf, "window_s", r.window_s);
             append_field(buf, "cycles", r.cycles);
+            append_field(buf, "cycle_min_ms", r.cycle_min_ms);
+            append_field(buf, "cycle_max_ms", r.cycle_max_ms);
+            append_field(buf, "cycle_p95_ms", r.cycle_p95_ms);
+            append_field(buf, "cycle_overruns", r.cycle_overruns);
+            append_field(buf, "cycle_budget_ms", r.cycle_budget_ms);
+            append_field(buf, "keyframe_gap_min_ms", r.keyframe_gap_min_ms);
+            append_field(buf, "keyframe_gap_p50_ms", r.keyframe_gap_p50_ms);
+            append_field(buf, "keyframe_gap_p95_ms", r.keyframe_gap_p95_ms);
+            append_field(buf, "keyframe_gap_max_ms", r.keyframe_gap_max_ms);
             append_field(buf, "frames_total", r.frames_total);
             append_field(buf, "keyframes", r.keyframes);
             append_field(buf, "keyframes_seen", r.keyframes_seen);

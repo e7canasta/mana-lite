@@ -2,6 +2,7 @@ use serde::Deserialize;
 use std::path::PathBuf;
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct AppConfig {
     pub source: SourceConfig,
     #[serde(default)]
@@ -29,6 +30,7 @@ pub struct AppConfig {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SourceConfig {
     pub url: String,
     #[serde(default)]
@@ -46,6 +48,7 @@ fn default_transport() -> String {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct VizConfig {
     #[serde(default)]
     pub enabled: bool,
@@ -67,6 +70,7 @@ fn default_rerun_addr() -> String {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PipelineConfig {
     #[serde(default = "default_true")]
     pub infer: bool,
@@ -97,6 +101,7 @@ fn default_true() -> bool {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct DetectionConfig {
     #[serde(default = "default_face_component_coverage")]
     pub face_component_coverage: f32,
@@ -104,6 +109,8 @@ pub struct DetectionConfig {
     pub face_max_center_y_ratio: f32,
     #[serde(default = "default_face_edge_margin_px")]
     pub face_edge_margin_px: u32,
+    #[serde(default = "default_same_class_iou")]
+    pub same_class_iou: f32,
 }
 
 impl Default for DetectionConfig {
@@ -112,6 +119,7 @@ impl Default for DetectionConfig {
             face_component_coverage: default_face_component_coverage(),
             face_max_center_y_ratio: default_face_max_center_y_ratio(),
             face_edge_margin_px: default_face_edge_margin_px(),
+            same_class_iou: default_same_class_iou(),
         }
     }
 }
@@ -128,7 +136,12 @@ fn default_face_edge_margin_px() -> u32 {
     32
 }
 
+const fn default_same_class_iou() -> f32 {
+    0.5
+}
+
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PresenceConfig {
     #[serde(default)]
     pub enabled: bool,
@@ -143,6 +156,7 @@ pub struct PresenceConfig {
 /// Policy for retaining the person-of-interest signal before tracking
 /// (real elapsed time, not keyframe counts).
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PresencePoiPolicy {
     #[serde(default = "default_presence_on_ms")]
     pub on_ms: u64,
@@ -161,6 +175,7 @@ impl Default for PresencePoiPolicy {
 
 /// Time-based policy for confirming and releasing room cardinality states.
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct OccupancyPolicy {
     #[serde(default = "default_occupancy_single_confirm_ms")]
     pub single_confirm_ms: u64,
@@ -238,6 +253,7 @@ fn default_occupancy_multiple_exit_ms() -> u64 {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct TrackingConfig {
     #[serde(default = "default_tracking_min_hits")]
     pub min_hits: u32,
@@ -247,6 +263,25 @@ pub struct TrackingConfig {
     pub tentative_max_age_ms: u64,
     #[serde(default = "default_tracking_iou")]
     pub iou_threshold: f32,
+    #[serde(default = "default_tracking_ghost_max_ms")]
+    pub ghost_max_ms: u64,
+    /// Periodo nominal medido de keyframes. Desaparece cuando el scan sea la
+    /// base de tiempo del pipeline y no una parametrización de cámara.
+    #[serde(default = "default_tracking_nominal_dt_ms")]
+    pub nominal_dt_ms: u64,
+    #[serde(default)]
+    pub noise: TrackingNoiseConfig,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TrackingNoiseConfig {
+    #[serde(default = "default_measurement_noise")]
+    pub measurement: f32,
+    #[serde(default = "default_process_position_noise")]
+    pub process_position: f32,
+    #[serde(default = "default_process_velocity_noise")]
+    pub process_velocity: f32,
 }
 
 impl Default for TrackingConfig {
@@ -256,7 +291,33 @@ impl Default for TrackingConfig {
             max_age_ms: default_tracking_max_age_ms(),
             tentative_max_age_ms: default_tracking_tentative_max_age_ms(),
             iou_threshold: default_tracking_iou(),
+            ghost_max_ms: default_tracking_ghost_max_ms(),
+            nominal_dt_ms: default_tracking_nominal_dt_ms(),
+            noise: TrackingNoiseConfig::default(),
         }
+    }
+}
+
+impl Default for TrackingNoiseConfig {
+    fn default() -> Self {
+        Self {
+            measurement: default_measurement_noise(),
+            process_position: default_process_position_noise(),
+            process_velocity: default_process_velocity_noise(),
+        }
+    }
+}
+
+impl TrackingConfig {
+    pub fn is_valid(&self) -> bool {
+        self.ghost_max_ms > 0
+            && self.nominal_dt_ms > 0
+            && self.noise.measurement.is_finite()
+            && self.noise.measurement > 0.0
+            && self.noise.process_position.is_finite()
+            && self.noise.process_position > 0.0
+            && self.noise.process_velocity.is_finite()
+            && self.noise.process_velocity > 0.0
     }
 }
 
@@ -276,7 +337,28 @@ fn default_tracking_iou() -> f32 {
     0.2
 }
 
+const fn default_tracking_ghost_max_ms() -> u64 {
+    6_000
+}
+
+const fn default_tracking_nominal_dt_ms() -> u64 {
+    2_000
+}
+
+const fn default_measurement_noise() -> f32 {
+    1.0
+}
+
+const fn default_process_position_noise() -> f32 {
+    1.0
+}
+
+const fn default_process_velocity_noise() -> f32 {
+    0.25
+}
+
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct IngestConfig {
     #[serde(default = "default_poll_timeout_ms")]
     pub poll_timeout_ms: u64,
@@ -323,6 +405,7 @@ fn default_backoff_max_ms() -> u64 {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct InferenceConfig {
     pub model_catalog: PathBuf,
     #[serde(default)]
@@ -342,21 +425,59 @@ pub struct InferenceConfig {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct HealthConfig {
     #[serde(default = "default_data_stale_ms")]
     pub data_stale_ms: u64,
-    #[serde(default = "default_max_panics")]
-    pub max_consecutive_panics: u32,
+    #[serde(default = "default_stale_warn_ms")]
+    pub stale_warn_ms: u64,
+    /// Watchdog de panics por densidad, no por racha: una racha corta
+    /// (p. ej. 3 panics seguidos cada tanto) no debe tumbar el proceso si el
+    /// trabajo recupera de inmediato; lo que importa es qué fracción de los
+    /// últimos ciclos de keyframe están fallando. Por eso la ventana se
+    /// expresa en ciclos de trabajo y no en milisegundos: un umbral por
+    /// tiempo confundiría un plazo con una fracción (mismo razonamiento que
+    /// `min_hits`). Sugerencia de arranque: 20 ciclos y disparar al superar 3
+    /// panics. Con ciclos de ~50 ms, la ventana cubre como máximo ~1 s de
+    /// trabajo degradado antes de la señal de salida.
+    #[serde(default = "default_panic_window_cycles")]
+    pub panic_window_cycles: usize,
+    #[serde(default = "default_max_panics_in_window")]
+    pub max_panics_in_window: u32,
+    /// Presupuesto del scan: el periodo nominal del superloop, hoy emergente
+    /// del `poll_timeout_ms` = 50 (el "techo de ~20 Hz"). Declararlo hace
+    /// que `cycle_overruns` sea una señal verificable: un ciclo con trabajo
+    /// real que supera el presupuesto perdió el ritmo del scan.
+    #[serde(default = "default_cycle_budget_ms")]
+    pub cycle_budget_ms: u64,
     #[serde(default = "default_report_interval_s")]
     pub report_interval_s: u64,
+}
+
+impl HealthConfig {
+    pub fn is_valid(&self) -> bool {
+        self.data_stale_ms > 0 && self.stale_warn_ms < self.data_stale_ms
+    }
 }
 
 fn default_data_stale_ms() -> u64 {
     10_000
 }
 
-fn default_max_panics() -> u32 {
+const fn default_stale_warn_ms() -> u64 {
+    5_000
+}
+
+fn default_panic_window_cycles() -> usize {
+    20
+}
+
+fn default_max_panics_in_window() -> u32 {
     3
+}
+
+fn default_cycle_budget_ms() -> u64 {
+    50
 }
 
 fn default_report_interval_s() -> u64 {
@@ -364,6 +485,7 @@ fn default_report_interval_s() -> u64 {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct OutputConfig {
     #[serde(default = "default_format")]
     pub format: String,

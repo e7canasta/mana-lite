@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use crate::assignment::hungarian_min;
 use crate::detection::{ConsolidatedObservation, DetectionEvidence};
-use crate::kalman::Kalman7;
+use crate::kalman::{Kalman7, KalmanConfig};
 use crate::logger::Event;
 
 /// Per-track state: position, motion model, lifecycle.
@@ -78,6 +78,11 @@ pub struct TrackerConfig {
     pub max_age_ms: u64,
     pub tentative_max_age_ms: u64,
     pub iou_threshold: f32,
+    pub ghost_max_ms: u64,
+    pub nominal_dt_ms: u64,
+    pub measurement_noise: f32,
+    pub process_position_noise: f32,
+    pub process_velocity_noise: f32,
 }
 
 impl Default for TrackerConfig {
@@ -87,7 +92,23 @@ impl Default for TrackerConfig {
             max_age_ms: 4_000,
             tentative_max_age_ms: 600,
             iou_threshold: 0.2,
+            ghost_max_ms: 6_000,
+            nominal_dt_ms: 2_000,
+            measurement_noise: 1.0,
+            process_position_noise: 1.0,
+            process_velocity_noise: 0.25,
         }
+    }
+}
+
+#[allow(clippy::cast_precision_loss)]
+fn kalman_config(config: &TrackerConfig) -> KalmanConfig {
+    KalmanConfig {
+        nominal_dt_s: config.nominal_dt_ms as f32 / 1000.0,
+        max_dt_s: config.ghost_max_ms as f32 / 1000.0,
+        measurement_noise: config.measurement_noise,
+        process_position_noise: config.process_position_noise,
+        process_velocity_noise: config.process_velocity_noise,
     }
 }
 
@@ -98,6 +119,7 @@ pub struct Tracker {
     tentative_max_age_ms: u64,
     iou_threshold: f32,
     min_hits: u32,
+    kalman_config: KalmanConfig,
 }
 
 impl Tracker {
@@ -107,6 +129,7 @@ impl Tracker {
     }
 
     pub fn with_config(config: TrackerConfig) -> Self {
+        let kalman_config = kalman_config(&config);
         Self {
             tracks: HashMap::new(),
             next_id: 1,
@@ -114,6 +137,7 @@ impl Tracker {
             tentative_max_age_ms: config.tentative_max_age_ms,
             iou_threshold: config.iou_threshold,
             min_hits: config.min_hits.max(1),
+            kalman_config,
         }
     }
 
@@ -303,7 +327,7 @@ impl Tracker {
                     bbox: observation.bbox,
                     confidence: observation.confidence,
                     evidence: observation.evidence.clone(),
-                    kalman: Kalman7::from_bbox(observation.bbox),
+                    kalman: Kalman7::from_bbox_with_config(observation.bbox, self.kalman_config),
                     hits: 1,
                     hit_streak: 1,
                     misses: 0,
@@ -633,6 +657,7 @@ mod tests {
             max_age_ms: 4_000,
             tentative_max_age_ms: 600,
             iou_threshold: 0.2,
+            ..TrackerConfig::default()
         });
         let det = observation("person", [100.0, 100.0, 200.0, 300.0]);
 
@@ -659,6 +684,7 @@ mod tests {
             max_age_ms: 4_000,
             tentative_max_age_ms: 300,
             iou_threshold: 0.2,
+            ..TrackerConfig::default()
         });
         tracker.update(&[observation("person", [100.0, 100.0, 200.0, 300.0])], DT_MS);
         tracker.update(&[], DT_MS);
@@ -672,15 +698,31 @@ mod tests {
     }
 
     #[test]
+    fn uniform_keyframe_cadence_preserves_identity() {
+        let mut tracker = Tracker::new();
+        // El ancho de 200px conserva IoU > 0.2 entre muestras a 2 s: el test
+        // aísla el stall sin convertir la asociación inicial en otro caso.
+        let at = |x: f32| observation("person", [x, 100.0, x + 200.0, 300.0]);
+        // 50 px/s a cadencia real uniforme de 2 s.
+        tracker.update(&[at(100.0)], 2_000);
+        tracker.update(&[at(200.0)], 2_000);
+        let id = tracker.current_tracks()[0].id;
+        let events = tracker.update(&[at(300.0)], 2_000);
+        assert!(!events.iter().any(|e| matches!(e, TrackEvent::Created { .. })));
+        assert_eq!(tracker.current_tracks()[0].id, id);
+    }
+
+    #[test]
     fn network_stall_does_not_switch_identity() {
         let mut tracker = Tracker::new();
-        let at = |x: f32| observation("person", [x, 100.0, x + 100.0, 300.0]);
-        // 100 px/s, dos ciclos de 200 ms para confirmar
-        tracker.update(&[at(100.0)], 200);
-        tracker.update(&[at(120.0)], 200);
+        // El ancho de 200px mantiene IoU > 0.2 para aprender la velocidad
+        // antes del stall; el gap largo se prueba contra la predicción.
+        let at = |x: f32| observation("person", [x, 100.0, x + 200.0, 300.0]);
+        tracker.update(&[at(100.0)], 2_000);
+        tracker.update(&[at(200.0)], 2_000);
         let id = tracker.current_tracks()[0].id;
-        // corte de 2 s: la persona avanzo 200 px
-        let events = tracker.update(&[at(320.0)], 2_000);
+        // Stall de 6 s: la persona avanzó 300 px proporcionalmente al tiempo.
+        let events = tracker.update(&[at(500.0)], 6_000);
         assert!(!events.iter().any(|e| matches!(e, TrackEvent::Created { .. })));
         assert_eq!(tracker.current_tracks()[0].id, id);
     }

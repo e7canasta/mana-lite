@@ -21,22 +21,25 @@ La implementación en `mana-lite` (2026-08-07) reemplaza la primera etapa
 compatible (predicción lineal + greedy IoU) por:
 
 - `src/kalman.rs`: Kalman 7D `[cx, cy, s, r, dcx, dcy, ds]` sin dependencias
-  (matrices f32 fijas, inversa 4×4 por Gauss-Jordan). Constantes:
-  `P0 = diag(10,10,10,10,1e4,1e4,1e4)`, `Q = diag(1,1,1,1,0.01,0.01,1e-4)`,
-  `R = I4`. Propagación `P' = F·P·Fᵀ + Q`, `S = H·P·Hᵀ + R = P[0..4,0..4] + R`.
+  (matrices f32 fijas, inversa 4×4 por Gauss-Jordan). La covarianza inicial,
+  las matrices de proceso y medición se parametrizan desde `tracking`: `P0`
+  escala la incertidumbre de velocidad con `nominal_dt_ms`, `Q` usa
+  `process_position`/`process_velocity` y `R` usa `measurement`.
   La transición `F` se construye por función `transition(dt)` con `dt` en
-  segundos: extrapolar e incrementar incertidumbre proporcional a `dt`
-  (`NOMINAL_DT_S = 0.2`, `MAX_DT_S = 2.0`).
+  segundos; `nominal_dt_ms` y `ghost_max_ms` reemplazan las constantes de
+  hardware enterradas.
 - `src/assignment.rs`: Hungarian (Kuhn-Munkres, e-maxx) O(n³) con matriz
   1-based, sentinela finito `FORBIDDEN = 1e6` para pares prohibidos (clase
   distinta) y filtrado final por `max_cost = 1 - iou_threshold`.
 - `src/track.rs`: matching con `1 - IoU`, `track.bbox` = bbox del estado
-  Kalman tras predecir/actualizar.
+  Kalman tras predecir/actualizar. `max_age_ms`, `tentative_max_age_ms` y
+  `ghost_max_ms` son tiempos reales, no cantidades de frames.
 
 La validación con video clínico real (drift en paciente inmóvil, oclusión,
 frecuencias distintas entre modelos) queda pendiente de cámara RTSP; los
-parámetros `min_hits/max_age/tentative_max_age/iou_threshold` ya estaban en
-`config/mana.toml` y se ejercitan en tests de integración de `track.rs`.
+parámetros `min_hits/max_age/tentative_max_age/ghost_max/iou_threshold`, el
+ nominal temporal y las escalas de ruido están en `config/mana.toml` y se
+ ejercitan en tests de integración de `track.rs`.
 
 SORT fue publicado en 2016 (Bewley et al.) y es el algoritmo estándar en MOTChallenge.
 
@@ -44,10 +47,12 @@ SORT fue publicado en 2016 (Bewley et al.) y es el algoritmo estándar en MOTCha
 struct TrackingEngine {
     tracks: HashMap<u64, TrackState>,
     next_id: u64,
-    max_age_ms: u64,              // 4000 ms sin update → eliminar track
-    tentative_max_age_ms: u64,    // 600 ms — margen para confirmar tras un miss inicial
-    min_hits: u32,                // 3 detecciones consecutivas → track confirmado
-    iou_threshold: f32,           // 0.3 — umbral de matching
+    max_age_ms: u64,              // 40000 ms sin update → eliminar track
+    tentative_max_age_ms: u64,    // 6000 ms — margen para confirmar tras un miss inicial
+    ghost_max_ms: u64,             // 6000 ms — máximo de extrapolación Kalman
+    min_hits: u32,                 // 2 detecciones consecutivas → track confirmado
+    iou_threshold: f32,            // 0.2 — umbral de matching
+    nominal_dt_ms: u64,            // 2000 ms — periodo nominal de la cámara
 }
 
 struct TrackState {
@@ -81,7 +86,7 @@ fn update(&mut self, detections: &[Detection], dt_ms: u64) -> Vec<TrackEvent> {
 
     // Paso 1: PREDECIR
     for track in self.tracks.values_mut() {
-        track.kalman.predict(dt_ms as f32 / 1000.0);  // dt en segundos, clamp a MAX_DT_S
+        track.kalman.predict(dt_ms as f32 / 1000.0);  // dt en segundos, clamp a ghost_max_ms
         track.bbox = kalman_to_bbox(&track.kalman);  // x1y1x2y2 desde estado
     }
 
@@ -154,8 +159,8 @@ dcx, dcy, ds = velocidades (derivadas)
 
 - Transición: modelo de velocidad constante (linear motion) parametrizado por
   `dt` en segundos (`F = transition(dt)`, extrapolación y Q escaladas por
-  `dt/NOMINAL_DT_S`). Las velocidades del estado viven en px/s; P0/Q en las
-  filas 4-6 están reescaladas por `1/NOMINAL_DT_S²` para mantener la
+  `dt/nominal_dt_s`). Las velocidades del estado viven en px/s; P0/Q en las
+  filas 4-6 se reescalan con el nominal configurado para mantener la
   calibración del modelo original en px/frame.
 - Observación: medición directa de posición + escala + ratio
 - Inicialización: estado desde primer bbox, velocidades = 0, covarianza inicial alta en velocidad (incertidumbre)
@@ -183,14 +188,15 @@ Matriz de costos N×M donde `cost[i][j] = 1 - IoU(track_i.bbox, detection_j.bbox
 | Dependencias | Ninguna (solo nalgebra) | ONNX model for ReID |
 | Precisión clínica | Suficiente (oclusiones cortas < 1s) | Overkill |
 
-En una habitación clínica, las oclusiones duran segundos como máximo (enfermera pasa frente a cámara). SORT maneja oclusiones de hasta ~10 frames (1-2 segundos a 5-10fps de i-frames). Para oclusiones más largas, el track se pierde y se crea uno nuevo — clínicamente aceptable porque la persona no cambió (misma clase, misma zona).
+En una habitación clínica, las oclusiones duran segundos como máximo (enfermera pasa frente a cámara). Con la cámara de referencia, el pipeline recibe un I-frame aproximadamente cada 2 s; la tolerancia se expresa por tiempo real (`max_age_ms`), no por una cantidad fija de frames. Para oclusiones más largas que la política clínica, el track se pierde y se crea uno nuevo — clínicamente aceptable porque la persona no cambió (misma clase, misma zona).
 
 ## Tuning para escenas clínicas
 
 | Parámetro | Default | Clínico | Razón |
 |-----------|---------|---------|-------|
-| `max_age_ms` | 2000 | 4000 | Tiempo real sin update, no frames: 20 keyframes × 200 ms nominal. Cubre el corte de red + margen |
-| `tentative_max_age_ms` | 200 | 600 | No descartar una observación tentativa por 3 misses iniciales (3 × 200 ms) |
+| `max_age_ms` | 4000 | 40000 | 40 s de oclusión tolerada; intención clínica, no frecuencia de cámara |
+| `tentative_max_age_ms` | 600 | 6000 | Margen para confirmar después de un dropout inicial |
+| `ghost_max_ms` | 6000 | 6000 | Vigencia máxima de la extrapolación Kalman |
 | `min_hits` | 3 | 2 | Confirmar rápido (clínico no puede esperar 3 i-frames = 6s) |
 | `iou_threshold` | 0.3 | 0.2 | Personas lejanas = bboxes pequeños = IoU más bajo en matching |
 
@@ -200,6 +206,15 @@ alcanzaron `min_hits`. La expiración se decide por `time_since_update_ms`
 (tiempo real acumulado), no por el contador de `misses` — un corte de red de
 2 s que entrega un solo keyframe envejece al track 2000 ms, no 1 frame.
 `misses` se conserva para el evento `Lost` del log.
+
+### Cuantización temporal por I-frame
+
+La cámara de referencia entrega un I-frame aproximadamente cada 2 s. Hasta que
+el scan sea la base de tiempo del pipeline, los timers que dependen de evidencia
+de keyframe quedan cuantizados por ese período: un timer clínico de 5 s puede
+tener un error de aproximadamente ±2 s en la observación de la transición. Esto
+no cambia la intención clínica de los valores; documenta el límite de precisión
+del mecanismo actual y evita multiplicar los tiempos para “matchear” el hardware.
 
 ## Consequences
 

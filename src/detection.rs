@@ -42,9 +42,13 @@ pub struct DetectionConsolidator {
 }
 
 impl DetectionConsolidator {
-    pub const fn new(face_component_coverage: f32, face_max_center_y_ratio: f32) -> Self {
+    pub const fn new(
+        face_component_coverage: f32,
+        face_max_center_y_ratio: f32,
+        same_class_iou: f32,
+    ) -> Self {
         Self {
-            same_class_iou: 0.5,
+            same_class_iou,
             face_component_coverage,
             face_max_center_y_ratio,
         }
@@ -126,7 +130,7 @@ impl DetectionConsolidator {
 
 impl Default for DetectionConsolidator {
     fn default() -> Self {
-        Self::new(0.7, 0.65)
+        Self::new(0.7, 0.65, 0.5)
     }
 }
 

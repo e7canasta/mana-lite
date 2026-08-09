@@ -5,6 +5,8 @@ report_interval_s = 5
 ingest_line = true
 infer_summary = true
 per_model_lines = true
+cycle_line = true
+keyframe_gap_line = true
 
 [metrics.text.flags]
 ingest_pframes = true

@@ -120,6 +120,12 @@ impl LogSink for LogManager {
     }
 }
 
+impl Drop for LogManager {
+    fn drop(&mut self) {
+        LogSink::flush(self);
+    }
+}
+
 impl<T: LogSink + ?Sized> LogSink for Box<T> {
     fn emit(&mut self, event: Event) {
         (**self).emit(event);
@@ -317,6 +323,21 @@ mod tests {
         fn flush(&mut self) {}
     }
 
+    struct RecordingHandler {
+        events: std::rc::Rc<std::cell::RefCell<Vec<Event>>>,
+        flushes: std::rc::Rc<std::cell::Cell<usize>>,
+    }
+
+    impl LogHandler for RecordingHandler {
+        fn handle(&mut self, event: Event) {
+            self.events.borrow_mut().push(event);
+        }
+
+        fn flush(&mut self) {
+            self.flushes.set(self.flushes.get() + 1);
+        }
+    }
+
     #[test]
     fn log_manager_fans_events_out_to_handlers() {
         let first = std::rc::Rc::new(std::cell::Cell::new(0));
@@ -334,6 +355,44 @@ mod tests {
 
         assert_eq!(first.get(), 1);
         assert_eq!(second.get(), 1);
+    }
+
+    #[test]
+    fn shutdown_emits_reason_and_flushes_handlers() {
+        let events = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        let flushes = std::rc::Rc::new(std::cell::Cell::new(0));
+        let mut log = LogManager::with_handlers(vec![Box::new(RecordingHandler {
+            events: events.clone(),
+            flushes: flushes.clone(),
+        })]);
+
+        log.shutdown("signal");
+
+        let recorded = events.borrow();
+        assert!(matches!(
+            recorded.last(),
+            Some(Event::Meta {
+                event,
+                detail,
+                attrs,
+            }) if event == "shutdown"
+                && detail == "signal"
+                && attrs.iter().any(|(key, value)| key == "uptime" && value.parse::<u64>().is_ok())
+        ));
+        assert_eq!(flushes.get(), 1);
+    }
+
+    #[test]
+    fn dropping_log_manager_flushes_handlers() {
+        let flushes = std::rc::Rc::new(std::cell::Cell::new(0));
+        {
+            let _log = LogManager::with_handlers(vec![Box::new(RecordingHandler {
+                events: std::rc::Rc::new(std::cell::RefCell::new(Vec::new())),
+                flushes: flushes.clone(),
+            })]);
+        }
+
+        assert_eq!(flushes.get(), 1);
     }
 
     fn collect(logger: &mut LogManager) -> String {

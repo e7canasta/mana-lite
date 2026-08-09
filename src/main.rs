@@ -17,6 +17,7 @@ mod presence;
 mod snapshot;
 mod track;
 mod viz;
+mod window;
 mod zones;
 
 use cascade::{BlueprintConfig, CascadeRule, CascadeScheduler, CascadeTarget};
@@ -45,6 +46,7 @@ use std::collections::{HashMap, HashSet};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::PathBuf;
 use std::time::Instant;
+use tokio::signal::unix::{SignalKind, signal};
 use track::{Tracker, TrackerConfig, track_event_to_log};
 use ultralytics_inference::DepthMap;
 use viz::{FixedRoi, VizBridge};
@@ -89,6 +91,8 @@ struct App {
     snapshots: SnapshotSaver,
     viz: VizBridge,
     state: PipelineState,
+    boot_wall: chrono::DateTime<chrono::Utc>,
+    boot_instant: Instant,
     log: Box<dyn LogSink>,
     crop_frames_pending: Vec<CropFrameQueue>,
 }
@@ -109,12 +113,26 @@ impl App {
     async fn bootstrap(config: &AppConfig, config_path: &std::path::Path) -> Result<Self> {
         if !config.detection.face_component_coverage.is_finite()
             || !config.detection.face_max_center_y_ratio.is_finite()
+            || !config.detection.same_class_iou.is_finite()
             || !(0.0..=1.0).contains(&config.detection.face_component_coverage)
             || !(0.0..=1.0).contains(&config.detection.face_max_center_y_ratio)
+            || !(0.0..=1.0).contains(&config.detection.same_class_iou)
         {
             return Err(ManaError::Config(ConfigError::InvalidValue {
                 field: "detection".into(),
-                msg: "face association ratios must be within 0..=1".into(),
+                msg: "association ratios must be within 0..=1".into(),
+            }));
+        }
+        if !config.health.is_valid() {
+            return Err(ManaError::Config(ConfigError::InvalidValue {
+                field: "health.stale_warn_ms".into(),
+                msg: "must be less than health.data_stale_ms".into(),
+            }));
+        }
+        if !config.tracking.is_valid() {
+            return Err(ManaError::Config(ConfigError::InvalidValue {
+                field: "tracking".into(),
+                msg: "ghost/nominal intervals and noise scales must be positive and finite".into(),
             }));
         }
         if !config.presence.is_valid() {
@@ -396,6 +414,11 @@ impl App {
             max_age_ms: config.tracking.max_age_ms,
             tentative_max_age_ms: config.tracking.tentative_max_age_ms,
             iou_threshold: config.tracking.iou_threshold,
+            ghost_max_ms: config.tracking.ghost_max_ms,
+            nominal_dt_ms: config.tracking.nominal_dt_ms,
+            measurement_noise: config.tracking.noise.measurement,
+            process_position_noise: config.tracking.noise.process_position,
+            process_velocity_noise: config.tracking.noise.process_velocity,
         });
         let zone_engine = zones.as_ref().map(|z| ZoneEngine::from_catalog(z));
         let fsm_engine = fsm.as_ref().map(|f| FsmEngine::from_catalog(f));
@@ -460,8 +483,11 @@ impl App {
         .await?;
         let ingest = IngestEngine::new(reader);
 
-        let metrics = MetricsEngine::new(metrics_log.metrics.report_interval_s);
-        let health = Health::new(config.health.data_stale_ms);
+        let metrics = MetricsEngine::new(
+            metrics_log.metrics.report_interval_s,
+            config.health.cycle_budget_ms,
+        );
+        let health = Health::new(config.health.data_stale_ms, config.health.stale_warn_ms);
         let decoder = FrameDecoder::new()?;
         let snapshots = SnapshotSaver::new(
             config.output.snapshot_dir.clone(),
@@ -483,7 +509,20 @@ impl App {
             VizBridge::disabled()
         };
 
-        let state = PipelineState::new(metrics_log.metrics.text.clone());
+        let state = PipelineState::new(
+            metrics_log.metrics.text.clone(),
+            config.health.panic_window_cycles,
+            config.health.max_panics_in_window,
+        );
+
+        // Ancla del reloj: una sola lectura de pared y una de monotónico, en
+        // el mismo punto. Todo timestamp del proceso sale de aqui + delta del
+        // monotónico; un salto de NTP no puede desordenar ni duplicar el JSONL.
+        // Re-anclar en cada rotación horaria del log queda deliberadamente en
+        // pendiente: la deriva de ppm del monotónico es despreciable frente a
+        // la rotación del sistema, y un re-anclaje mal hecho reabriría el salto.
+        let boot_wall = chrono::Utc::now();
+        let boot_instant = Instant::now();
 
         Ok(Self {
             infer,
@@ -498,6 +537,7 @@ impl App {
             detection_consolidator: DetectionConsolidator::new(
                 config.detection.face_component_coverage,
                 config.detection.face_max_center_y_ratio,
+                config.detection.same_class_iou,
             ),
             ingest,
             metrics,
@@ -519,37 +559,67 @@ impl App {
             snapshots,
             viz,
             state,
+            boot_wall,
+            boot_instant,
             log,
             crop_frames_pending: Vec::new(),
         })
     }
 
     async fn run(&mut self, config: &AppConfig) -> Result<()> {
+        let mut term = signal(SignalKind::terminate())?;
+        let ctrl_c = tokio::signal::ctrl_c();
+        tokio::pin!(ctrl_c);
+        let mut shutdown_reason = "signal";
+
         loop {
             let cycle_now = Instant::now();
-            self.metrics.tick_cycle();
+            let mut processed = false;
 
-            if let Some(kf) = self.ingest.poll_freshest_keyframe().await {
-                let max_panics = config.health.max_consecutive_panics;
-                let result = catch_unwind(AssertUnwindSafe(|| {
-                    self.process_keyframe(kf, config);
-                }));
-                match result {
-                    Ok(()) => self.state.on_ok(),
-                    Err(e) => {
-                        let msg: String = e
-                            .downcast_ref::<String>()
-                            .cloned()
-                            .or_else(|| e.downcast_ref::<&str>().map(|s| s.to_string()))
-                            .unwrap_or_else(|| "unknown panic".into());
-                        log::error!("keyframe processing panicked: {msg}");
-                        if self.state.on_panic(max_panics) {
-                            log::error!("{} consecutive panics — exiting", max_panics);
-                            break;
+            tokio::select! {
+                kf = self.ingest.poll_freshest_keyframe() => {
+                    if let Some(kf) = kf {
+                        processed = true;
+                        let result = catch_unwind(AssertUnwindSafe(|| {
+                            self.process_keyframe(kf, config, cycle_now);
+                        }));
+                        match result {
+                            Ok(()) => {
+                                let _ = self.state.on_ok();
+                            }
+                            Err(e) => {
+                                let msg: String = e
+                                    .downcast_ref::<String>()
+                                    .cloned()
+                                    .or_else(|| e.downcast_ref::<&str>().map(|s| s.to_string()))
+                                    .unwrap_or_else(|| "unknown panic".into());
+                                log::error!("keyframe processing panicked: {msg}");
+                                // No reanudar desde estado roto: blind forzado, y que
+                                // el ciclo siguiente reconstruya desde idle.
+                                if let Some(fsm) = self.fsm_engine.as_mut() {
+                                    fsm.force_safe_state(cycle_now);
+                                }
+                                if self.state.on_panic() {
+                                    shutdown_reason = "panic";
+                                    log::error!(
+                                        "panic density in the last {} cycles exceeded {} — exiting",
+                                        config.health.panic_window_cycles,
+                                        config.health.max_panics_in_window
+                                    );
+                                    break;
+                                }
+                            }
                         }
                     }
                 }
+                _ = term.recv() => break,
+                _ = &mut ctrl_c => break,
             }
+
+            // El tick mide el delta del ciclo que acaba de correr (poll +
+            // procesamiento): por eso va despues del bloque de trabajo, no
+            // antes — el overrun se atribuye al ciclo que realmente trabajo.
+            self.metrics.tick_cycle_at(cycle_now, processed);
 
             self.drain_ingest_counters();
             self.evaluate_fsm_wildcard(config);
@@ -560,23 +630,24 @@ impl App {
             self.viz.tick();
         }
 
-        #[allow(unreachable_code)]
-        self.log.shutdown("loop_exit");
+        self.log.shutdown(shutdown_reason);
         Ok(())
     }
 
-    fn process_keyframe(&mut self, kf: RawKeyframe, config: &AppConfig) {
-        let frame_timestamp_ns = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
+    fn process_keyframe(&mut self, kf: RawKeyframe, config: &AppConfig, cycle_now: Instant) {
+        let frame_timestamp_ns = frame_timestamp_ns(&self.boot_wall, self.boot_instant, cycle_now);
         let (frame_buf, decode_us) = self.decoder.decode_timed(&kf.h264);
         if frame_buf.is_some() {
             // Solo un frame decodificable es senal fresca: si el decode falla,
             // Health queda sin touch y la ceguera sigue su curso.
-            self.state.mark_health_fresh(&mut self.health, &mut self.log);
+            self.state
+                .mark_health_fresh(&mut self.health, &mut self.log, cycle_now);
         }
         let dt_ms = self.state.on_keyframe(
             decode_us,
             &mut self.metrics,
             &mut self.log,
+            cycle_now,
         );
         self.viz
             .set_frame_time(self.state.frame_number(), frame_timestamp_ns);
@@ -1413,4 +1484,42 @@ fn parse_args() -> Result<PathBuf> {
         field: "args".into(),
         msg: "Usage: mana-lite --config <mana.toml>".into(),
     }))
+}
+
+/// Mapea un instante monotónico del proceso a nanosegundos de pared anclados
+/// en el bootstrap. El resultado nunca decrece con `now`, porque el monotónico
+/// solo avanza: un salto de NTP no puede desordenar ni duplicar el JSONL.
+/// Degradado: si el ancla de pared falla (epoch fuera de rango), se parte de 0
+/// pero la propiedad de monotonía se conserva igual.
+fn frame_timestamp_ns(
+    boot_wall: &chrono::DateTime<chrono::Utc>,
+    boot_instant: Instant,
+    now: Instant,
+) -> i64 {
+    let boot_ns = boot_wall.timestamp_nanos_opt().unwrap_or(0);
+    let since_boot = now.saturating_duration_since(boot_instant).as_nanos();
+    let delta_ns = i64::try_from(since_boot).unwrap_or(i64::MAX);
+    boot_ns.saturating_add(delta_ns)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn frame_timestamp_ns_es_monotona_en_el_instante() {
+        let boot_at = chrono::Utc::now();
+        let boot_instant = Instant::now();
+        let t1 = boot_instant + std::time::Duration::from_millis(50);
+        let t2 = t1 + std::time::Duration::from_millis(250);
+
+        let ns1 = frame_timestamp_ns(&boot_at, boot_instant, t1);
+        let ns2 = frame_timestamp_ns(&boot_at, boot_instant, t2);
+
+        assert!(ns2 >= ns1, "un instante posterior nunca produce ts menor");
+        assert!(
+            ns2 - ns1 >= 200_000_000,
+            "dos frames a 250ms de distancia no se colapsan"
+        );
+    }
 }

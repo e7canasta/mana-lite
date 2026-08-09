@@ -18,6 +18,7 @@ pub fn validate_fsm(
             fsm.fsm.initial
         ));
     }
+    validate_fsm_roles(fsm, &mut errors);
 
     for t in &fsm.fsm.transitions {
         if t.from != "*" && !fsm.fsm.states.contains_key(&t.from) {
@@ -39,6 +40,14 @@ pub fn validate_fsm(
         .filter(|t| t.from != "*")
         .map(|t| t.from.as_str())
         .collect();
+    if fsm.fsm.states.contains_key(&fsm.fsm.roles.safe)
+        && !with_exit.contains(fsm.fsm.roles.safe.as_str())
+    {
+        errors.push(format!(
+            "safe state '{}' has no outgoing transition",
+            fsm.fsm.roles.safe
+        ));
+    }
     for name in fsm.fsm.states.keys() {
         if !with_exit.contains(name.as_str()) {
             errors.push(format!("state '{name}' has no outgoing transition (sink)"));
@@ -105,6 +114,31 @@ pub fn validate_fsm(
     }
 
     errors
+}
+
+fn validate_fsm_roles(fsm: &FsmCatalog, errors: &mut Vec<String>) {
+    if !fsm.fsm.states.contains_key(&fsm.fsm.roles.safe) {
+        errors.push(format!(
+            "safe state '{}' not found in states",
+            fsm.fsm.roles.safe
+        ));
+    }
+    if !fsm.fsm.states.contains_key(&fsm.fsm.roles.reset) {
+        errors.push(format!(
+            "reset state '{}' not found in states",
+            fsm.fsm.roles.reset
+        ));
+    }
+    for state in &fsm.fsm.roles.latch_set {
+        if !fsm.fsm.states.contains_key(state) {
+            errors.push(format!("latch_set state '{state}' not found in states"));
+        }
+    }
+    for state in &fsm.fsm.roles.latch_maybe {
+        if !fsm.fsm.states.contains_key(state) {
+            errors.push(format!("latch_maybe state '{state}' not found in states"));
+        }
+    }
 }
 
 pub fn validate_model_catalog(models: &ModelCatalog) -> Vec<String> {

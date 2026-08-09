@@ -272,7 +272,23 @@ impl FsmEngine {
     }
 
     fn update_face_latch(&mut self, context: &FsmSceneContext) {
-        if matches!(self.current_state.as_str(), "detected" | "in_bed") {
+        if self
+            .catalog
+            .fsm
+            .roles
+            .latch_set
+            .contains(&self.current_state)
+        {
+            self.face_was_inside = true;
+        }
+        if self
+            .catalog
+            .fsm
+            .roles
+            .latch_maybe
+            .contains(&self.current_state)
+            && context.face_present
+        {
             self.face_was_inside = true;
         }
         if context.cardinality.as_deref() == Some("multiple") {
@@ -302,14 +318,12 @@ impl FsmEngine {
         self.current_state.clone_from(&result.to);
         self.state_entered_at = now;
         self.dwell_timers.clear();
-        if result.to == "detected"
-            || result.to == "in_bed"
-            || (result.to == "edge" && context.face_present)
+        if result.to == self.catalog.fsm.roles.reset {
+            self.face_was_inside = false;
+        } else if self.catalog.fsm.roles.latch_set.contains(&result.to)
+            || (self.catalog.fsm.roles.latch_maybe.contains(&result.to) && context.face_present)
         {
             self.face_was_inside = true;
-        }
-        if result.to == "idle" {
-            self.face_was_inside = false;
         }
     }
 
@@ -320,6 +334,27 @@ impl FsmEngine {
             .get(&self.current_state)
             .map(|s| s.models.clone())
             .unwrap_or_default()
+    }
+
+    /// Fuerza el estado seguro configurado en `fsm.roles.safe` tras un panic
+    /// del procesador de keyframe:
+    /// un panic deja al motor con estado posiblemente a medio actualizar
+    /// (tracker, occupancy y presence conservan su estado; el FSM puede
+    /// quedar con transiciones a medias), y reanudarlo tal cual es arriesgado.
+    /// En el estado seguro declara cero modelos — la máquina se detiene sobre
+    /// lo que sí sabe que es estable, y al ciclo siguiente la transición
+    /// `data_fresh` la lleva a `fsm.roles.reset`, donde `apply_transition`
+    /// reconstruye el estado del FSM desde cero (incluido el latch
+    /// `face_was_inside`).
+    ///
+    /// No se hace vía Health: un `mark_blind()` forzado con `stale_ms ≈ 0`
+    /// limpiaría la bandera en el mismo ciclo y emitiría un `Recovered`
+    /// espurio. Este método es un salto de estado directo, sin pasar por
+    /// el evaluador.
+    pub fn force_safe_state(&mut self, now: Instant) {
+        self.current_state.clone_from(&self.catalog.fsm.roles.safe);
+        self.state_entered_at = now;
+        self.dwell_timers.clear();
     }
 }
 
@@ -508,7 +543,7 @@ fn eval_guard(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{FsmRoot, FsmState, FsmTransition};
+    use crate::config::{FsmRoles, FsmRoot, FsmState, FsmTransition};
     use crate::metrics::Health;
 
     fn make_catalog(
@@ -539,13 +574,139 @@ mod tests {
                 },
             );
         }
+        let safe = if state_map.contains_key("blind") {
+            "blind"
+        } else {
+            initial
+        };
+        let reset = if state_map.contains_key("idle") {
+            "idle"
+        } else {
+            initial
+        };
+        let latch_set = ["detected", "in_bed"]
+            .into_iter()
+            .filter(|name| state_map.contains_key(*name))
+            .map(str::to_owned)
+            .collect();
+        let latch_maybe = if state_map.contains_key("edge") {
+            vec!["edge".to_owned()]
+        } else {
+            Vec::new()
+        };
         FsmCatalog {
             fsm: FsmRoot {
                 initial: initial.to_string(),
                 states: state_map,
+                roles: FsmRoles {
+                    safe: safe.to_string(),
+                    reset: reset.to_string(),
+                    latch_set,
+                    latch_maybe,
+                },
                 transitions,
             },
         }
+    }
+
+    fn catalog_with_roles(roles: FsmRoles) -> FsmCatalog {
+        let mut catalog = make_catalog(
+            "home",
+            vec![("home", vec![]), ("offline", vec![]), ("engaged", vec![])],
+            vec![
+                FsmTransition {
+                    from: "*".into(),
+                    to: "offline".into(),
+                    guards: vec![FsmGuard::DataStale],
+                    dwell: None,
+                },
+                FsmTransition {
+                    from: "offline".into(),
+                    to: "home".into(),
+                    guards: vec![FsmGuard::DataFresh],
+                    dwell: None,
+                },
+                FsmTransition {
+                    from: "home".into(),
+                    to: "engaged".into(),
+                    guards: vec![FsmGuard::FaceDetected {
+                        min_confidence: 0.5,
+                    }],
+                    dwell: None,
+                },
+                FsmTransition {
+                    from: "engaged".into(),
+                    to: "home".into(),
+                    guards: vec![FsmGuard::FaceAbsent],
+                    dwell: None,
+                },
+            ],
+        );
+        catalog.fsm.roles = roles;
+        catalog
+    }
+
+    #[test]
+    fn force_safe_state_uses_roles_in_real_catalogs() {
+        let start = Instant::now();
+        for path in [
+            "config/fsm.toml",
+            "config/blueprints/detect-room-face/fsm.toml",
+        ] {
+            let catalog = crate::config::load_fsm_catalog(std::path::Path::new(path)).unwrap();
+            let mut engine = FsmEngine::from_catalog_at(&catalog, start);
+
+            engine.force_safe_state(start);
+
+            assert_eq!(engine.current_state(), catalog.fsm.roles.safe, "{path}");
+            assert!(engine.current_models().is_empty(), "{path}");
+        }
+    }
+
+    #[test]
+    fn roles_decouple_engine_from_state_names() {
+        let start = Instant::now();
+        let catalog = catalog_with_roles(FsmRoles {
+            safe: "offline".into(),
+            reset: "home".into(),
+            latch_set: vec!["engaged".into()],
+            latch_maybe: Vec::new(),
+        });
+        let mut engine = FsmEngine::from_catalog_at(&catalog, start);
+        let health = Health::new_at(10_000, 5_000, start);
+        let depth = DepthRuleSnapshot::default();
+
+        engine.force_safe_state(start);
+        assert_eq!(engine.current_state(), "offline");
+
+        let face = FsmSceneContext {
+            face_present: true,
+            face_confidence: Some(0.9),
+            ..Default::default()
+        };
+        let reset = engine
+            .evaluate_with_context_at(&[], None, &health, &depth, &face, start)
+            .expect("data fresh resets to home");
+        assert_eq!(reset.to, "home");
+
+        let engaged = engine
+            .evaluate_with_context_at(&[], None, &health, &depth, &face, start)
+            .expect("face enters engaged");
+        assert_eq!(engaged.to, "engaged");
+        assert!(engine.face_was_inside);
+
+        let home = engine
+            .evaluate_with_context_at(
+                &[],
+                None,
+                &health,
+                &depth,
+                &FsmSceneContext::default(),
+                start,
+            )
+            .expect("face absence resets to home");
+        assert_eq!(home.to, "home");
+        assert!(!engine.face_was_inside);
     }
 
     #[test]
@@ -567,7 +728,7 @@ mod tests {
             face_dwell: None,
         });
 
-        let mut health = Health::new_at(100, start); // 100ms stale
+        let mut health = Health::new_at(100, 50, start); // 100ms stale
         let _ = health.evaluate_at(start + std::time::Duration::from_millis(200)); // trigger blind
 
         let result = engine.evaluate(&[], &zones, &health, &DepthRuleSnapshot::default());
@@ -614,7 +775,7 @@ mod tests {
             zones: HashMap::new(),
             face_dwell: None,
         });
-        let mut health = Health::new_at(100, start);
+        let mut health = Health::new_at(100, 50, start);
 
         let face = FsmSceneContext {
             face_present: true,
@@ -667,6 +828,112 @@ mod tests {
     }
 
     #[test]
+    fn force_safe_state_purges_corrupted_state_and_recovers_to_idle() {
+        let catalog = make_catalog(
+            "idle",
+            vec![
+                ("idle", vec!["detect-fast"]),
+                ("detected", vec!["detect-fast"]),
+                ("blind", vec![]),
+                ("edge", vec![]),
+            ],
+            vec![
+                FsmTransition {
+                    from: "idle".into(),
+                    to: "detected".into(),
+                    guards: vec![FsmGuard::FaceDetected {
+                        min_confidence: 0.5,
+                    }],
+                    dwell: None,
+                },
+                FsmTransition {
+                    from: "detected".into(),
+                    to: "edge".into(),
+                    guards: vec![FsmGuard::FaceInDwell],
+                    dwell: Some("1000ms".into()),
+                },
+                FsmTransition {
+                    from: "*".into(),
+                    to: "blind".into(),
+                    guards: vec![FsmGuard::DataStale],
+                    dwell: None,
+                },
+                FsmTransition {
+                    from: "blind".into(),
+                    to: "idle".into(),
+                    guards: vec![FsmGuard::DataFresh],
+                    dwell: None,
+                },
+            ],
+        );
+        let start = Instant::now();
+        let mut engine = FsmEngine::from_catalog_at(&catalog, start);
+        let zones = ZoneEngine::from_catalog(&crate::config::ZoneCatalog {
+            zones: HashMap::new(),
+            face_dwell: None,
+        });
+        let health = Health::new_at(100, 50, start); // nunca emborna: data siempre fresh
+        let face = FsmSceneContext {
+            face_present: true,
+            face_confidence: Some(0.9),
+            face_in_dwell: Some(true),
+            ..Default::default()
+        };
+
+        // Estado torcido: detected con latch y un timer de dwell pendiente.
+        let entered = engine
+            .evaluate_with_context_at(
+                &[],
+                Some(&zones),
+                &health,
+                &DepthRuleSnapshot::default(),
+                &face,
+                start,
+            )
+            .expect("face entra a detected");
+        assert_eq!(entered.to, "detected");
+        assert!(engine.face_was_inside);
+        let pending = engine.evaluate_with_context_at(
+            &[],
+            Some(&zones),
+            &health,
+            &DepthRuleSnapshot::default(),
+            &face,
+            start + std::time::Duration::from_millis(50),
+        );
+        assert!(pending.is_none(), "dwell de 1s todavia no cumple");
+        assert_eq!(
+            engine.snapshot_at(start + std::time::Duration::from_millis(50)).active_timers.len(),
+            1,
+            "timer de dwell armado"
+        );
+
+        // El panic fuerza el estado seguro.
+        engine.force_safe_state(start + std::time::Duration::from_millis(200));
+        assert_eq!(engine.current_state(), "blind", "blind directo, sin pasar por el evaluador");
+        assert!(engine.current_models().is_empty(), "blind declara cero modelos");
+        let snap = engine.snapshot_at(start + std::time::Duration::from_millis(200));
+        assert_eq!(snap.active_timers.len(), 0, "dwell_timers purgados");
+        assert_eq!(snap.state_dwell_ms, 0, "state_entered_at reiniciado");
+
+        // Ciclo siguiente: data_fresh reconstruye desde idle, latch limpio.
+        let recovered = engine
+            .evaluate_with_context_at(
+                &[],
+                Some(&zones),
+                &health,
+                &DepthRuleSnapshot::default(),
+                &face,
+                start + std::time::Duration::from_millis(200),
+            )
+            .expect("data fresh sale de blind");
+        assert_eq!(recovered.to, "idle");
+        assert_eq!(engine.current_state(), "idle");
+        assert!(!engine.face_was_inside, "el estado torcido no sobrevive");
+        assert!(!engine.current_models().is_empty(), "la inferencia vuelve");
+    }
+
+    #[test]
     fn wildcard_evaluation_does_not_run_state_specific_transition() {
         let catalog = make_catalog(
             "idle",
@@ -680,7 +947,7 @@ mod tests {
         );
         let start = Instant::now();
         let mut engine = FsmEngine::from_catalog_at(&catalog, start);
-        let health = Health::new(10_000);
+        let health = Health::new(10_000, 5_000);
         let inside = FsmSceneContext {
             face_in_dwell: Some(true),
             ..Default::default()
@@ -735,7 +1002,7 @@ mod tests {
             zones: HashMap::new(),
             face_dwell: None,
         });
-        let health = Health::new(10_000);
+        let health = Health::new(10_000, 5_000);
 
         let events = vec![ZoneEvent::Occupied {
             zone: "bed".into(),
@@ -772,7 +1039,7 @@ mod tests {
             zones: HashMap::new(),
             face_dwell: None,
         });
-        let health = Health::new(10_000);
+        let health = Health::new(10_000, 5_000);
 
         let events = vec![ZoneEvent::Occupied {
             zone: "bed".into(),
@@ -814,7 +1081,7 @@ mod tests {
             zones: HashMap::new(),
             face_dwell: None,
         });
-        let health = Health::new(10_000);
+        let health = Health::new(10_000, 5_000);
 
         let events = vec![ZoneEvent::Occupied {
             zone: "bed".into(),
@@ -846,7 +1113,7 @@ mod tests {
             zones: HashMap::new(),
             face_dwell: None,
         });
-        let mut health = Health::new_at(100, start);
+        let mut health = Health::new_at(100, 50, start);
         let _ = health.evaluate_at(start + std::time::Duration::from_millis(200));
 
         assert!(
@@ -896,7 +1163,7 @@ mod tests {
             zones: HashMap::new(),
             face_dwell: None,
         });
-        let health = Health::new_at(10_000, start);
+        let health = Health::new_at(10_000, 5_000, start);
 
         assert!(
             engine
@@ -946,7 +1213,7 @@ mod tests {
             zones: HashMap::new(),
             face_dwell: None,
         });
-        let health = Health::new(10_000);
+        let health = Health::new(10_000, 5_000);
 
         let triggered = make_snapshot("bed-approach", true);
         let result = engine.evaluate(&[], &zones, &health, &triggered);
@@ -974,7 +1241,7 @@ mod tests {
             zones: HashMap::new(),
             face_dwell: None,
         });
-        let health = Health::new(10_000);
+        let health = Health::new(10_000, 5_000);
 
         // Sin evidencia de la regla (mapa, ROI o cobertura) -> guard falso.
         let empty = DepthRuleSnapshot::default();
@@ -1010,7 +1277,7 @@ mod tests {
             zones: HashMap::new(),
             face_dwell: None,
         });
-        let health = Health::new(10_000);
+        let health = Health::new(10_000, 5_000);
 
         assert!(
             engine
@@ -1038,7 +1305,7 @@ mod tests {
             }],
         );
         let mut engine = FsmEngine::from_catalog(&catalog);
-        let health = Health::new(10_000);
+        let health = Health::new(10_000, 5_000);
         let outside = FsmSceneContext {
             face_in_dwell: Some(false),
             ..Default::default()
@@ -1075,7 +1342,7 @@ mod tests {
         );
         let start = Instant::now();
         let mut engine = FsmEngine::from_catalog_at(&catalog, start);
-        let health = Health::new(10_000);
+        let health = Health::new(10_000, 5_000);
         let inside = FsmSceneContext {
             cardinality: Some("single".into()),
             person_present: true,
@@ -1134,7 +1401,7 @@ mod tests {
         );
         let start = Instant::now();
         let mut engine = FsmEngine::from_catalog_at(&catalog, start);
-        let health = Health::new(10_000);
+        let health = Health::new(10_000, 5_000);
         let at_edge = FsmSceneContext {
             person_present: true,
             face_present: true,
@@ -1229,7 +1496,7 @@ mod tests {
             zones: HashMap::new(),
             face_dwell: None,
         });
-        let health = Health::new(10_000);
+        let health = Health::new(10_000, 5_000);
         let present = FsmSceneContext {
             cardinality: Some("single".into()),
             person_present: true,
@@ -1349,7 +1616,7 @@ mod tests {
         );
         let start = Instant::now();
         let mut engine = FsmEngine::from_catalog_at(&catalog, start);
-        let health = Health::new(10_000);
+        let health = Health::new(10_000, 5_000);
         let absent = FsmSceneContext {
             cardinality: Some("single".into()),
             person_present: false,

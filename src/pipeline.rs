@@ -1,20 +1,25 @@
 use crate::config::MetricsTextConfig;
 use crate::logger::{Event, LogSink};
 use crate::metrics::{Health, HealthTransition, MetricsEngine, MetricsReport, PerModelMetrics};
+use crate::window::ErrorWindow;
 use std::time::Instant;
 
 pub struct PipelineState {
     frame_count: u64,
-    panic_count: u32,
+    panic_window: ErrorWindow,
     last_keyframe_at: Instant,
     metrics_text: MetricsTextConfig,
 }
 
 impl PipelineState {
-    pub fn new(metrics_text: MetricsTextConfig) -> Self {
+    pub fn new(
+        metrics_text: MetricsTextConfig,
+        panic_window_cycles: usize,
+        max_panics_in_window: u32,
+    ) -> Self {
         Self {
             frame_count: 0,
-            panic_count: 0,
+            panic_window: ErrorWindow::new(panic_window_cycles, max_panics_in_window),
             last_keyframe_at: Instant::now(),
             metrics_text,
         }
@@ -24,13 +29,20 @@ impl PipelineState {
         self.frame_count
     }
 
-    pub fn on_ok(&mut self) {
-        self.panic_count = 0;
+    /// Un ciclo con keyframe procesado sin panic: la ventana envejece.
+    /// Devuelve true si la alerta sigue activa (la densidad no ha vuelto
+    /// a estar bajo el umbral).
+    pub fn on_ok(&mut self) -> bool {
+        self.panic_window.record(false)
     }
 
-    pub fn on_panic(&mut self, max_consecutive: u32) -> bool {
-        self.panic_count += 1;
-        self.panic_count >= max_consecutive
+    /// Un ciclo con keyframe roto por panic. Devuelve true cuando la
+    /// densidad de panics en la ventana supera el máximo configurado:
+    /// la máquina avisa que no está procesando una fracción tolerable del
+    /// trabajo — no cuenta rachas, un panic aislado entre trabajo sano
+    /// no es señal.
+    pub fn on_panic(&mut self) -> bool {
+        self.panic_window.record(true)
     }
 
     pub fn on_keyframe(
@@ -38,12 +50,12 @@ impl PipelineState {
         decode_us: u64,
         metrics: &mut MetricsEngine,
         log: &mut dyn LogSink,
+        now: Instant,
     ) -> u64 {
         self.frame_count += 1;
-        let now = Instant::now();
         let dt_ms = now.duration_since(self.last_keyframe_at).as_millis() as u64;
         self.last_keyframe_at = now;
-        metrics.tick_keyframe();
+        metrics.tick_keyframe(dt_ms);
         metrics.tick_decode(decode_us);
         if self.frame_count % 5 == 1 {
             log::info!(
@@ -66,8 +78,8 @@ impl PipelineState {
     /// Devuelve el heartbeat si esto marca el retorno de una ceguera — es la
     /// recuperacion real del superloop (evaluate_at ya encuentra las
     /// banderas limpias y nunca emite Recovered).
-    pub fn mark_health_fresh(&mut self, health: &mut Health, log: &mut dyn LogSink) {
-        if health.touch_at(Instant::now()) {
+    pub fn mark_health_fresh(&mut self, health: &mut Health, log: &mut dyn LogSink, now: Instant) {
+        if health.touch_at(now) {
             log.emit(Event::health_heartbeat(0, "ingest", 0));
         }
     }
@@ -112,8 +124,36 @@ fn avg_ms(total_ms: u64, count: u64) -> u64 {
     if count > 0 { total_ms / count } else { 0 }
 }
 
+/// El periodo real del scan contra su presupuesto declarado: p95 es la
+/// cola que rompe el scan, max el peor caso, min el suelo. `overruns`
+/// cuenta los ciclos con trabajo real que superaron el presupuesto.
+fn log_cycle_line(report: &MetricsReport) {
+    log::info!(
+        "cycle:  {:.1} Hz — {} scans in {}s | p95 {}ms max {}ms min {}ms | {} overruns (budget {}ms)",
+        hz(report.cycles, report.window_s),
+        report.cycles,
+        report.window_s,
+        report.cycle_p95_ms,
+        report.cycle_max_ms,
+        report.cycle_min_ms,
+        report.cycle_overruns,
+        report.cycle_budget_ms,
+    );
+}
+
 fn log_ingest_line(report: &MetricsReport, config: &MetricsTextConfig) {
     let decode_avg = avg_ms(report.decode_total_ms, report.keyframes);
+    let gap_str = if config.keyframe_gap_line && report.keyframes > 0 {
+        format!(
+            " | gap min {}ms p50 {}ms p95 {}ms max {}ms",
+            report.keyframe_gap_min_ms,
+            report.keyframe_gap_p50_ms,
+            report.keyframe_gap_p95_ms,
+            report.keyframe_gap_max_ms,
+        )
+    } else {
+        String::new()
+    };
     let mut flags = Vec::new();
     if config.flags.ingest_pframes && report.ingest_pframes > 0 {
         flags.push(format!("pframes:{}", report.ingest_pframes));
@@ -143,12 +183,13 @@ fn log_ingest_line(report: &MetricsReport, config: &MetricsTextConfig) {
     };
 
     log::info!(
-        "ingest: {:.1} Hz — {} keyframes processed ({} seen) in {}s | decode {}ms avg | cycles {}{}",
+        "ingest: {:.1} Hz — {} keyframes processed ({} seen) in {}s | decode {}ms avg{} | cycles {}{}",
         hz(report.keyframes, report.window_s),
         report.keyframes,
         report.keyframes_seen.max(report.keyframes),
         report.window_s,
         decode_avg,
+        gap_str,
         report.cycles,
         flag_str,
     );
@@ -243,6 +284,9 @@ fn log_per_model(name: &str, m: &PerModelMetrics, window_s: u64, keyframes: u64)
 }
 
 fn log_report(report: &MetricsReport, model_order: &[String], config: &MetricsTextConfig) {
+    if config.cycle_line {
+        log_cycle_line(report);
+    }
     if config.ingest_line {
         log_ingest_line(report, config);
     }
@@ -272,16 +316,16 @@ mod tests {
     #[test]
     fn mark_health_fresh_emits_heartbeat_only_when_leaving_blind() {
         let start = Instant::now();
-        let mut health = Health::new_at(10_000, start);
-        let mut state = PipelineState::new(MetricsTextConfig::default());
+        let mut health = Health::new_at(10_000, 5_000, start);
+        let mut state = PipelineState::new(MetricsTextConfig::default(), 20, 3);
         let mut log = RecordingSink::default();
 
-        state.mark_health_fresh(&mut health, &mut log);
+        state.mark_health_fresh(&mut health, &mut log, start);
         assert!(log.events.is_empty(), "llegada sana no es evento");
 
-        let _ = health.evaluate_at(start + Duration::from_millis(20_000));
+        let _ = health.evaluate_at(start + Duration::from_secs(20));
         assert!(health.is_blind());
-        state.mark_health_fresh(&mut health, &mut log);
+        state.mark_health_fresh(&mut health, &mut log, start + Duration::from_secs(30));
         assert_eq!(log.events.len(), 1, "return de blind emite heartbeat");
         assert!(
             matches!(&log.events[0], Event::Health { event, .. } if event == "heartbeat"),
@@ -289,7 +333,7 @@ mod tests {
         );
         assert!(!health.is_blind());
 
-        state.mark_health_fresh(&mut health, &mut log);
+        state.mark_health_fresh(&mut health, &mut log, start + Duration::from_secs(31));
         assert_eq!(log.events.len(), 1, "la recuperacion dispara una sola vez");
     }
 
@@ -299,17 +343,72 @@ mod tests {
         // la secuencia de un decode roto es (a) no tocar Health y (b) dejar
         // que el evaluador del ciclo siga su curso hasta blind.
         let start = Instant::now();
-        let mut health = Health::new_at(10_000, start);
-        let mut state = PipelineState::new(MetricsTextConfig::default());
+        let mut health = Health::new_at(10_000, 5_000, start);
+        let mut state = PipelineState::new(MetricsTextConfig::default(), 20, 3);
         let mut log = RecordingSink::default();
 
-        state.mark_health_fresh(&mut health, &mut log);
-        let _ = health.evaluate_at(start + Duration::from_millis(20_000));
+        state.mark_health_fresh(&mut health, &mut log, start);
+        let _ = health.evaluate_at(start + Duration::from_secs(20));
         assert!(health.is_blind(), "sin frames validos se llega a blind");
 
         // El keyframe roto no toca Health; la ceguera persiste.
-        let _ = health.evaluate_at(start + Duration::from_millis(30_000));
+        let _ = health.evaluate_at(start + Duration::from_secs(30));
         assert!(health.is_blind());
         assert!(log.events.is_empty(), "ningun heartbeat falso");
+    }
+
+    /// El caso clínico de la mini-spec: un panic cada dos frames hacía oscilar
+    /// la cuenta de 0 a 1 y nunca disparaba. Con densidad, 10 panics en una
+    /// ventana de 20 ciclos es señal inequívoca, y dispara.
+    #[test]
+    fn watchdog_fires_on_alternating_panics_within_window() {
+        let mut state = PipelineState::new(MetricsTextConfig::default(), 20, 3);
+        // 20 ciclos alternados: panic, ok, panic, ok...
+        // 4º panic → 4 panics en ventana > 3 → dispara, dentro de la ventana.
+        let mut tripped_at = u32::MAX;
+        for i in 0..20u32 {
+            let tripped = if i % 2 == 0 {
+                state.on_panic()
+            } else {
+                state.on_ok()
+            };
+            if tripped {
+                tripped_at = i;
+                break;
+            }
+        }
+        assert!(
+            tripped_at < 20,
+            "el watchdog debe disparar dentro de la ventana (disparo en {tripped_at})"
+        );
+    }
+
+    /// Densidad y no racha: 3 panics consecutivos y después trabajo sano no
+    /// pueden tumbar el proceso, aunque la racha sea igual al umbral.
+    #[test]
+    fn watchdog_ignores_streaks_when_work_recovers() {
+        let mut state = PipelineState::new(MetricsTextConfig::default(), 20, 3);
+        for _ in 0..3 {
+            assert!(!state.on_panic(), "racha de 3 no es señal");
+        }
+        for _ in 0..20 {
+            assert!(!state.on_ok(), "trabajo sano envejece la ventana");
+        }
+        assert!(!state.on_panic(), "un panic aislado post-recuperacion no suena");
+    }
+
+    #[test]
+    fn watchdog_sparse_never_trips() {
+        // Un panic cada 8 ciclos: 3 piezas máximas simultáneas en la ventana
+        // de 20 — el umbral tolera 3, no se supera.
+        let mut state = PipelineState::new(MetricsTextConfig::default(), 20, 3);
+        for i in 0..160u32 {
+            let tripped = if i % 8 == 0 {
+                state.on_panic()
+            } else {
+                state.on_ok()
+            };
+            assert!(!tripped, "densidad de 1/8 no puede disparar");
+        }
     }
 }

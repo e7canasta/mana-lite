@@ -2,6 +2,11 @@ metrics_file = "config/metrics.toml"
 viz_file = "config/viz.toml"
 rerun_file = "config/rerun.toml"
 
+# ============================================================================
+# MECANISMO DE DESPLIEGUE
+# Ajustes de cámara, transporte, modelos y dispositivo. Estos valores cambian
+# al cambiar el hardware o el perfil de ejecución, no el protocolo clínico.
+# ============================================================================
 [source]
 #url = "rtsp://192.168.1.6:8554/mana015"
 #url = "rtsp://192.168.1.15:8554/clip1"
@@ -30,10 +35,18 @@ zones_file = "config/zones.toml"
 fsm_file = "config/blueprints/detect-room-face/fsm.toml"
 
 [detection]
+# Mecanismo de asociación y consolidación entre salidas de modelos.
 face_component_coverage = 0.70
 face_max_center_y_ratio = 0.65
 face_edge_margin_px = 32
+same_class_iou = 0.5
 
+# ============================================================================
+# POLÍTICA CLÍNICA
+# Estos tiempos expresan intención del protocolo y son agnósticos de cámara.
+# No multiplicarlos para compensar una frecuencia de I-frame distinta.
+# Los `dwell_min_ms` y `dwell` clínicos viven en los catálogos de `fsm.toml`.
+# ============================================================================
 [presence]
 enabled = true
 class = "person"
@@ -42,7 +55,7 @@ class = "person"
 # PLC TON: real ms of valid one-person detection required before room becomes single.
 on_ms = 200
 # PLC TOF for the POI/tracker path; room exit uses occupancy.empty_confirm_ms.
-off_ms = 1600
+off_ms = 16_000
 
 [presence.occupancy]
 # Room transitions use monotonic time, not keyframe/inference counts.
@@ -53,16 +66,36 @@ multiple_exit_ms = 5000
 require_confirmed_tracks = false
 
 [tracking]
+# Política clínica: tolerancia de oclusión y vigencia de una detección vieja.
+max_age_ms = 40_000
+tentative_max_age_ms = 6_000
+ghost_max_ms = 6_000
+
+# Mecanismo: asociación y periodo nominal del dispositivo.
 min_hits = 2
-max_age_ms = 4000
-tentative_max_age_ms = 600
 iou_threshold = 0.2
+nominal_dt_ms = 2000
+
+[tracking.noise]
+measurement = 1.0
+process_position = 1.0
+process_velocity = 0.25
 
 [health]
+# Política clínica: umbrales de ausencia de señal.
 data_stale_ms = 10_000
-max_consecutive_panics = 3
+stale_warn_ms = 5_000
+
+# Mecanismo: watchdog y presupuesto de ejecución del dispositivo.
+panic_window_cycles = 20
+max_panics_in_window = 3
+cycle_budget_ms = 500
 report_interval_s = 5
 
+# ============================================================================
+# MECANISMO DE DESPLIEGUE
+# Salida, pipeline y visualización.
+# ============================================================================
 [output]
 format = "jsonl"
 save_dir = "./logs"

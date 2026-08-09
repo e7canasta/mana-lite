@@ -8,6 +8,9 @@ initial = "idle"
 label = "Face idle"
 models = ["detect-fast", "face-yolo"]
 
+[fsm.states.blind]
+label = "BLIND: No Camera Signal"
+
 [fsm.states.searching]
 label = "Buscando cara"
 models = ["detect-fast", "face-yolo"]
@@ -32,7 +35,23 @@ models = ["detect-fast", "face-yolo"]
 label = "Saliendo"
 models = ["detect-fast", "face-yolo"]
 
+[fsm.roles]
+safe = "blind"
+reset = "idle"
+latch_set = ["detected", "in_bed"]
+latch_maybe = ["edge"]
+
 # A second person cancels the single-person face session.
+
+[[fsm.transitions]]
+from = "*"
+to = "blind"
+guards = [{ type = "data_stale" }]
+
+[[fsm.transitions]]
+from = "blind"
+to = "idle"
+guards = [{ type = "data_fresh" }]
 
 [[fsm.transitions]]
 from = "searching"

@@ -98,6 +98,13 @@ impl Default for PerModelMetrics {
 #[derive(Debug, Clone)]
 pub struct Metrics {
     pub cycles: u64,
+    pub cycle_min_us: u64,
+    pub cycle_max_us: u64,
+    pub cycle_overruns: u64,
+    pub cycle_samples: Vec<u64>,
+    pub keyframe_gap_min_us: u64,
+    pub keyframe_gap_max_us: u64,
+    pub keyframe_gap_samples: Vec<u64>,
     pub frames_total: u64,
     pub keyframes: u64,
     pub keyframes_seen: u64,
@@ -126,6 +133,13 @@ impl Default for Metrics {
     fn default() -> Self {
         Self {
             cycles: 0,
+            cycle_min_us: u64::MAX,
+            cycle_max_us: 0,
+            cycle_overruns: 0,
+            cycle_samples: Vec::new(),
+            keyframe_gap_min_us: u64::MAX,
+            keyframe_gap_max_us: 0,
+            keyframe_gap_samples: Vec::new(),
             frames_total: 0,
             keyframes: 0,
             keyframes_seen: 0,
@@ -152,11 +166,62 @@ impl Default for Metrics {
     }
 }
 
+/// Percentil entero de una muestra ya ordenada, sin f64 ni copias temporales.
+fn percentile_us(samples: &[u64], percentile: usize) -> u64 {
+    if samples.is_empty() {
+        return 0;
+    }
+    let idx = samples
+        .len()
+        .saturating_mul(percentile)
+        .div_ceil(100)
+        .saturating_sub(1);
+    samples[idx.min(samples.len() - 1)]
+}
+
 impl Metrics {
-    pub fn into_report(self, window_s: u64) -> MetricsReport {
+    fn with_cycle_capacity(cycle_capacity: usize) -> Self {
+        let mut metrics = Self::default();
+        metrics.cycle_samples = Vec::with_capacity(cycle_capacity);
+        metrics.keyframe_gap_samples = Vec::with_capacity(cycle_capacity);
+        metrics
+    }
+
+    pub fn into_report(mut self, window_s: u64, cycle_budget_ms: u64) -> MetricsReport {
+        self.cycle_samples.sort_unstable();
+        let cycle_p95_us = percentile_us(&self.cycle_samples, 95);
+        self.keyframe_gap_samples.sort_unstable();
+        let keyframe_gap_count = self.keyframe_gap_samples.len();
+        let keyframe_gap_p50_us = percentile_us(&self.keyframe_gap_samples, 50);
+        let keyframe_gap_p95_us = percentile_us(&self.keyframe_gap_samples, 95);
         MetricsReport {
             window_s,
             cycles: self.cycles,
+            cycle_min_ms: if self.cycles > 0 {
+                self.cycle_min_us / 1000
+            } else {
+                0
+            },
+            cycle_max_ms: if self.cycles > 0 {
+                self.cycle_max_us / 1000
+            } else {
+                0
+            },
+            cycle_p95_ms: cycle_p95_us / 1000,
+            cycle_overruns: self.cycle_overruns,
+            cycle_budget_ms,
+            keyframe_gap_min_ms: if keyframe_gap_count > 0 {
+                self.keyframe_gap_min_us / 1000
+            } else {
+                0
+            },
+            keyframe_gap_p50_ms: keyframe_gap_p50_us / 1000,
+            keyframe_gap_p95_ms: keyframe_gap_p95_us / 1000,
+            keyframe_gap_max_ms: if keyframe_gap_count > 0 {
+                self.keyframe_gap_max_us / 1000
+            } else {
+                0
+            },
             frames_total: self.frames_total,
             keyframes: self.keyframes,
             keyframes_seen: self.keyframes_seen,
@@ -195,6 +260,15 @@ impl Metrics {
 pub struct MetricsReport {
     pub window_s: u64,
     pub cycles: u64,
+    pub cycle_min_ms: u64,
+    pub cycle_max_ms: u64,
+    pub cycle_p95_ms: u64,
+    pub cycle_overruns: u64,
+    pub cycle_budget_ms: u64,
+    pub keyframe_gap_min_ms: u64,
+    pub keyframe_gap_p50_ms: u64,
+    pub keyframe_gap_p95_ms: u64,
+    pub keyframe_gap_max_ms: u64,
     pub frames_total: u64,
     pub keyframes: u64,
     pub keyframes_seen: u64,
@@ -224,25 +298,55 @@ pub struct MetricsEngine {
     model_order: Vec<String>,
     window_start: Instant,
     report_interval_s: u64,
+    cycle_budget_us: u64,
+    cycle_sample_capacity: usize,
+    last_cycle_start: Instant,
 }
 
 impl MetricsEngine {
-    pub fn new(report_interval_s: u64) -> Self {
+    pub fn new(report_interval_s: u64, cycle_budget_ms: u64) -> Self {
+        Self::new_at(report_interval_s, cycle_budget_ms, Instant::now())
+    }
+
+    pub fn new_at(report_interval_s: u64, cycle_budget_ms: u64, now: Instant) -> Self {
+        let cycle_sample_capacity = cycle_sample_capacity(report_interval_s, cycle_budget_ms);
         Self {
-            current: Metrics::default(),
+            current: Metrics::with_cycle_capacity(cycle_sample_capacity),
             model_order: Vec::new(),
-            window_start: Instant::now(),
+            window_start: now,
             report_interval_s,
+            cycle_budget_us: cycle_budget_ms * 1000,
+            cycle_sample_capacity,
+            last_cycle_start: now,
         }
     }
 
-    pub fn tick_cycle(&mut self) {
+    /// Mide el periodo real del scan contra el inicio del ciclo anterior y lo
+    /// enfrenta al presupuesto declarado ([health] `cycle_budget_ms`):
+    /// la tesis del PLC vuelta señal verificable. `processed` marca los
+    /// ciclos con trabajo real — un ciclo que solo esperó el `poll` nunca
+    /// declara overrun, porque el ocio cumple su presupuesto por
+    /// construcción (duerme a timeout).
+    pub fn tick_cycle_at(&mut self, now: Instant, processed: bool) {
         self.current.cycles += 1;
+        let delta_us = u64::try_from(now.saturating_duration_since(self.last_cycle_start).as_micros())
+            .unwrap_or(u64::MAX);
+        self.last_cycle_start = now;
+        self.current.cycle_min_us = self.current.cycle_min_us.min(delta_us);
+        self.current.cycle_max_us = self.current.cycle_max_us.max(delta_us);
+        self.current.cycle_samples.push(delta_us);
+        if processed && delta_us > self.cycle_budget_us {
+            self.current.cycle_overruns += 1;
+        }
     }
 
-    pub fn tick_keyframe(&mut self) {
+    pub fn tick_keyframe(&mut self, gap_ms: u64) {
         self.current.keyframes += 1;
         self.current.frames_total += 1;
+        let sample_us = gap_ms.saturating_mul(1000);
+        self.current.keyframe_gap_min_us = self.current.keyframe_gap_min_us.min(sample_us);
+        self.current.keyframe_gap_max_us = self.current.keyframe_gap_max_us.max(sample_us);
+        self.current.keyframe_gap_samples.push(sample_us);
     }
 
     pub fn tick_inference_model(
@@ -398,10 +502,20 @@ impl MetricsEngine {
             return None;
         }
         let order = std::mem::take(&mut self.model_order);
-        let report = std::mem::take(&mut self.current).into_report(elapsed);
+        let current = std::mem::replace(
+            &mut self.current,
+            Metrics::with_cycle_capacity(self.cycle_sample_capacity),
+        );
+        let report = current.into_report(elapsed, self.cycle_budget_us / 1000);
         self.window_start = Instant::now();
         Some((report, order))
     }
+}
+
+fn cycle_sample_capacity(report_interval_s: u64, cycle_budget_ms: u64) -> usize {
+    let budget_ms = cycle_budget_ms.max(1);
+    let samples = report_interval_s.saturating_mul(1_000).div_ceil(budget_ms);
+    usize::try_from(samples).unwrap_or(usize::MAX)
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -420,19 +534,21 @@ pub enum HealthTransition {
 pub struct Health {
     last_frame_at: Instant,
     data_stale_ms: u64,
+    stale_warn_ms: u64,
     blind: bool,
     stale: bool,
 }
 
 impl Health {
-    pub fn new(data_stale_ms: u64) -> Self {
-        Self::new_at(data_stale_ms, Instant::now())
+    pub fn new(data_stale_ms: u64, stale_warn_ms: u64) -> Self {
+        Self::new_at(data_stale_ms, stale_warn_ms, Instant::now())
     }
 
-    pub fn new_at(data_stale_ms: u64, now: Instant) -> Self {
+    pub fn new_at(data_stale_ms: u64, stale_warn_ms: u64, now: Instant) -> Self {
         Self {
             last_frame_at: now,
             data_stale_ms,
+            stale_warn_ms,
             blind: false,
             stale: false,
         }
@@ -470,7 +586,7 @@ impl Health {
                     ms_since_frame: stale_ms,
                 };
             }
-        } else if stale_ms > self.data_stale_ms / 2 {
+        } else if stale_ms > self.stale_warn_ms {
             if !self.blind && !self.stale {
                 self.stale = true;
                 return HealthTransition::Stale {
@@ -480,7 +596,7 @@ impl Health {
             }
         }
 
-        if (self.blind || self.stale) && stale_ms <= self.data_stale_ms / 2 {
+        if (self.blind || self.stale) && stale_ms <= self.stale_warn_ms {
             let was_blind = self.blind;
             self.blind = false;
             self.stale = false;
@@ -504,7 +620,7 @@ mod tests {
 
     #[test]
     fn depth_metrics_count_only_finite_positive_pixels() {
-        let mut engine = MetricsEngine::new(0);
+        let mut engine = MetricsEngine::new(0, 50);
         let depth = DepthMap::new(
             array![[0.0, 1.0, 2.0], [f32::NAN, 3.0, f32::INFINITY]],
             (2, 3),
@@ -525,7 +641,7 @@ mod tests {
 
     #[test]
     fn empty_depth_does_not_count_as_detection_empty() {
-        let mut engine = MetricsEngine::new(0);
+        let mut engine = MetricsEngine::new(0, 50);
         engine.tick_inference_depth("depth-standard", 10, None, None);
         let (report, _) = engine.take_report().expect("zero-second report");
         let metrics = &report.model_metrics["depth-standard"];
@@ -534,10 +650,62 @@ mod tests {
         assert_eq!(report.infer_empty, 0);
     }
 
+    /// Aceptación del item "presupuesto de ciclo": un ciclo sintético por
+    /// encima del presupuesto incrementa cycle_overruns y sale en el
+    /// reporte con p95 y max.
+    #[test]
+    fn cycle_overruns_trip_above_budget_and_show_in_report() {
+        let start = Instant::now();
+        let at = |ms: u64| start + std::time::Duration::from_millis(ms);
+        let mut engine = MetricsEngine::new_at(0, 50, start);
+
+        engine.tick_cycle_at(at(40), false); // ocioso 40ms: nada
+        engine.tick_cycle_at(at(91), true); // trabajo 51ms > 50: overrun
+        engine.tick_cycle_at(at(111), true); // trabajo 20ms: dentro de budget
+        engine.tick_cycle_at(at(171), true); // trabajo 60ms: overrun
+        engine.tick_cycle_at(at(221), false); // ocioso 50ms: ocio nunca overruns
+
+        let (report, _) = engine.take_report().expect("zero-second report");
+        assert_eq!(report.cycles, 5);
+        assert_eq!(report.cycle_overruns, 2);
+        assert_eq!(report.cycle_min_ms, 20);
+        assert_eq!(report.cycle_max_ms, 60);
+        assert_eq!(report.cycle_p95_ms, 60, "p95 de [40,51,20,60,50]");
+        assert_eq!(report.cycle_budget_ms, 50);
+    }
+
+    #[test]
+    fn keyframe_gap_distribution_is_reported() {
+        let start = Instant::now();
+        let mut engine = MetricsEngine::new_at(0, 50, start);
+
+        for gap_ms in [40, 80, 120, 200] {
+            engine.tick_keyframe(gap_ms);
+        }
+
+        let (report, _) = engine.take_report().expect("zero-second report");
+        assert_eq!(report.keyframe_gap_min_ms, 40);
+        assert_eq!(report.keyframe_gap_p50_ms, 80);
+        assert_eq!(report.keyframe_gap_p95_ms, 200);
+        assert_eq!(report.keyframe_gap_max_ms, 200);
+    }
+
+    #[test]
+    fn idle_cycles_never_trip_the_budget() {
+        let start = Instant::now();
+        let at = |ms: u64| start + std::time::Duration::from_millis(ms);
+        let mut engine = MetricsEngine::new_at(0, 50, start);
+
+        engine.tick_cycle_at(at(50), false);
+        engine.tick_cycle_at(at(102), false); // 52ms ociosos: espera
+        let (report, _) = engine.take_report().expect("zero-second report");
+        assert_eq!(report.cycle_overruns, 0, "el ocio nunca declara overrun");
+    }
+
     #[test]
     fn health_enters_stale_at_half_threshold() {
         let start = Instant::now();
-        let mut health = Health::new_at(10_000, start);
+        let mut health = Health::new_at(10_000, 5_000, start);
         let at = |ms: u64| start + std::time::Duration::from_millis(ms);
 
         assert_eq!(health.evaluate_at(at(5_000)), HealthTransition::None);
@@ -551,9 +719,25 @@ mod tests {
     }
 
     #[test]
+    fn health_uses_configured_stale_warning_threshold() {
+        let start = Instant::now();
+        let mut health = Health::new_at(10_000, 2_000, start);
+        let at = |ms: u64| start + std::time::Duration::from_millis(ms);
+
+        assert_eq!(health.evaluate_at(at(2_000)), HealthTransition::None);
+        assert!(matches!(
+            health.evaluate_at(at(2_001)),
+            HealthTransition::Stale {
+                ms_since_frame: 2_001,
+                ..
+            }
+        ));
+    }
+
+    #[test]
     fn health_enters_blind_at_full_threshold() {
         let start = Instant::now();
-        let mut health = Health::new_at(10_000, start);
+        let mut health = Health::new_at(10_000, 5_000, start);
         let at = |ms: u64| start + std::time::Duration::from_millis(ms);
 
         assert_eq!(
@@ -568,7 +752,7 @@ mod tests {
     #[test]
     fn blind_fires_once_while_condition_holds() {
         let start = Instant::now();
-        let mut health = Health::new_at(10_000, start);
+        let mut health = Health::new_at(10_000, 5_000, start);
         let at = |ms: u64| start + std::time::Duration::from_millis(ms);
 
         assert_eq!(
@@ -585,7 +769,7 @@ mod tests {
     #[test]
     fn blind_persists_across_intermediate_hysteresis_band() {
         let start = Instant::now();
-        let mut health = Health::new_at(10_000, start);
+        let mut health = Health::new_at(10_000, 5_000, start);
         let at = |ms: u64| start + std::time::Duration::from_millis(ms);
 
         let _ = health.evaluate_at(at(10_001));
@@ -598,7 +782,7 @@ mod tests {
     #[test]
     fn recovered_fires_once_then_stays_silent() {
         let start = Instant::now();
-        let mut health = Health::new_at(10_000, start);
+        let mut health = Health::new_at(10_000, 5_000, start);
         let at = |ms: u64| start + std::time::Duration::from_millis(ms);
 
         let _ = health.evaluate_at(at(10_001));
@@ -614,7 +798,7 @@ mod tests {
         // evaluate jamas se cumple en vivo. La recuperacion la reporta
         // touch_at, y el heartbeat se emite en el touch del frame valido.
         let start = Instant::now();
-        let mut health = Health::new_at(10_000, start);
+        let mut health = Health::new_at(10_000, 5_000, start);
         let at = |ms: u64| start + std::time::Duration::from_millis(ms);
 
         let _ = health.evaluate_at(at(10_001));
@@ -626,7 +810,7 @@ mod tests {
     #[test]
     fn evaluate_at_saturates_when_clock_goes_backwards() {
         let start = Instant::now();
-        let mut health = Health::new_at(10_000, start);
+        let mut health = Health::new_at(10_000, 5_000, start);
         assert_eq!(
             health.evaluate_at(start - std::time::Duration::from_millis(100)),
             HealthTransition::None

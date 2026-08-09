@@ -160,6 +160,12 @@ pub struct MetricsTextConfig {
     pub infer_summary: bool,
     #[serde(default = "default_true")]
     pub per_model_lines: bool,
+    /// Reporte del scan (periodo p95/min/max y overruns contra el
+    /// presupuesto declarado en [health] `cycle_budget_ms`).
+    #[serde(default = "default_true")]
+    pub cycle_line: bool,
+    #[serde(default = "default_true")]
+    pub keyframe_gap_line: bool,
     #[serde(default)]
     pub flags: MetricsTextFlags,
 }
@@ -170,6 +176,8 @@ impl Default for MetricsTextConfig {
             ingest_line: true,
             infer_summary: true,
             per_model_lines: true,
+            cycle_line: true,
+            keyframe_gap_line: true,
             flags: MetricsTextFlags::default(),
         }
     }

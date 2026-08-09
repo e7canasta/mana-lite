@@ -1,6 +1,8 @@
 use crate::config::IngestConfig;
 use crate::error::*;
-use std::collections::VecDeque;
+use crate::window::ErrorWindow;
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 use std::time::Instant;
 
 pub trait FrameReader {
@@ -42,7 +44,7 @@ pub struct IngestCounters {
 
 pub struct IngestEngine<R: FrameReader> {
     reader: R,
-    last_h264: Option<Vec<u8>>,
+    last_digest: Option<u64>,
     pframes_dropped: u64,
     keyframes_dup: u64,
     keyframes_seen: u64,
@@ -56,7 +58,7 @@ impl<R: FrameReader> IngestEngine<R> {
     pub fn new(reader: R) -> Self {
         Self {
             reader,
-            last_h264: None,
+            last_digest: None,
             pframes_dropped: 0,
             keyframes_dup: 0,
             keyframes_seen: 0,
@@ -69,7 +71,7 @@ impl<R: FrameReader> IngestEngine<R> {
 
     /// Drain all buffered frames and return the freshest IDR keyframe, or
     /// `None` if no new keyframe arrived before the reader timed out.
-    /// Duplicate consecutive keyframes (same bytes) are suppressed.
+    /// Duplicate consecutive keyframes (same 64-bit digest) are suppressed.
     pub async fn poll_freshest_keyframe(&mut self) -> Option<RawKeyframe> {
         let mut latest: Option<Frame> = None;
         let mut pframes: u64 = 0;
@@ -97,13 +99,14 @@ impl<R: FrameReader> IngestEngine<R> {
 
         let kf = latest?;
 
-        if self.last_h264.as_ref().is_some_and(|last| last == &kf.h264) {
+        let digest = h264_digest(&kf.h264);
+        if self.last_digest == Some(digest) {
             self.keyframes_dup += 1;
             return None;
         }
 
         let h264 = kf.h264;
-        self.last_h264 = Some(h264.clone());
+        self.last_digest = Some(digest);
         let now = Instant::now();
         let source_window_ms = now.duration_since(self.last_keyframe_at).as_millis() as u64;
         let raw = RawKeyframe {
@@ -117,6 +120,12 @@ impl<R: FrameReader> IngestEngine<R> {
         self.last_keyframe_at = now;
         Some(raw)
     }
+}
+
+fn h264_digest(h264: &[u8]) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    h264.hash(&mut hasher);
+    hasher.finish()
 }
 
 impl IngestEngine<RetinaReader> {
@@ -162,42 +171,6 @@ fn fast_jitter(half: u64, seed: u64) -> u64 {
         .wrapping_add(0xBF58476D1CE4E5B9)
         >> 32) as u64)
         % m
-}
-
-struct ErrorWindow {
-    ring: VecDeque<bool>,
-    count: u32,
-    cap: usize,
-    threshold: u32,
-}
-
-impl ErrorWindow {
-    fn new(cap: usize, threshold: u32) -> Self {
-        Self {
-            ring: VecDeque::with_capacity(cap),
-            count: 0,
-            cap,
-            threshold,
-        }
-    }
-
-    fn record(&mut self, is_error: bool) -> bool {
-        self.ring.push_back(is_error);
-        if is_error {
-            self.count += 1;
-        }
-        if self.ring.len() > self.cap {
-            if self.ring.pop_front().unwrap() {
-                self.count -= 1;
-            }
-        }
-        self.count > self.threshold
-    }
-
-    fn reset(&mut self) {
-        self.ring.clear();
-        self.count = 0;
-    }
 }
 
 impl RetinaReader {
@@ -366,6 +339,7 @@ impl FrameReader for RetinaReader {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::VecDeque;
 
     struct TestReader {
         frames: VecDeque<Frame>,
@@ -462,6 +436,18 @@ mod tests {
         engine.reader.frames.push_back(make_keyframe(8));
         let kf = engine.poll_freshest_keyframe().await.unwrap();
         assert_eq!(kf.h264, vec![8u8; 64]);
+    }
+
+    #[tokio::test]
+    async fn distinct_keyframes_are_not_deduplicated() {
+        let mut engine = make_reader(vec![make_keyframe(7)]);
+        assert!(engine.poll_freshest_keyframe().await.is_some());
+
+        engine.reader.frames.push_back(Frame {
+            h264: vec![7; 63],
+            is_keyframe: true,
+        });
+        assert!(engine.poll_freshest_keyframe().await.is_some());
     }
 
     #[tokio::test]

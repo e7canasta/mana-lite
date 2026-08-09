@@ -10,8 +10,19 @@ pub struct FsmCatalog {
 pub struct FsmRoot {
     pub initial: String,
     pub states: HashMap<String, FsmState>,
+    pub roles: FsmRoles,
     #[serde(default)]
     pub transitions: Vec<FsmTransition>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct FsmRoles {
+    pub safe: String,
+    pub reset: String,
+    #[serde(default)]
+    pub latch_set: Vec<String>,
+    #[serde(default)]
+    pub latch_maybe: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

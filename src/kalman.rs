@@ -9,14 +9,32 @@
 pub struct Kalman7 {
     x: [f32; 7],
     p: [[f32; 7]; 7],
+    config: KalmanConfig,
 }
 
-/// Paso nominal entre keyframes procesados.
-pub const NOMINAL_DT_S: f32 = 0.2;
+#[derive(Debug, Clone, Copy)]
+pub struct KalmanConfig {
+    /// Paso nominal en segundos. Viene de `tracking.nominal_dt_ms` y debe
+    /// desaparecer cuando el scan sea la base de tiempo del pipeline.
+    pub nominal_dt_s: f32,
+    /// Más allá de este intervalo la extrapolación es ruido.
+    pub max_dt_s: f32,
+    pub measurement_noise: f32,
+    pub process_position_noise: f32,
+    pub process_velocity_noise: f32,
+}
 
-/// Mas alla de este dt la extrapolacion es ruido: la expiracion por edad
-/// (track.rs) debe encargarse antes.
-const MAX_DT_S: f32 = 2.0;
+impl Default for KalmanConfig {
+    fn default() -> Self {
+        Self {
+            nominal_dt_s: 2.0,
+            max_dt_s: 6.0,
+            measurement_noise: 1.0,
+            process_position_noise: 1.0,
+            process_velocity_noise: 0.25,
+        }
+    }
+}
 
 /// Matriz de transicion del modelo de velocidad constante para un `dt`
 /// dado (en segundos). Con `dt = 1` era la matriz identidad + velocidades.
@@ -31,44 +49,55 @@ fn transition(dt: f32) -> [[f32; 7]; 7] {
     f
 }
 
-// Las velocidades del estado viven en px/segundo (el modelo viejo las media
-// en px/frame). P0/Q conservan los valores de siempre reescalados por
-// 1/NOMINAL_DT_S^2 = 25 en las filas/cols 4..6 para que la incertidumbre
-// inicial de velocidad y el ruido de proceso signifiquen lo mismo que antes.
-const P0: [[f32; 7]; 7] = [
-    [10.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-    [0.0, 10.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-    [0.0, 0.0, 10.0, 0.0, 0.0, 0.0, 0.0],
-    [0.0, 0.0, 0.0, 10.0, 0.0, 0.0, 0.0],
-    [0.0, 0.0, 0.0, 0.0, 250_000.0, 0.0, 0.0],
-    [0.0, 0.0, 0.0, 0.0, 0.0, 250_000.0, 0.0],
-    [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 250_000.0],
-];
+// Las velocidades del estado viven en px/segundo. La varianza inicial de
+// velocidad conserva la escala histórica de 10_000 / nominal_dt_s².
+fn initial_covariance(nominal_dt_s: f32) -> [[f32; 7]; 7] {
+    let velocity_variance = 10_000.0 / nominal_dt_s.max(1e-3).powi(2);
+    [
+        [10.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+        [0.0, 10.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+        [0.0, 0.0, 10.0, 0.0, 0.0, 0.0, 0.0],
+        [0.0, 0.0, 0.0, 10.0, 0.0, 0.0, 0.0],
+        [0.0, 0.0, 0.0, 0.0, velocity_variance, 0.0, 0.0],
+        [0.0, 0.0, 0.0, 0.0, 0.0, velocity_variance, 0.0],
+        [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, velocity_variance],
+    ]
+}
 
-const Q: [[f32; 7]; 7] = [
-    [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-    [0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-    [0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0],
-    [0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0],
-    [0.0, 0.0, 0.0, 0.0, 0.25, 0.0, 0.0],
-    [0.0, 0.0, 0.0, 0.0, 0.0, 0.25, 0.0],
-    [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0025],
-];
-
-const R: [[f32; 4]; 4] = [
-    [1.0, 0.0, 0.0, 0.0],
-    [0.0, 1.0, 0.0, 0.0],
-    [0.0, 0.0, 1.0, 0.0],
-    [0.0, 0.0, 0.0, 1.0],
-];
+fn process_noise(config: KalmanConfig) -> [[f32; 7]; 7] {
+    [
+        [config.process_position_noise, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+        [0.0, config.process_position_noise, 0.0, 0.0, 0.0, 0.0, 0.0],
+        [0.0, 0.0, config.process_position_noise, 0.0, 0.0, 0.0, 0.0],
+        [0.0, 0.0, 0.0, config.process_position_noise, 0.0, 0.0, 0.0],
+        [0.0, 0.0, 0.0, 0.0, config.process_velocity_noise, 0.0, 0.0],
+        [0.0, 0.0, 0.0, 0.0, 0.0, config.process_velocity_noise, 0.0],
+        [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            config.process_velocity_noise * 0.01,
+        ],
+    ]
+}
 
 impl Kalman7 {
     /// Estado desde un bbox x1y1x2y2, velocidades nulas y covarianza inicial.
     #[must_use]
+    #[allow(dead_code)]
     pub fn from_bbox(bbox: [f32; 4]) -> Self {
+        Self::from_bbox_with_config(bbox, KalmanConfig::default())
+    }
+
+    #[must_use]
+    pub fn from_bbox_with_config(bbox: [f32; 4], config: KalmanConfig) -> Self {
         Self {
             x: bbox_to_state(bbox),
-            p: P0,
+            p: initial_covariance(config.nominal_dt_s),
+            config,
         }
     }
 
@@ -80,12 +109,12 @@ impl Kalman7 {
     /// Paso de prediccion (modelo de velocidad constante, `dt` en segundos).
     #[allow(clippy::needless_range_loop)]
     pub fn predict(&mut self, dt_s: f32) {
-        let dt = dt_s.clamp(1e-3, MAX_DT_S);
+        let dt = dt_s.clamp(1e-3, self.config.max_dt_s.max(1e-3));
         let f = transition(dt);
         // Q escalado: la incertidumbre crece con el tiempo transcurrido,
-        // no por tick. Con dt = NOMINAL_DT_S queda igual que el modelo viejo.
-        let k = dt / NOMINAL_DT_S;
-        let mut q = Q;
+        // no por tick. Con dt = nominal_dt_s queda en la escala configurada.
+        let k = dt / self.config.nominal_dt_s.max(1e-3);
+        let mut q = process_noise(self.config);
         for row in &mut q {
             for v in row.iter_mut() {
                 *v *= k;
@@ -109,7 +138,12 @@ impl Kalman7 {
         let mut s = [[0.0f32; 4]; 4];
         for i in 0..4 {
             for j in 0..4 {
-                s[i][j] = R[i][j] + self.p[i][j];
+                let measurement = if i == j {
+                    self.config.measurement_noise
+                } else {
+                    0.0
+                };
+                s[i][j] = measurement + self.p[i][j];
             }
         }
         let s_inv = invert4(s);
@@ -152,7 +186,12 @@ impl Kalman7 {
 
 impl Default for Kalman7 {
     fn default() -> Self {
-        Self { x: [0.0; 7], p: P0 }
+        let config = KalmanConfig::default();
+        Self {
+            x: [0.0; 7],
+            p: initial_covariance(config.nominal_dt_s),
+            config,
+        }
     }
 }
 
@@ -281,7 +320,7 @@ mod tests {
     #[test]
     fn predict_keeps_static_position() {
         let mut kalman = Kalman7::from_bbox([0.0, 0.0, 100.0, 200.0]);
-        kalman.predict(NOMINAL_DT_S);
+        kalman.predict(KalmanConfig::default().nominal_dt_s);
         let bbox = kalman.bbox();
         assert!((bbox[0] - 0.0).abs() < 1e-2);
         assert!((bbox[2] - 100.0).abs() < 1e-2);
@@ -292,7 +331,7 @@ mod tests {
     fn update_converges_to_measurement() {
         let mut kalman = Kalman7::from_bbox([0.0, 0.0, 100.0, 200.0]);
         for _ in 0..30 {
-            kalman.predict(NOMINAL_DT_S);
+            kalman.predict(KalmanConfig::default().nominal_dt_s);
             kalman.update([50.0, 250.0, 20_000.0, 1.0]);
         }
         // Medicion [cx=50, cy=250, s=20000, r=1.0] -> bbox
@@ -310,7 +349,7 @@ mod tests {
         let mut kalman = Kalman7::from_bbox([0.0, 0.0, 50.0, 100.0]);
         for step in 1..=10 {
             let x = step as f32 * 10.0;
-            kalman.predict(NOMINAL_DT_S);
+            kalman.predict(KalmanConfig::default().nominal_dt_s);
             kalman.update([x + 25.0, 50.0, 5_000.0, 0.5]);
         }
         let bbox = kalman.bbox();

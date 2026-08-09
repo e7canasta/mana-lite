@@ -21,6 +21,10 @@ dwell_min_ms = 3_000
 [fsm.states.blind]
 label = "BLIND: No Camera Signal"
 
+[fsm.roles]
+safe = "blind"
+reset = "idle"
+
 # ── Wildcard → blind on data stale ──
 
 [[fsm.transitions]]
