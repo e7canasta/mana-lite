@@ -236,4 +236,51 @@ mod tests {
         let events = engine.evaluate(&[&unconfirmed]);
         assert!(events.is_empty());
     }
+
+    #[test]
+    fn vacate_waits_for_hysteresis_ms() {
+        let catalog = ZoneCatalog {
+            zones: HashMap::from([(
+                "bed".into(),
+                ZoneSpec {
+                    x1: 0,
+                    y1: 0,
+                    x2: 500,
+                    y2: 500,
+                    label: None,
+                    hysteresis_ms: 500,
+                },
+            )]),
+            face_dwell: None,
+        };
+        let start = Instant::now();
+        let mut engine = ZoneEngine::from_catalog(&catalog);
+        let track = make_track(1, "person", [100.0, 100.0, 200.0, 200.0], true);
+
+        let occupied = engine.evaluate_at(&[&track], start);
+        assert!(
+            occupied
+                .iter()
+                .any(|e| matches!(e, ZoneEvent::Occupied { zone, .. } if zone == "bed"))
+        );
+
+        let early = engine.evaluate_at(&[], start);
+        assert!(
+            early.is_empty(),
+            "vacate must wait for hysteresis; got {early:?}"
+        );
+        let still_early =
+            engine.evaluate_at(&[], start + std::time::Duration::from_millis(499));
+        assert!(
+            still_early.is_empty(),
+            "vacate must wait full hysteresis; got {still_early:?}"
+        );
+
+        let vacated = engine.evaluate_at(&[], start + std::time::Duration::from_millis(500));
+        assert!(
+            vacated
+                .iter()
+                .any(|e| matches!(e, ZoneEvent::Vacated { zone, .. } if zone == "bed"))
+        );
+    }
 }

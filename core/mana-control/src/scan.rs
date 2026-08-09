@@ -30,3 +30,137 @@ pub fn scan(state:&mut ControlState,image:&ProcessImage,now:ScanInstant)->Vec<Sc
 fn update_context(ctx:&mut FsmSceneContext,policy:&ControlPolicy,cardinality:RoomCardinality,raw:usize,face_model_ran:bool,obs:&[SceneObservation]){let person=obs.iter().filter(|x|x.class==policy.person_class).max_by(|a,b|a.confidence.total_cmp(&b.confidence));let face=person.and_then(|x|x.face);ctx.cardinality=Some(cardinality.as_str().into());ctx.person_present=raw>0;ctx.face_present=face.is_some();ctx.face_confidence=face.map(|x|x.confidence);ctx.face_in_dwell=policy.face_dwell_roi.map(|r|face.is_some_and(|f|intersects(f.bbox,r)));ctx.at_edge=person.is_some_and(|p|near(p.bbox,policy.person_detection_roi,policy.face_edge_margin_px));ctx.face_model_ran=face_model_ran}
 fn intersects(b:[f32;4],r:[u32;4])->bool{b[0]<r[2]as f32&&b[2]>r[0]as f32&&b[1]<r[3]as f32&&b[3]>r[1]as f32}fn near(b:[f32;4],r:Option<[u32;4]>,m:u32)->bool{let Some(r)=r else{return false};let m=m as f32;b[0]<=r[0]as f32+m||b[1]<=r[1]as f32+m||b[2]>=r[2]as f32-m||b[3]>=r[3]as f32-m}
 #[derive(Debug,Clone,Copy)] pub struct ScanTimeline{start:Instant,period_ms:u64,tick:u64}impl ScanTimeline{pub fn new(start:Instant,period_ms:u64)->Self{Self{start,period_ms:period_ms.max(1),tick:0}}pub fn now(self)->ScanInstant{ScanInstant::from_instant(self.start+Duration::from_millis(self.tick*self.period_ms))}pub fn advance(&mut self)->ScanInstant{self.tick+=1;self.now()}}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::{OccupancyPolicy, PresencePoiPolicy};
+    use std::time::Duration;
+
+    fn person() -> SceneObservation {
+        SceneObservation {
+            class: "person".into(),
+            bbox: [0.0, 0.0, 100.0, 100.0],
+            confidence: 0.9,
+            source_models: vec!["synthetic".into()],
+            face: None,
+        }
+    }
+
+    fn control_state(start: Instant, data_stale_ms: u64) -> ControlState {
+        ControlState {
+            tracker: None,
+            presence: PresenceFilter::new(
+                true,
+                "person",
+                PresencePoiPolicy {
+                    on_ms: 0,
+                    off_ms: 500,
+                },
+            ),
+            occupancy: OccupancyStateMachine::new(OccupancyPolicy {
+                single_confirm_ms: 0,
+                empty_confirm_ms: 500,
+                multiple_confirm_ms: 300,
+                multiple_exit_ms: 300,
+                require_confirmed_tracks: false,
+            }),
+            zone_engine: None,
+            fsm_engine: None,
+            health: Health::new_at(10_000, 5_000, start),
+            fsm_context: Default::default(),
+            last_scan_at: start,
+            scan_seq: 0,
+            policy: ControlPolicy {
+                person_class: "person".into(),
+                presence_enabled: true,
+                data_stale_ms,
+                scan_period_ms: 200,
+                face_dwell_roi: None,
+                person_detection_roi: None,
+                face_edge_margin_px: 0,
+            },
+        }
+    }
+
+    #[test]
+    fn scan_emits_presence_and_occupancy_on_valid_evidence() {
+        let start = Instant::now();
+        let mut timeline = ScanTimeline::new(start, 200);
+        let mut state = control_state(start, 10_000);
+        let image = ProcessImage {
+            observations: Some(AgedEvidence::new(
+                SceneSample {
+                    observations: vec![person()],
+                    signal_valid: true,
+                    raw_person_count: 1,
+                    frame_number: 1,
+                    face_model_ran: false,
+                },
+                start,
+            )),
+            depth: None,
+            measurement_pending: true,
+        };
+
+        let events = scan(&mut state, &image, timeline.now());
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, SceneEvent::Presence { .. })),
+            "expected Presence event"
+        );
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, SceneEvent::Occupancy { .. })),
+            "expected Occupancy event"
+        );
+    }
+
+    #[test]
+    fn scan_marks_signal_invalid_when_evidence_is_stale() {
+        let start = Instant::now();
+        let data_stale_ms = 500;
+        let mut state = control_state(start, data_stale_ms);
+        let image = ProcessImage {
+            observations: Some(AgedEvidence::new(
+                SceneSample {
+                    observations: vec![person()],
+                    signal_valid: true,
+                    raw_person_count: 1,
+                    frame_number: 1,
+                    face_model_ran: false,
+                },
+                start,
+            )),
+            depth: None,
+            measurement_pending: true,
+        };
+
+        // Age beyond data_stale_ms while keeping the aged evidence frozen.
+        let now = ScanInstant::from_instant(start + Duration::from_millis(data_stale_ms + 1));
+        let events = scan(&mut state, &image, now);
+
+        let presence_invalid = events.iter().any(|e| {
+            matches!(
+                e,
+                SceneEvent::Presence {
+                    signal: SignalValidity::Invalid,
+                    ..
+                }
+            )
+        });
+        let occupancy_invalid = events.iter().any(|e| {
+            matches!(
+                e,
+                SceneEvent::Occupancy {
+                    signal: SignalValidity::Invalid,
+                    ..
+                }
+            )
+        });
+        assert!(presence_invalid, "stale evidence must mark Presence Invalid");
+        assert!(occupancy_invalid, "stale evidence must mark Occupancy Invalid");
+    }
+}

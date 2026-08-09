@@ -13,6 +13,7 @@ use crate::detection::CropRect;
 use crate::detection::DetectionConsolidator;
 use crate::domain::{ModelRegistry, ModelRole};
 use crate::error::{ConfigError, ManaError, Result};
+use crate::face_dwell::FaceDwellLogStrategy;
 use crate::fsm::{FsmEngine, FsmProgram, FsmSceneContext};
 use crate::health::Health;
 use crate::infer::InferEngine;
@@ -523,6 +524,7 @@ impl<R: FrameReader> App<R> {
             boot_wall,
             boot_instant,
             crop_frames_pending: Vec::new(),
+            face_dwell_logger: FaceDwellLogStrategy,
             control_image: mana_control::ProcessImage::empty(),
         })
     }

@@ -299,4 +299,63 @@ mod tests {
         assert_eq!(update.state, PresenceState::Absent);
         assert!(observations.is_empty());
     }
+
+    #[test]
+    fn disabled_filter_passes_observations_without_debounce() {
+        let mut filter = PresenceFilter::new(false, "person", config(800));
+        let one = [person()];
+        let start = Instant::now();
+
+        let (observations, update) = filter.update_at(&one, true, start);
+        assert_eq!(observations.len(), 1);
+        assert_eq!(update.state, PresenceState::Absent);
+        assert!(!update.held);
+
+        let (observations, update) =
+            filter.update_at(&one, true, start + Duration::from_millis(DT_MS * 10));
+        assert_eq!(observations.len(), 1);
+        assert_eq!(update.state, PresenceState::Absent);
+        assert_eq!(filter.state(), PresenceState::Absent);
+    }
+
+    #[test]
+    fn ambiguous_clears_when_back_to_zero_or_one() {
+        let mut filter = PresenceFilter::new(true, "person", config(200));
+        let two = [person(), person()];
+        let start = Instant::now();
+
+        assert_eq!(
+            filter.update_at(&two, true, start).1.state,
+            PresenceState::Ambiguous
+        );
+
+        let (observations, update) =
+            filter.update_at(&[], true, start + Duration::from_millis(DT_MS));
+        assert!(observations.is_empty());
+        assert_eq!(update.state, PresenceState::Absent);
+
+        assert_eq!(
+            filter
+                .update_at(&two, true, start + Duration::from_millis(DT_MS * 2))
+                .1
+                .state,
+            PresenceState::Ambiguous
+        );
+        let one = [person()];
+        // First tick after Ambiguous starts the on_ms timer; state clears once engaged.
+        assert_eq!(
+            filter
+                .update_at(&one, true, start + Duration::from_millis(DT_MS * 3))
+                .1
+                .state,
+            PresenceState::Ambiguous
+        );
+        assert_eq!(
+            filter
+                .update_at(&one, true, start + Duration::from_millis(DT_MS * 4))
+                .1
+                .state,
+            PresenceState::Present
+        );
+    }
 }

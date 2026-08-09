@@ -322,3 +322,79 @@ impl ScanInstant {
         self.0.saturating_duration_since(earlier.0)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[test]
+    fn observations_age_ms_is_max_without_evidence() {
+        let start = Instant::now();
+        let image = ProcessImage::empty();
+        assert_eq!(image.observations_age_ms(start), u64::MAX);
+    }
+
+    #[test]
+    fn observations_age_ms_grows_from_observed_at() {
+        let start = Instant::now();
+        let image = ProcessImage {
+            observations: Some(AgedEvidence::new(
+                SceneSample {
+                    observations: Vec::new(),
+                    signal_valid: true,
+                    raw_person_count: 0,
+                    frame_number: 1,
+                    face_model_ran: false,
+                },
+                start,
+            )),
+            depth: None,
+            measurement_pending: false,
+        };
+        assert_eq!(image.observations_age_ms(start), 0);
+        assert_eq!(
+            image.observations_age_ms(start + Duration::from_millis(250)),
+            250
+        );
+    }
+
+    #[test]
+    fn depth_age_ms_none_until_reset_or_set() {
+        let start = Instant::now();
+        let mut image = ProcessImage::empty();
+        assert_eq!(image.depth_age_ms(start), None);
+
+        image.reset_depth(start);
+        assert_eq!(image.depth_age_ms(start), Some(0));
+        assert_eq!(
+            image.depth_age_ms(start + Duration::from_millis(100)),
+            Some(100)
+        );
+    }
+
+    #[test]
+    fn reset_then_set_depth_leaves_rule_triggered() {
+        let start = Instant::now();
+        let mut image = ProcessImage::empty();
+        image.reset_depth(start);
+        assert_eq!(image.depth_snapshot().is_triggered("bed-approach"), None);
+
+        let snapshot = DepthRuleSnapshot::from_results(&[DepthRuleResult {
+            rule: "bed-approach".into(),
+            region: [0, 0, 2, 2],
+            metric: DepthMetric::Median,
+            threshold_m: 1.5,
+            value: Some(1.0),
+            triggered: true,
+            valid_pixels: 4,
+            valid_ratio: Some(1.0),
+            calibration: None,
+        }]);
+        image.set_depth(snapshot, start + Duration::from_millis(10));
+        assert_eq!(
+            image.depth_snapshot().is_triggered("bed-approach"),
+            Some(true)
+        );
+    }
+}

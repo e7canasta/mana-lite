@@ -1180,6 +1180,399 @@ mod tests {
         assert_eq!(result.expect("fallback to idle").to, "idle");
     }
 
+    fn occupy_zone(engine: &mut ZoneEngine, zone_rect_intersects: bool, now: Instant) {
+        let bbox = if zone_rect_intersects {
+            [0.0, 0.0, 2.0, 2.0]
+        } else {
+            [10.0, 10.0, 20.0, 20.0]
+        };
+        let track = crate::track::Track {
+            id: 1,
+            source_model: "detect-fast".into(),
+            class: "person".into(),
+            bbox,
+            confidence: 0.9,
+            evidence: Vec::new(),
+            kalman: crate::kalman::Kalman7::default(),
+            hits: 3,
+            hit_streak: 3,
+            misses: 0,
+            age: 3,
+            time_since_update_ms: 0,
+            is_confirmed: true,
+        };
+        let _ = engine.evaluate_at(&[&track], now);
+    }
+
+    #[test]
+    fn zone_present_guard_fires_when_engine_reports_occupied() {
+        let catalog = make_catalog(
+            "idle",
+            vec![("idle", vec![]), ("watching", vec![])],
+            vec![FsmTransition {
+                from: "idle".into(),
+                to: "watching".into(),
+                guards: vec![FsmGuard::ZonePresent {
+                    zone: "bed".into(),
+                }],
+                dwell: None,
+            }],
+        );
+        let start = Instant::now();
+        let mut engine = engine_at(&catalog, start);
+        let mut zones = ZoneEngine::from_catalog(&test_zones(&catalog));
+        occupy_zone(&mut zones, true, start);
+        assert!(zones.is_occupied("bed"));
+        let health = Health::new_at(10_000, 5_000, start);
+
+        let result = engine.evaluate_with_context_at(
+            &[],
+            Some(&zones),
+            &health,
+            &DepthRuleSnapshot::default(),
+            &FsmSceneContext::default(),
+            start,
+        );
+        assert_eq!(result.expect("zone present").to, "watching");
+    }
+
+    #[test]
+    fn zone_present_guard_rejects_when_vacant() {
+        let catalog = make_catalog(
+            "idle",
+            vec![("idle", vec![]), ("watching", vec![])],
+            vec![FsmTransition {
+                from: "idle".into(),
+                to: "watching".into(),
+                guards: vec![FsmGuard::ZonePresent {
+                    zone: "bed".into(),
+                }],
+                dwell: None,
+            }],
+        );
+        let start = Instant::now();
+        let mut engine = engine_at(&catalog, start);
+        let zones = ZoneEngine::from_catalog(&test_zones(&catalog));
+        let health = Health::new_at(10_000, 5_000, start);
+
+        assert!(
+            engine
+                .evaluate_with_context_at(
+                    &[],
+                    Some(&zones),
+                    &health,
+                    &DepthRuleSnapshot::default(),
+                    &FsmSceneContext::default(),
+                    start,
+                )
+                .is_none()
+        );
+        assert_eq!(engine.current_state(), "idle");
+    }
+
+    #[test]
+    fn zone_vacated_guard_fires_on_vacated_event() {
+        let catalog = make_catalog(
+            "watching",
+            vec![("watching", vec![]), ("idle", vec![])],
+            vec![FsmTransition {
+                from: "watching".into(),
+                to: "idle".into(),
+                guards: vec![FsmGuard::ZoneVacated {
+                    zone: "bed".into(),
+                    min_confidence: 0.5,
+                    min_duration_ms: None,
+                }],
+                dwell: None,
+            }],
+        );
+        let start = Instant::now();
+        let mut engine = engine_at(&catalog, start);
+        let zones = ZoneEngine::from_catalog(&test_zones(&catalog));
+        let health = Health::new_at(10_000, 5_000, start);
+        let events = vec![ZoneEvent::Vacated {
+            zone: "bed".into(),
+            label: None,
+            track_id: 1,
+            class: "person".into(),
+        }];
+
+        let result = engine.evaluate_with_context_at(
+            &events,
+            Some(&zones),
+            &health,
+            &DepthRuleSnapshot::default(),
+            &FsmSceneContext::default(),
+            start,
+        );
+        assert_eq!(result.expect("zone vacated").to, "idle");
+    }
+
+    #[test]
+    fn zone_vacated_guard_rejects_without_event() {
+        let catalog = make_catalog(
+            "watching",
+            vec![("watching", vec![]), ("idle", vec![])],
+            vec![FsmTransition {
+                from: "watching".into(),
+                to: "idle".into(),
+                guards: vec![FsmGuard::ZoneVacated {
+                    zone: "bed".into(),
+                    min_confidence: 0.5,
+                    min_duration_ms: None,
+                }],
+                dwell: None,
+            }],
+        );
+        let start = Instant::now();
+        let mut engine = engine_at(&catalog, start);
+        let zones = ZoneEngine::from_catalog(&test_zones(&catalog));
+        let health = Health::new_at(10_000, 5_000, start);
+
+        assert!(
+            engine
+                .evaluate_with_context_at(
+                    &[],
+                    Some(&zones),
+                    &health,
+                    &DepthRuleSnapshot::default(),
+                    &FsmSceneContext::default(),
+                    start,
+                )
+                .is_none()
+        );
+        assert_eq!(engine.current_state(), "watching");
+    }
+
+    #[test]
+    fn all_zones_vacant_guard_fires_when_engine_all_vacant() {
+        let catalog = make_catalog(
+            "watching",
+            vec![("watching", vec![]), ("idle", vec![])],
+            vec![FsmTransition {
+                from: "watching".into(),
+                to: "idle".into(),
+                guards: vec![FsmGuard::AllZonesVacant {
+                    min_duration_ms: None,
+                }],
+                dwell: None,
+            }],
+        );
+        let start = Instant::now();
+        let mut engine = engine_at(&catalog, start);
+        let zones = ZoneEngine::from_catalog(&ZoneCatalog {
+            zones: HashMap::from([(
+                "bed".into(),
+                ZoneSpec {
+                    x1: 0,
+                    y1: 0,
+                    x2: 1,
+                    y2: 1,
+                    label: None,
+                    hysteresis_ms: 0,
+                },
+            )]),
+            face_dwell: None,
+        });
+        assert!(zones.all_vacant());
+        let health = Health::new_at(10_000, 5_000, start);
+
+        let result = engine.evaluate_with_context_at(
+            &[],
+            Some(&zones),
+            &health,
+            &DepthRuleSnapshot::default(),
+            &FsmSceneContext::default(),
+            start,
+        );
+        assert_eq!(result.expect("all vacant").to, "idle");
+    }
+
+    #[test]
+    fn all_zones_vacant_guard_rejects_when_occupied() {
+        let catalog = make_catalog(
+            "watching",
+            vec![("watching", vec![]), ("idle", vec![])],
+            vec![FsmTransition {
+                from: "watching".into(),
+                to: "idle".into(),
+                guards: vec![FsmGuard::AllZonesVacant {
+                    min_duration_ms: None,
+                }],
+                dwell: None,
+            }],
+        );
+        let start = Instant::now();
+        let mut engine = engine_at(&catalog, start);
+        let mut zones = ZoneEngine::from_catalog(&ZoneCatalog {
+            zones: HashMap::from([(
+                "bed".into(),
+                ZoneSpec {
+                    x1: 0,
+                    y1: 0,
+                    x2: 1,
+                    y2: 1,
+                    label: None,
+                    hysteresis_ms: 0,
+                },
+            )]),
+            face_dwell: None,
+        });
+        occupy_zone(&mut zones, true, start);
+        assert!(!zones.all_vacant());
+        let health = Health::new_at(10_000, 5_000, start);
+
+        assert!(
+            engine
+                .evaluate_with_context_at(
+                    &[],
+                    Some(&zones),
+                    &health,
+                    &DepthRuleSnapshot::default(),
+                    &FsmSceneContext::default(),
+                    start,
+                )
+                .is_none()
+        );
+        assert_eq!(engine.current_state(), "watching");
+    }
+
+    #[test]
+    fn cardinality_guard_matches_scene_context() {
+        let catalog = make_catalog(
+            "idle",
+            vec![("idle", vec![]), ("single", vec![])],
+            vec![FsmTransition {
+                from: "idle".into(),
+                to: "single".into(),
+                guards: vec![FsmGuard::Cardinality {
+                    value: "single".into(),
+                }],
+                dwell: None,
+            }],
+        );
+        let start = Instant::now();
+        let mut engine = engine_at(&catalog, start);
+        let health = Health::new_at(10_000, 5_000, start);
+        let scene = FsmSceneContext {
+            cardinality: Some("single".into()),
+            ..Default::default()
+        };
+
+        let result = engine.evaluate_with_context_at(
+            &[],
+            None,
+            &health,
+            &DepthRuleSnapshot::default(),
+            &scene,
+            start,
+        );
+        assert_eq!(result.expect("cardinality match").to, "single");
+    }
+
+    #[test]
+    fn cardinality_guard_rejects_mismatch() {
+        let catalog = make_catalog(
+            "idle",
+            vec![("idle", vec![]), ("single", vec![])],
+            vec![FsmTransition {
+                from: "idle".into(),
+                to: "single".into(),
+                guards: vec![FsmGuard::Cardinality {
+                    value: "single".into(),
+                }],
+                dwell: None,
+            }],
+        );
+        let start = Instant::now();
+        let mut engine = engine_at(&catalog, start);
+        let health = Health::new_at(10_000, 5_000, start);
+        let scene = FsmSceneContext {
+            cardinality: Some("multiple".into()),
+            ..Default::default()
+        };
+
+        assert!(
+            engine
+                .evaluate_with_context_at(
+                    &[],
+                    None,
+                    &health,
+                    &DepthRuleSnapshot::default(),
+                    &scene,
+                    start,
+                )
+                .is_none()
+        );
+        assert_eq!(engine.current_state(), "idle");
+    }
+
+    #[test]
+    fn face_at_edge_guard_requires_at_edge() {
+        let catalog = make_catalog(
+            "idle",
+            vec![("idle", vec![]), ("edge", vec![])],
+            vec![FsmTransition {
+                from: "idle".into(),
+                to: "edge".into(),
+                guards: vec![FsmGuard::FaceAtEdge],
+                dwell: None,
+            }],
+        );
+        let start = Instant::now();
+        let mut engine = engine_at(&catalog, start);
+        let health = Health::new_at(10_000, 5_000, start);
+        let at_edge = FsmSceneContext {
+            at_edge: true,
+            ..Default::default()
+        };
+
+        let result = engine.evaluate_with_context_at(
+            &[],
+            None,
+            &health,
+            &DepthRuleSnapshot::default(),
+            &at_edge,
+            start,
+        );
+        assert_eq!(result.expect("at edge").to, "edge");
+    }
+
+    #[test]
+    fn face_at_edge_guard_rejects_when_not_at_edge() {
+        let catalog = make_catalog(
+            "idle",
+            vec![("idle", vec![]), ("edge", vec![])],
+            vec![FsmTransition {
+                from: "idle".into(),
+                to: "edge".into(),
+                guards: vec![FsmGuard::FaceAtEdge],
+                dwell: None,
+            }],
+        );
+        let start = Instant::now();
+        let mut engine = engine_at(&catalog, start);
+        let health = Health::new_at(10_000, 5_000, start);
+        let not_at_edge = FsmSceneContext {
+            at_edge: false,
+            ..Default::default()
+        };
+
+        assert!(
+            engine
+                .evaluate_with_context_at(
+                    &[],
+                    None,
+                    &health,
+                    &DepthRuleSnapshot::default(),
+                    &not_at_edge,
+                    start,
+                )
+                .is_none()
+        );
+        assert_eq!(engine.current_state(), "idle");
+    }
+
     fn make_snapshot(rule: &str, triggered: bool) -> DepthRuleSnapshot {
         use crate::depth::DepthRuleResult;
         DepthRuleSnapshot::from_results(&[DepthRuleResult {

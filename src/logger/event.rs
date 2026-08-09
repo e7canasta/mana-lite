@@ -1,6 +1,8 @@
 use crate::detection::{Detection, DetectionMask};
+use crate::health::HealthTransition;
 use crate::metrics::{MetricsReport, PerClassFrameStats};
-use crate::scan::ControlStamp;
+use crate::occupancy::SignalValidity;
+use crate::scan::{ControlStamp, SceneEvent};
 use crate::track::TrackEvent;
 use crate::zones::ZoneEvent;
 
@@ -369,6 +371,109 @@ pub fn zone_event_to_log(ev: &ZoneEvent, stamp: ControlStamp) -> Event {
             class,
         } => Event::zone_vacated(zone, label.as_deref().unwrap_or(zone), class, stamp),
     }
+}
+
+/// Maps a full scan batch to JSONL events.
+///
+/// Takes the whole batch because `SceneEvent::EntityBoxes` carries no stamp:
+/// `scan()` always emits `Presence` before `EntityBoxes`, so the mapper keeps
+/// the last stamp seen. `Occupancy` and `FsmState` are deliberately omitted —
+/// they go only to viz; occupancy cardinality travels inside `presence.state`.
+#[must_use]
+pub fn scene_events_to_log(events: &[SceneEvent]) -> Vec<Event> {
+    let mut out = Vec::new();
+    let mut last_stamp: Option<ControlStamp> = None;
+    for event in events {
+        match event {
+            SceneEvent::Track { event, stamp } => {
+                last_stamp = Some(*stamp);
+                out.push(track_event_to_log(event, *stamp));
+            }
+            SceneEvent::Presence {
+                stamp,
+                state,
+                presence,
+                second_person,
+                signal,
+                raw_person_count,
+                confirmed_person_count,
+                held,
+                positive_ms,
+                empty_ms,
+                single_timer_ms,
+                empty_timer_ms,
+                multiple_candidate_timer_ms,
+                multiple_exit_timer_ms,
+            } => {
+                last_stamp = Some(*stamp);
+                out.push(Event::presence(
+                    *stamp,
+                    state.as_str(),
+                    presence.as_str(),
+                    second_person.as_str(),
+                    *raw_person_count,
+                    *confirmed_person_count,
+                    *signal == SignalValidity::Valid,
+                    *held,
+                    *positive_ms,
+                    *empty_ms,
+                    *single_timer_ms,
+                    *empty_timer_ms,
+                    *multiple_candidate_timer_ms,
+                    *multiple_exit_timer_ms,
+                ));
+            }
+            SceneEvent::Zone { event, stamp } => {
+                last_stamp = Some(*stamp);
+                out.push(zone_event_to_log(event, *stamp));
+            }
+            SceneEvent::EntityBoxes(tracks) => {
+                let Some(stamp) = last_stamp else {
+                    continue;
+                };
+                for track in tracks {
+                    let mut sources = track.evidence.clone();
+                    sources.sort();
+                    sources.dedup();
+                    out.push(Event::entity(
+                        track.id,
+                        &track.class,
+                        track.bbox,
+                        sources,
+                        stamp,
+                    ));
+                }
+            }
+            SceneEvent::FsmTransition(tr) => {
+                out.push(Event::fsm_transition(
+                    &tr.from,
+                    tr.from_label.as_deref(),
+                    &tr.to,
+                    tr.to_label.as_deref(),
+                    &tr.trigger,
+                    tr.dwell_ms,
+                ));
+            }
+            SceneEvent::Health(transition) => match transition {
+                HealthTransition::Blind { ms_since_frame } => {
+                    out.push(Event::health_blind(*ms_since_frame));
+                }
+                HealthTransition::Stale {
+                    component,
+                    ms_since_frame,
+                } => {
+                    out.push(Event::health_stale(component, *ms_since_frame));
+                }
+                HealthTransition::Recovered => {
+                    out.push(Event::health_heartbeat(0, "ingest", 0));
+                }
+                HealthTransition::None => {}
+            },
+            // Viz-only: occupancy cardinality travels inside presence.state.
+            SceneEvent::Occupancy { .. } | SceneEvent::FsmState(_) => {}
+        }
+    }
+    out
 }
 
 impl Event {

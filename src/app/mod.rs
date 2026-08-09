@@ -13,12 +13,13 @@ use crate::detection::CropRect;
 use crate::detection::{ConsolidatedObservation, DetectionConsolidator, DetectionRole, ModelDetections};
 use crate::domain::ModelRegistry;
 use crate::error::Result;
+use crate::face_dwell::FaceDwellLogStrategy;
 use crate::infer::{InferEngine, InferenceResult, compute_bbox_roi, compute_upper_square_roi};
 use crate::ingest::{FrameReader, IngestEngine, RawKeyframe, RetinaReader};
-use crate::logger::{DetRecord, Event};
+use crate::logger::{DetRecord, Event, scene_events_to_log};
 use crate::metrics::{MetricsEngine, PerClassFrameStats};
 use crate::pipeline::PipelineState;
-use crate::scan::{ControlState, SceneEvent};
+use crate::scan::{ControlStamp, ControlState, SceneEvent};
 use crate::snapshot::{FrameBuffer, FrameDecoder, SnapshotSaver};
 use mana_types::RawFrameV1;
 use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -48,6 +49,7 @@ pub struct App<R: FrameReader = RetinaReader> {
     pub(crate) boot_wall: chrono::DateTime<chrono::Utc>,
     pub(crate) boot_instant: Instant,
     pub(crate) crop_frames_pending: Vec<CropFrameQueue>,
+    pub(crate) face_dwell_logger: FaceDwellLogStrategy,
     /// Control's vocabulary mirror. The legacy scan state remains temporarily
     /// available for compatibility with the existing integration-test facade.
     control_image: mana_control::ProcessImage,
@@ -205,14 +207,44 @@ impl<R: FrameReader> App<R> {
             crate::scan::ScanInstant::from_instant(now),
         );
         self.control_image.measurement_pending = false;
-        for event in scene_events {
+
+        let mut last_stamp: Option<ControlStamp> = None;
+        for event in &scene_events {
             match event {
-                SceneEvent::Occupancy { state, second_person, signal } => self.observer.on_occupancy(state, second_person, signal),
-                SceneEvent::EntityBoxes(tracks) => { let track_refs: Vec<_> = tracks.iter().collect(); self.observer.viz.log_entity_boxes(&track_refs); }
-                SceneEvent::FsmState(state) => self.observer.viz.log_face_state(&state),
-                _ => {}
+                SceneEvent::Occupancy {
+                    state,
+                    second_person,
+                    signal,
+                } => self.observer.on_occupancy(*state, *second_person, *signal),
+                SceneEvent::EntityBoxes(tracks) => {
+                    let track_refs: Vec<_> = tracks.iter().collect();
+                    self.observer.viz.log_entity_boxes(&track_refs);
+                }
+                SceneEvent::FsmState(state) => self.observer.viz.log_face_state(state),
+                SceneEvent::Presence { stamp, .. }
+                | SceneEvent::Track { stamp, .. }
+                | SceneEvent::Zone { stamp, .. } => {
+                    last_stamp = Some(*stamp);
+                }
+                SceneEvent::FsmTransition(_) | SceneEvent::Health(_) => {}
             }
         }
+
+        for event in scene_events_to_log(&scene_events) {
+            self.observer.emit(event);
+        }
+
+        // Face-dwell needs the full FsmSnapshot, which SceneEvent::FsmState does
+        // not carry — emit from App-owned state after the scan batch.
+        if let (Some(fsm), Some(stamp)) = (self.control.fsm_engine.as_ref(), last_stamp) {
+            let snapshot = fsm.snapshot_at(now);
+            self.observer.emit(self.face_dwell_logger.keyframe_event(
+                stamp,
+                &self.control.fsm_context,
+                &snapshot,
+            ));
+        }
+
         if self.control.health.is_blind() {
             self.metrics.tick_blind();
         }
@@ -346,6 +378,7 @@ impl<R: FrameReader> App<R> {
                 item.crop_frame,
                 item.crop_rect,
                 mana_viz::util::FrameSize::new(fb.w, fb.h),
+                cycle.now,
             );
         }
         let raw_person_count = observations
@@ -457,9 +490,10 @@ impl<R: FrameReader> App<R> {
         crop_frame: Option<crate::infer::CropFrameInfo>,
         crop_rect: Option<CropRect>,
         frame: mana_viz::util::FrameSize,
+        now: Instant,
     ) {
         if self.models.is_depth(model_key) {
-            self.record_depth_result(model_key, output, crop_rect, frame.w, frame.h);
+            self.record_depth_result(model_key, output, crop_rect, frame.w, frame.h, now);
             return;
         }
         if output.postprocess_rejected > 0 || output.post_nms_suppressed > 0 {
@@ -539,6 +573,7 @@ impl<R: FrameReader> App<R> {
         crop_rect: Option<CropRect>,
         frame_w: u32,
         frame_h: u32,
+        now: Instant,
     ) {
         let (width, height, valid_pixels, min_depth_m, max_depth_m) =
             depth_summary(output.depth.as_ref(), frame_w, frame_h);
@@ -572,10 +607,15 @@ impl<R: FrameReader> App<R> {
             min_depth_m,
             max_depth_m,
         ));
-        self.evaluate_depth_rules(output, crop_rect);
+        self.evaluate_depth_rules(output, crop_rect, now);
     }
 
-    fn evaluate_depth_rules(&mut self, output: &InferenceResult, crop_rect: Option<CropRect>) {
+    fn evaluate_depth_rules(
+        &mut self,
+        output: &InferenceResult,
+        crop_rect: Option<CropRect>,
+        now: Instant,
+    ) {
         let Some(depth) = output.depth.as_ref() else {
             return;
         };
@@ -587,8 +627,9 @@ impl<R: FrameReader> App<R> {
         };
         let results = self.depth_rules.evaluate(depth, roi);
         // Depth policy is projected into the control-owned process image.
-        // FIXME: map app depth results to `mana_control::DepthRuleResult`.
-        self.control_image.reset_depth(Instant::now());
+        // App and control still own parallel DepthRuleResult types; Sprint 2
+        // collapses the duplication when the `pub mod depth` shim goes away.
+        wire_depth_evidence(&mut self.control_image, &results, now);
         for result in results {
             self.observer.emit(Event::depth_region(
                 self.state.frame_number(),
@@ -681,6 +722,50 @@ fn project_scene_sample(sample: &ClinicalSample) -> mana_control::SceneSample {
     }
 }
 
+/// Maps app-owned depth policy results into the control-owned vocabulary.
+///
+/// Field-for-field copy across the temporary type fork; Sprint 2 removes the
+/// duplication when `src/depth.rs` stops owning its own result types.
+fn project_depth_results(
+    results: &[crate::depth::DepthRuleResult],
+) -> Vec<mana_control::DepthRuleResult> {
+    results
+        .iter()
+        .map(|result| mana_control::DepthRuleResult {
+            rule: result.rule.clone(),
+            region: result.region,
+            metric: match result.metric {
+                crate::depth::DepthMetric::Min => mana_control::DepthMetric::Min,
+                crate::depth::DepthMetric::Median => mana_control::DepthMetric::Median,
+                crate::depth::DepthMetric::P10 => mana_control::DepthMetric::P10,
+                crate::depth::DepthMetric::P90 => mana_control::DepthMetric::P90,
+                crate::depth::DepthMetric::Max => mana_control::DepthMetric::Max,
+            },
+            threshold_m: result.threshold_m,
+            value: result.value,
+            triggered: result.triggered,
+            valid_pixels: result.valid_pixels,
+            valid_ratio: result.valid_ratio,
+            calibration: result.calibration.map(|c| mana_control::DepthCalibration {
+                reference_model_m: c.reference_model_m,
+                reference_scene_m: c.reference_scene_m,
+            }),
+        })
+        .collect()
+}
+
+/// Projects evaluated depth rules into the control process image.
+fn wire_depth_evidence(
+    image: &mut mana_control::ProcessImage,
+    results: &[crate::depth::DepthRuleResult],
+    now: Instant,
+) {
+    image.set_depth(
+        mana_control::DepthRuleSnapshot::from_results(&project_depth_results(results)),
+        now,
+    );
+}
+
 fn raw_frame_header(fb: &FrameBuffer, frame_id: u64, timestamp_ns: i64) -> RawFrameV1 {
     RawFrameV1 {
         width: fb.w,
@@ -742,6 +827,18 @@ fn frame_timestamp_ns(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::{MetricsTextConfig, ModelCatalog};
+    use crate::depth::{DepthMetric, DepthOp, DepthRegionRule, DepthRules};
+    use crate::ingest::SyntheticReader;
+    use crate::logger::{JsonlLevel, LogManager};
+    use crate::occupancy::OccupancyStateMachine;
+    use crate::presence::PresenceFilter;
+    use crate::scan::ControlPolicy;
+    use crate::viz::VizBridge;
+    use mana_control::config::{OccupancyPolicy, PresencePoiPolicy};
+    use ndarray::Array2;
+    use std::collections::HashMap;
+    use ultralytics_inference::DepthMap;
 
     #[test]
     fn frame_timestamp_ns_es_monotona_en_el_instante() {
@@ -757,6 +854,197 @@ mod tests {
         assert!(
             ns2 - ns1 >= 200_000_000,
             "dos frames a 250ms de distancia no se colapsan"
+        );
+    }
+
+    #[test]
+    fn projected_depth_results_reach_control_snapshot() {
+        let results = [crate::depth::DepthRuleResult {
+            rule: "bed-approach".into(),
+            region: [10, 20, 30, 40],
+            metric: crate::depth::DepthMetric::Median,
+            threshold_m: 1.5,
+            value: Some(1.0),
+            triggered: true,
+            valid_pixels: 8,
+            valid_ratio: Some(0.9),
+            calibration: Some(crate::depth::DepthCalibration {
+                reference_model_m: 1.0,
+                reference_scene_m: 2.0,
+            }),
+        }];
+        let projected = project_depth_results(&results);
+        assert_eq!(projected.len(), 1);
+        assert_eq!(projected[0].rule, "bed-approach");
+        assert!(projected[0].triggered);
+        assert_eq!(
+            projected[0].calibration,
+            Some(mana_control::DepthCalibration {
+                reference_model_m: 1.0,
+                reference_scene_m: 2.0,
+            })
+        );
+
+        let mut image = mana_control::ProcessImage::empty();
+        let now = Instant::now();
+        // Keyframe start clears stale depth; wiring must then install evidence.
+        image.reset_depth(now);
+        assert_eq!(image.depth_snapshot().is_triggered("bed-approach"), None);
+
+        wire_depth_evidence(&mut image, &results, now);
+        assert_eq!(
+            image.depth_snapshot().is_triggered("bed-approach"),
+            Some(true),
+            "evaluate_depth_rules must project results into ProcessImage, not reset them"
+        );
+    }
+
+    fn depth_map_from_rows(rows: &[&[f32]]) -> crate::depth_map::DepthFrame {
+        let data = Array2::from_shape_fn((rows.len(), rows[0].len()), |(y, x)| rows[y][x]);
+        crate::depth_map::DepthFrame::from_ultralytics(DepthMap::new(
+            data,
+            (rows.len() as u32, rows[0].len() as u32),
+        ))
+    }
+
+    fn app_for_depth_rules(rules: DepthRules, context_roi: Option<CropRect>) -> App<SyntheticReader> {
+        let start = Instant::now();
+        let empty_catalog = ModelCatalog {
+            models: HashMap::new(),
+        };
+        App {
+            infer: InferEngine::from_catalog(&empty_catalog).expect("empty catalog loads"),
+            primary_model: "detect-fast".into(),
+            control: ControlState {
+                tracker: None,
+                presence: PresenceFilter::new(
+                    false,
+                    "person",
+                    PresencePoiPolicy {
+                        on_ms: 0,
+                        off_ms: 0,
+                    },
+                ),
+                occupancy: OccupancyStateMachine::new(OccupancyPolicy {
+                    single_confirm_ms: 0,
+                    empty_confirm_ms: 0,
+                    multiple_confirm_ms: 0,
+                    multiple_exit_ms: 0,
+                    require_confirmed_tracks: false,
+                }),
+                zone_engine: None,
+                fsm_engine: None,
+                health: mana_control::health::Health::new_at(10_000, 5_000, start),
+                fsm_context: Default::default(),
+                last_scan_at: start,
+                scan_seq: 0,
+                policy: ControlPolicy {
+                    person_class: "person".into(),
+                    presence_enabled: false,
+                    data_stale_ms: 10_000,
+                    scan_period_ms: 200,
+                    face_dwell_roi: None,
+                    person_detection_roi: None,
+                    face_edge_margin_px: 0,
+                },
+            },
+            cascade: CascadeScheduler::from_rules(&[]),
+            detection_consolidator: DetectionConsolidator::new(0.7, 0.65, 0.5),
+            models: ModelRegistry::from_catalog(&empty_catalog, "detect-fast"),
+            ingest: IngestEngine::new(SyntheticReader::empty()),
+            metrics: MetricsEngine::new(0, 50),
+            depth_context_roi: context_roi,
+            depth_rules: rules,
+            decoder: FrameDecoder::new().expect("ffmpeg decoder"),
+            snapshots: SnapshotSaver::new(None, false).expect("snapshots"),
+            observer: FanoutObserver::new(
+                VizBridge::disabled(),
+                Box::new(LogManager::new(JsonlLevel::Info)),
+            ),
+            state: PipelineState::new(MetricsTextConfig::default(), 20, 3),
+            boot_wall: chrono::Utc::now(),
+            boot_instant: start,
+            crop_frames_pending: Vec::new(),
+            face_dwell_logger: FaceDwellLogStrategy,
+            control_image: mana_control::ProcessImage::empty(),
+        }
+    }
+
+    #[test]
+    fn evaluate_depth_rules_projects_triggered_rule_into_process_image() {
+        let rules = DepthRules {
+            rules: vec![DepthRegionRule {
+                name: "bed-approach".into(),
+                region: [0, 0, 2, 2],
+                metric: DepthMetric::Median,
+                op: DepthOp::Lt,
+                threshold_m: 2.0,
+                min_valid_ratio: 0.0,
+                calibration: None,
+            }],
+        };
+        let mut app = app_for_depth_rules(rules, Some(CropRect::from_array([0, 0, 2, 2])));
+        let now = Instant::now();
+        app.control_image.reset_depth(now);
+        assert_eq!(
+            app.control_image
+                .depth_snapshot()
+                .is_triggered("bed-approach"),
+            None
+        );
+
+        let output = InferenceResult {
+            detections: Vec::new(),
+            depth: Some(depth_map_from_rows(&[&[1.0, 1.0], &[1.0, 1.0]])),
+            postprocess_rejected: 0,
+            post_nms_suppressed: 0,
+            infer_ms: 0,
+            pipeline_us: 0,
+            crop_frame: None,
+        };
+        app.evaluate_depth_rules(&output, None, now);
+        assert_eq!(
+            app.control_image
+                .depth_snapshot()
+                .is_triggered("bed-approach"),
+            Some(true),
+            "App::evaluate_depth_rules must wire depth evidence into control_image"
+        );
+    }
+
+    #[test]
+    fn evaluate_depth_rules_without_roi_leaves_snapshot_empty() {
+        let rules = DepthRules {
+            rules: vec![DepthRegionRule {
+                name: "bed-approach".into(),
+                region: [0, 0, 2, 2],
+                metric: DepthMetric::Median,
+                op: DepthOp::Lt,
+                threshold_m: 2.0,
+                min_valid_ratio: 0.0,
+                calibration: None,
+            }],
+        };
+        // No crop_rect and no depth_context_roi → early return.
+        let mut app = app_for_depth_rules(rules, None);
+        let now = Instant::now();
+        app.control_image.reset_depth(now);
+        let output = InferenceResult {
+            detections: Vec::new(),
+            depth: Some(depth_map_from_rows(&[&[1.0, 1.0], &[1.0, 1.0]])),
+            postprocess_rejected: 0,
+            post_nms_suppressed: 0,
+            infer_ms: 0,
+            pipeline_us: 0,
+            crop_frame: None,
+        };
+        app.evaluate_depth_rules(&output, None, now);
+        assert_eq!(
+            app.control_image
+                .depth_snapshot()
+                .is_triggered("bed-approach"),
+            None,
+            "without ROI the adapter must not invent depth evidence"
         );
     }
 }

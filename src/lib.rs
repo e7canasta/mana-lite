@@ -6,6 +6,10 @@
 
 pub mod app;
 pub use mana_control::assignment;
+// FIXME(ADR-027): cascade.rs lives under mana-perception but is compiled as a
+// binary module via #[path], so its `crate::track` / `crate::kalman` imports
+// resolve against mana-control re-exports. The T1→T2 violation survived the
+// migration as a path hack rather than a Cargo.toml edge.
 #[path = "../core/mana-perception/src/cascade.rs"]
 pub mod cascade;
 pub mod config;

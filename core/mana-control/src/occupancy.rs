@@ -520,4 +520,69 @@ mod tests {
         assert!(evidence.poi_present);
         assert_eq!(evidence.raw_person_count, 1);
     }
+
+    #[test]
+    fn multiple_to_empty_after_exit_then_empty_timer() {
+        let mut machine = OccupancyStateMachine::new(policy());
+        let start = Instant::now();
+
+        machine.update_at(evidence(2, true, 2), at(start, 0));
+        machine.update_at(evidence(2, true, 2), at(start, 2_000));
+        assert_eq!(machine.state(), RoomCardinality::Multiple);
+
+        machine.update_at(evidence(0, false, 0), at(start, 2_000));
+        let update = machine.update_at(evidence(0, false, 0), at(start, 4_000));
+        assert_eq!(update.state, RoomCardinality::Empty);
+        assert_eq!(update.second_person, SecondPersonState::None);
+    }
+
+    #[test]
+    fn empty_to_multiple_direct_with_raw_mode() {
+        let mut policy = policy();
+        policy.require_confirmed_tracks = false;
+        let mut machine = OccupancyStateMachine::new(policy);
+        let start = Instant::now();
+
+        assert_eq!(machine.state(), RoomCardinality::Empty);
+        machine.update_at(evidence(2, true, 0), at(start, 0));
+        let update = machine.update_at(evidence(2, true, 0), at(start, 2_000));
+        assert_eq!(update.state, RoomCardinality::Multiple);
+        assert_eq!(update.second_person, SecondPersonState::Confirmed);
+    }
+
+    #[test]
+    fn second_person_confirmed_clears_to_none_when_back_to_single() {
+        let mut machine = OccupancyStateMachine::new(policy());
+        let start = Instant::now();
+
+        machine.update_at(evidence(2, true, 2), at(start, 0));
+        machine.update_at(evidence(2, true, 2), at(start, 2_000));
+        assert_eq!(machine.state(), RoomCardinality::Multiple);
+        assert_eq!(
+            machine
+                .update_at(evidence(2, true, 2), at(start, 2_000))
+                .second_person,
+            SecondPersonState::Confirmed
+        );
+
+        machine.update_at(evidence(1, true, 1), at(start, 2_000));
+        let update = machine.update_at(evidence(1, true, 1), at(start, 4_000));
+        assert_eq!(update.state, RoomCardinality::Single);
+        assert_eq!(update.second_person, SecondPersonState::None);
+    }
+
+    #[test]
+    fn second_person_candidate_clears_when_raw_drops() {
+        let mut machine = OccupancyStateMachine::new(policy());
+        let start = Instant::now();
+
+        machine.update_at(evidence(1, true, 1), at(start, 0));
+        machine.update_at(evidence(1, true, 1), at(start, 1_000));
+        let candidate = machine.update_at(evidence(2, true, 1), at(start, 1_000));
+        assert_eq!(candidate.state, RoomCardinality::Single);
+        assert_eq!(candidate.second_person, SecondPersonState::Candidate);
+
+        let cleared = machine.update_at(evidence(1, true, 1), at(start, 1_500));
+        assert_eq!(cleared.second_person, SecondPersonState::None);
+    }
 }

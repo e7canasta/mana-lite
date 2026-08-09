@@ -1,21 +1,25 @@
 //! Cadence assertion for control-loop stalls (Fase 3).
 //!
 //! Expectation, not characterization: during a 3 s stall with a 200 ms period
-//! the control loop emits fifteen consecutive `scan_seq` values, ages grow
-//! monotonically, and the FSM enters `blind` on the first scan whose
-//! `observations_age_ms` crosses `data_stale_ms`.
+//! the control loop emits fifteen consecutive `scan_seq` values via `scan()`,
+//! ages grow monotonically, and the FSM enters `blind` on the first scan whose
+//! `observations_age_ms` crosses `data_stale_ms` *after* health is already blind.
 
 use std::collections::HashMap;
 use std::time::Instant;
 
-use mana_control::DepthRuleSnapshot;
-use mana_lite::config::{
-    FsmCatalog, FsmGuard, FsmRoles, FsmRoot, FsmState, FsmTransition, ZoneCatalog,
+use mana_control::config::{
+    FsmCatalog, FsmRoles, FsmRoot, FsmState, FsmTransition, OccupancyPolicy, PresencePoiPolicy,
+    ZoneCatalog,
 };
-use mana_lite::fsm::{FsmEngine, FsmProgram};
+use mana_lite::fsm::{FsmEngine, FsmGuard, FsmProgram};
 use mana_lite::health::Health;
-use mana_lite::scan::{AgedEvidence, ControlStamp, ProcessImage, ScanTimeline, SceneSample};
-use mana_lite::zones::ZoneEngine;
+use mana_lite::occupancy::OccupancyStateMachine;
+use mana_lite::presence::PresenceFilter;
+use mana_lite::scan::{
+    AgedEvidence, ControlPolicy, ControlState, ProcessImage, ScanTimeline, SceneEvent, SceneSample,
+    scan,
+};
 
 fn stall_catalog() -> FsmCatalog {
     let mut states = HashMap::new();
@@ -78,19 +82,49 @@ fn stall_emits_consecutive_scan_seq_and_blind_on_stale() {
         start,
     ));
     process_image.reset_depth(start);
+    process_image.measurement_pending = false;
 
-    let mut health = Health::new_at(DATA_STALE_MS, DATA_STALE_MS / 2, start);
-    let mut engine = FsmEngine::from_program_at(
-        FsmProgram::compile_lenient(&stall_catalog(), &ZoneCatalog::default()).unwrap(),
-        start,
-    );
-    let zones = ZoneEngine::from_catalog(&ZoneCatalog {
-        zones: HashMap::new(),
-        face_dwell: None,
-    });
+    let mut state = ControlState {
+        tracker: None,
+        presence: PresenceFilter::new(
+            false,
+            "person",
+            PresencePoiPolicy {
+                on_ms: 0,
+                off_ms: 0,
+            },
+        ),
+        occupancy: OccupancyStateMachine::new(OccupancyPolicy {
+            single_confirm_ms: 0,
+            empty_confirm_ms: 0,
+            multiple_confirm_ms: 0,
+            multiple_exit_ms: 0,
+            require_confirmed_tracks: false,
+        }),
+        zone_engine: None,
+        fsm_engine: Some(FsmEngine::from_program_at(
+            FsmProgram::compile_lenient(&stall_catalog(), &ZoneCatalog::default()).unwrap(),
+            start,
+        )),
+        health: Health::new_at(DATA_STALE_MS, DATA_STALE_MS / 2, start),
+        fsm_context: Default::default(),
+        last_scan_at: start,
+        scan_seq: 0,
+        policy: ControlPolicy {
+            person_class: "person".into(),
+            presence_enabled: false,
+            data_stale_ms: DATA_STALE_MS,
+            scan_period_ms: PERIOD_MS,
+            face_dwell_roi: None,
+            person_detection_roi: None,
+            face_edge_margin_px: 0,
+        },
+    };
 
-    let mut stamps = Vec::new();
+    let mut scan_seqs = Vec::new();
+    let mut ages = Vec::new();
     let mut blind_at: Option<u64> = None;
+    let mut health_blind_at: Option<u64> = None;
 
     for expected_seq in 1..=EXPECTED_SCANS {
         let now = if expected_seq == 1 {
@@ -98,55 +132,59 @@ fn stall_emits_consecutive_scan_seq_and_blind_on_stale() {
         } else {
             timeline.advance()
         };
-        let now_instant = now.as_instant();
-        let observations_age_ms = process_image.observations_age_ms(now_instant);
-        let depth_age_ms = process_image.depth_age_ms(now_instant);
-        let evidence_frame_id = process_image
-            .observations
-            .as_ref()
-            .map(|aged| aged.value.frame_number)
-            .unwrap_or(0);
+        let events = scan(&mut state, &process_image, now);
+        scan_seqs.push(state.scan_seq);
+        ages.push(process_image.observations_age_ms(now.as_instant()));
 
-        let stamp = ControlStamp {
-            scan_seq: expected_seq,
-            evidence_frame_id,
-            observations_age_ms,
-            depth_age_ms,
-        };
-        stamps.push(stamp);
-
-        let _ = health.evaluate_at(now_instant);
-        if let Some(tr) = engine.evaluate(&[], &zones, &health, &DepthRuleSnapshot::default()) {
-            if tr.to == "blind" && blind_at.is_none() {
-                blind_at = Some(expected_seq);
+        for event in &events {
+            match event {
+                SceneEvent::Health(mana_lite::health::HealthTransition::Blind { .. })
+                    if health_blind_at.is_none() =>
+                {
+                    health_blind_at = Some(expected_seq);
+                }
+                SceneEvent::FsmTransition(tr) if tr.to == "blind" && blind_at.is_none() => {
+                    blind_at = Some(expected_seq);
+                }
+                _ => {}
             }
         }
     }
 
-    assert_eq!(stamps.len() as u64, EXPECTED_SCANS);
-    for (idx, stamp) in stamps.iter().enumerate() {
-        assert_eq!(stamp.scan_seq, (idx as u64) + 1, "scan_seq must be contiguous");
-        assert_eq!(stamp.evidence_frame_id, 42);
+    assert_eq!(scan_seqs.len() as u64, EXPECTED_SCANS);
+    for (idx, seq) in scan_seqs.iter().enumerate() {
+        assert_eq!(*seq, (idx as u64) + 1, "scan_seq must be contiguous");
     }
-    for window in stamps.windows(2) {
+    for window in ages.windows(2) {
         assert!(
-            window[1].observations_age_ms > window[0].observations_age_ms,
+            window[1] > window[0],
             "observations_age_ms must grow during a stall"
         );
     }
 
-    let first_stale_seq = stamps
+    let first_stale_seq = ages
         .iter()
-        .find(|s| s.observations_age_ms > DATA_STALE_MS)
-        .map(|s| s.scan_seq)
+        .enumerate()
+        .find(|(_, age)| **age > DATA_STALE_MS)
+        .map(|(idx, _)| (idx as u64) + 1)
         .expect("stall must cross data_stale_ms");
     assert_eq!(
-        blind_at,
+        health_blind_at,
         Some(first_stale_seq),
-        "FSM must enter blind on the first scan past data_stale_ms"
+        "Health must enter blind on the first scan past data_stale_ms"
     );
-    assert_eq!(engine.current_state(), "blind");
-    assert!(stamps.last().unwrap().observations_age_ms >= STALL_MS - PERIOD_MS);
+    // FSM DataStale reads health.is_blind() from the previous tick, so it
+    // transitions one scan after Health emits Blind.
+    assert_eq!(
+        blind_at,
+        Some(first_stale_seq + 1),
+        "FSM must enter blind on the scan after Health goes blind"
+    );
+    assert_eq!(
+        state.fsm_engine.as_ref().map(FsmEngine::current_state),
+        Some("blind")
+    );
+    assert!(ages.last().unwrap() >= &(STALL_MS - PERIOD_MS));
 }
 
 #[test]

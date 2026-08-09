@@ -1,5 +1,5 @@
 use crate::config::MetricsTextConfig;
-use crate::health::{Health, HealthTransition};
+use crate::health::Health;
 use crate::logger::{Event, LogSink};
 use crate::metrics::{MetricsEngine, MetricsReport, PerModelMetrics};
 use crate::window::ErrorWindow;
@@ -83,30 +83,6 @@ impl PipelineState {
         if health.touch_at(now) {
             log.emit(Event::health_heartbeat(0, "ingest", 0));
         }
-    }
-
-    pub fn evaluate_health(
-        &self,
-        now: Instant,
-        health: &mut Health,
-        log: &mut dyn LogSink,
-        metrics: &mut MetricsEngine,
-    ) {
-        match health.evaluate_at(now) {
-            HealthTransition::Blind { ms_since_frame } => {
-                log.emit(Event::health_blind(ms_since_frame))
-            }
-            HealthTransition::Stale {
-                component,
-                ms_since_frame,
-            } => log.emit(Event::health_stale(component, ms_since_frame)),
-            HealthTransition::Recovered => log.emit(Event::health_heartbeat(0, "ingest", 0)),
-            HealthTransition::None => {}
-        }
-        if health.is_blind() {
-            metrics.tick_blind();
-        }
-        self.emit_metrics(log, metrics);
     }
 
     /// Publish periodic telemetry after the control loop has evaluated health.
