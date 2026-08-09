@@ -1,5 +1,13 @@
 [workspace]
-members = ["std/mana-rtsp", "std/mana-types", "std/mana-video", "std/mana-viz", "std/mana-geometry"]
+members = [
+    "core/mana-control",
+    "core/mana-perception",
+    "std/mana-rtsp",
+    "std/mana-types",
+    "std/mana-video",
+    "std/mana-viz",
+    "std/mana-geometry",
+]
 
 [package]
 name = "mana-lite"
@@ -15,16 +23,23 @@ keywords = ["clinical", "vision", "rtsp", "onnx", "pipeline"]
 categories = ["command-line-utilities", "science"]
 authors = ["Mana OS Contributors"]
 
+[features]
+default = ["ffmpeg", "rerun"]
+ffmpeg = ["dep:ffmpeg-next", "mana-video/ffmpeg"]
+rerun = ["dep:rerun", "mana-viz/rerun"]
+
 [[bin]]
 name = "mana-lite"
 path = "src/main.rs"
 
 [dependencies]
 mana-rtsp = { path = "std/mana-rtsp" }
-mana-video = { path = "std/mana-video" }
-mana-viz = { path = "std/mana-viz" }
+mana-video = { path = "std/mana-video", default-features = false }
+mana-viz = { path = "std/mana-viz", default-features = false }
 mana-types = { path = "std/mana-types" }
 mana-geometry = { path = "std/mana-geometry", features = ["polygonize"] }
+mana-control = { path = "core/mana-control" }
+mana-perception = { path = "core/mana-perception" }
 retina = "0.4"
 tokio = { version = "1", features = ["macros", "rt", "net", "time", "signal"] }
 futures = "0.3"
@@ -36,12 +51,12 @@ chrono = "0.4"
 thiserror = "2"
 log = "0.4"
 env_logger = "0.11"
-ffmpeg-next = "8"
+ffmpeg-next = { version = "8", optional = true }
 image = "0.25"
 imageproc = "0.25"
 ndarray = "0.17"
 vernier-mask = "0.2"
-rerun = "0.35"
+rerun = { version = "0.35", optional = true }
 
 [profile.release]
 opt-level = 3

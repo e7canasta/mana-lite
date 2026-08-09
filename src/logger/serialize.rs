@@ -356,7 +356,10 @@ pub fn write_event(event: &Event, ts: &str, buf: &mut Vec<u8>) {
             class,
             bbox,
             sources,
-            frame_id,
+            scan_seq,
+            evidence_frame_id,
+            observations_age_ms,
+            depth_age_ms,
         } => {
             buf.extend_from_slice(b"\"type\":\"entity\",\"track_id\":");
             write_u64(*track_id, buf);
@@ -378,8 +381,14 @@ pub fn write_event(event: &Event, ts: &str, buf: &mut Vec<u8>) {
                 write_json_string(source, buf);
                 buf.push(b'\"');
             }
-            buf.extend_from_slice(b"],\"frame_id\":");
-            write_u64(*frame_id, buf);
+            buf.extend_from_slice(b"]");
+            write_control_stamp(
+                *scan_seq,
+                *evidence_frame_id,
+                *observations_age_ms,
+                *depth_age_ms,
+                buf,
+            );
         }
         Event::Zone {
             zone,
@@ -387,7 +396,10 @@ pub fn write_event(event: &Event, ts: &str, buf: &mut Vec<u8>) {
             class,
             label,
             confidence,
-            frame_id,
+            scan_seq,
+            evidence_frame_id,
+            observations_age_ms,
+            depth_age_ms,
         } => {
             buf.extend_from_slice(b"\"type\":\"zone\",\"zone\":\"");
             write_json_string(zone, buf);
@@ -405,8 +417,13 @@ pub fn write_event(event: &Event, ts: &str, buf: &mut Vec<u8>) {
                 buf.extend_from_slice(b",\"confidence\":");
                 write_f32(*c, buf);
             }
-            buf.extend_from_slice(b",\"frame_id\":");
-            write_u64(*frame_id, buf);
+            write_control_stamp(
+                *scan_seq,
+                *evidence_frame_id,
+                *observations_age_ms,
+                *depth_age_ms,
+                buf,
+            );
         }
         Event::Fsm {
             from,
@@ -438,11 +455,10 @@ pub fn write_event(event: &Event, ts: &str, buf: &mut Vec<u8>) {
             write_u64(*dwell_ms, buf);
         }
         Event::Presence {
-            frame_id,
-            keyframe_gap_ms,
-            source_window_ms,
-            keyframes_seen,
-            keyframes_dropped,
+            scan_seq,
+            evidence_frame_id,
+            observations_age_ms,
+            depth_age_ms,
             state,
             poi_state,
             second_person,
@@ -457,16 +473,14 @@ pub fn write_event(event: &Event, ts: &str, buf: &mut Vec<u8>) {
             multiple_candidate_timer_ms,
             multiple_exit_timer_ms,
         } => {
-            buf.extend_from_slice(b"\"type\":\"presence\",\"frame_id\":");
-            write_u64(*frame_id, buf);
-            buf.extend_from_slice(b",\"keyframe_gap_ms\":");
-            write_u64(*keyframe_gap_ms, buf);
-            buf.extend_from_slice(b",\"source_window_ms\":");
-            write_u64(*source_window_ms, buf);
-            buf.extend_from_slice(b",\"keyframes_seen\":");
-            write_u64(*keyframes_seen, buf);
-            buf.extend_from_slice(b",\"keyframes_dropped\":");
-            write_u64(*keyframes_dropped, buf);
+            buf.extend_from_slice(b"\"type\":\"presence\"");
+            write_control_stamp(
+                *scan_seq,
+                *evidence_frame_id,
+                *observations_age_ms,
+                *depth_age_ms,
+                buf,
+            );
             buf.extend_from_slice(b",\"state\":\"");
             write_json_string(state, buf);
             buf.extend_from_slice(b"\",\"poi_state\":\"");
@@ -495,7 +509,10 @@ pub fn write_event(event: &Event, ts: &str, buf: &mut Vec<u8>) {
             write_u64(*multiple_exit_timer_ms, buf);
         }
         Event::FaceDwell {
-            frame_id,
+            scan_seq,
+            evidence_frame_id,
+            observations_age_ms,
+            depth_age_ms,
             source,
             state,
             state_label,
@@ -511,37 +528,60 @@ pub fn write_event(event: &Event, ts: &str, buf: &mut Vec<u8>) {
             face_model_ran,
             active_timers,
         } => {
-            buf.extend_from_slice(b"\"type\":\"face_dwell\",\"frame_id\":");
-            write_u64(*frame_id, buf);
+            buf.extend_from_slice(b"\"type\":\"face_dwell\"");
+            write_control_stamp(
+                *scan_seq,
+                *evidence_frame_id,
+                *observations_age_ms,
+                *depth_age_ms,
+                buf,
+            );
             buf.extend_from_slice(b",\"source\":\"");
             write_json_string(source, buf);
             buf.extend_from_slice(b"\",\"state\":\"");
             write_json_string(state, buf);
-            buf.extend_from_slice(b"\",\"state_label\":");
-            write_optional_string(state_label.as_deref(), buf);
+            buf.extend_from_slice(b"\"");
+            if let Some(label) = state_label {
+                buf.extend_from_slice(b",\"state_label\":\"");
+                write_json_string(label, buf);
+                buf.extend_from_slice(b"\"");
+            }
             buf.extend_from_slice(b",\"state_dwell_ms\":");
             write_u64(*state_dwell_ms, buf);
-            buf.extend_from_slice(b",\"state_dwell_required_ms\":");
-            write_optional_u64(*state_dwell_required_ms, buf);
-            buf.extend_from_slice(b",\"cardinality\":");
-            write_optional_string(cardinality.as_deref(), buf);
+            if let Some(required) = state_dwell_required_ms {
+                buf.extend_from_slice(b",\"state_dwell_required_ms\":");
+                write_u64(*required, buf);
+            }
+            if let Some(card) = cardinality {
+                buf.extend_from_slice(b",\"cardinality\":\"");
+                write_json_string(card, buf);
+                buf.extend_from_slice(b"\"");
+            }
             buf.extend_from_slice(b",\"person_present\":");
-            write_bool(*person_present, buf);
+            buf.extend_from_slice(if *person_present { b"true" } else { b"false" });
             buf.extend_from_slice(b",\"face_present\":");
-            write_bool(*face_present, buf);
-            buf.extend_from_slice(b",\"face_confidence\":");
-            write_optional_f32(*face_confidence, buf);
-            buf.extend_from_slice(b",\"face_in_dwell\":");
-            write_optional_bool(*face_in_dwell, buf);
+            buf.extend_from_slice(if *face_present { b"true" } else { b"false" });
+            if let Some(conf) = face_confidence {
+                buf.extend_from_slice(b",\"face_confidence\":");
+                write_f32(*conf, buf);
+            }
+            if let Some(in_dwell) = face_in_dwell {
+                buf.extend_from_slice(b",\"face_in_dwell\":");
+                buf.extend_from_slice(if *in_dwell { b"true" } else { b"false" });
+            }
             buf.extend_from_slice(b",\"at_edge\":");
-            write_bool(*at_edge, buf);
+            buf.extend_from_slice(if *at_edge { b"true" } else { b"false" });
             buf.extend_from_slice(b",\"face_was_inside\":");
-            write_bool(*face_was_inside, buf);
+            buf.extend_from_slice(if *face_was_inside {
+                b"true"
+            } else {
+                b"false"
+            });
             buf.extend_from_slice(b",\"face_model_ran\":");
-            write_bool(*face_model_ran, buf);
+            buf.extend_from_slice(if *face_model_ran { b"true" } else { b"false" });
             buf.extend_from_slice(b",\"active_timers\":[");
-            for (index, timer) in active_timers.iter().enumerate() {
-                if index > 0 {
+            for (i, timer) in active_timers.iter().enumerate() {
+                if i > 0 {
                     buf.push(b',');
                 }
                 buf.extend_from_slice(b"{\"trigger\":\"");
@@ -711,6 +751,26 @@ pub fn write_json_string(s: &str, buf: &mut Vec<u8>) {
         }
     }
     buf.extend_from_slice(&bytes[last..]);
+}
+
+fn write_control_stamp(
+    scan_seq: u64,
+    evidence_frame_id: u64,
+    observations_age_ms: u64,
+    depth_age_ms: Option<u64>,
+    buf: &mut Vec<u8>,
+) {
+    buf.extend_from_slice(b",\"scan_seq\":");
+    write_u64(scan_seq, buf);
+    buf.extend_from_slice(b",\"evidence_frame_id\":");
+    write_u64(evidence_frame_id, buf);
+    buf.extend_from_slice(b",\"observations_age_ms\":");
+    write_u64(observations_age_ms, buf);
+    buf.extend_from_slice(b",\"depth_age_ms\":");
+    match depth_age_ms {
+        Some(age) => write_u64(age, buf),
+        None => buf.extend_from_slice(b"null"),
+    }
 }
 
 pub fn write_u64(n: u64, buf: &mut Vec<u8>) {

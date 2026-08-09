@@ -1,14 +1,15 @@
 use std::collections::HashMap;
 use std::time::Instant;
 
-use crate::config::{FsmCatalog, FsmGuard};
+use crate::domain::StateId;
 use crate::depth::DepthRuleSnapshot;
-use crate::metrics::Health;
+use crate::health::Health;
 use crate::zones::{ZoneEngine, ZoneEvent};
 
 use super::guard::{
-    state_label, transition_min_dwell, transition_trigger, try_transition, GuardCtx,
+    GuardCtx, state_label, transition_min_dwell, transition_trigger, try_transition,
 };
+use super::FsmProgram;
 
 /// Per-frame scene evidence consumed by blueprint-specific FSM guards.
 /// Optional values distinguish unavailable evidence from a negative signal.
@@ -51,23 +52,22 @@ pub struct FsmSnapshot {
 }
 
 pub struct FsmEngine {
-    current_state: String,
-    catalog: FsmCatalog,
+    current_state: StateId,
+    program: FsmProgram,
     state_entered_at: Instant,
     dwell_timers: HashMap<String, Instant>,
     face_was_inside: bool,
 }
 
-
 impl FsmEngine {
-    pub fn from_catalog(catalog: &FsmCatalog) -> Self {
-        Self::from_catalog_at(catalog, Instant::now())
+    pub fn from_program(program: FsmProgram) -> Self {
+        Self::from_program_at(program, Instant::now())
     }
 
-    pub fn from_catalog_at(catalog: &FsmCatalog, now: Instant) -> Self {
+    pub fn from_program_at(program: FsmProgram, now: Instant) -> Self {
         Self {
-            current_state: catalog.fsm.initial.clone(),
-            catalog: catalog.clone(),
+            current_state: program.initial().clone(),
+            program,
             state_entered_at: now,
             dwell_timers: HashMap::new(),
             face_was_inside: false,
@@ -75,7 +75,7 @@ impl FsmEngine {
     }
 
     pub fn current_state(&self) -> &str {
-        &self.current_state
+        self.current_state.as_str()
     }
 
     #[must_use]
@@ -93,9 +93,8 @@ impl FsmEngine {
             .iter()
             .map(|(trigger, started_at)| {
                 let required_ms = self
-                    .catalog
-                    .fsm
-                    .transitions
+                    .program
+                    .transitions()
                     .iter()
                     .find(|transition| transition_trigger(transition) == *trigger)
                     .map(transition_min_dwell)
@@ -110,16 +109,14 @@ impl FsmEngine {
         active_timers.sort_by(|a, b| a.trigger.cmp(&b.trigger));
 
         FsmSnapshot {
-            state: self.current_state.clone(),
-            state_label: state_label(&self.catalog, &self.current_state),
+            state: self.current_state.to_string(),
+            state_label: state_label(&self.program, self.current_state.as_str()),
             state_dwell_ms: now
                 .saturating_duration_since(self.state_entered_at)
                 .as_millis() as u64,
             state_dwell_required_ms: self
-                .catalog
-                .fsm
-                .states
-                .get(&self.current_state)
+                .program
+                .state(self.current_state.as_str())
                 .and_then(|state| state.dwell_min_ms),
             face_was_inside: self.face_was_inside,
             active_timers,
@@ -202,13 +199,18 @@ impl FsmEngine {
             scene: context,
             face_was_inside: self.face_was_inside,
         };
-        for t in &self.catalog.fsm.transitions {
-            if t.from != "*" {
+        for t in self.program.transitions() {
+            if !t.from.is_wildcard() {
                 continue;
             }
-            if let Some(result) =
-                try_transition(&mut self.dwell_timers, t, &self.state_entered_at, &self.catalog, &ctx, now)
-            {
+            if let Some(result) = try_transition(
+                &mut self.dwell_timers,
+                t,
+                &self.state_entered_at,
+                &self.program,
+                &ctx,
+                now,
+            ) {
                 self.apply_transition(&result, context, now);
                 return Some(result);
             }
@@ -231,7 +233,7 @@ impl FsmEngine {
             return None;
         }
 
-        let transitions = &self.catalog.fsm.transitions;
+        let transitions = self.program.transitions();
         let ctx = GuardCtx {
             zone_events,
             zones: zone_engine,
@@ -242,12 +244,12 @@ impl FsmEngine {
         };
 
         for t in transitions {
-            if t.from == "*" {
+            if t.from.is_wildcard() {
                 if let Some(result) = try_transition(
                     &mut self.dwell_timers,
                     t,
                     &self.state_entered_at,
-                    &self.catalog,
+                    &self.program,
                     &ctx,
                     now,
                 ) {
@@ -258,14 +260,14 @@ impl FsmEngine {
         }
 
         for t in transitions {
-            if t.from != self.current_state {
+            if !t.from.matches(&self.current_state) {
                 continue;
             }
             if let Some(result) = try_transition(
                 &mut self.dwell_timers,
                 t,
                 &self.state_entered_at,
-                &self.catalog,
+                &self.program,
                 &ctx,
                 now,
             ) {
@@ -289,26 +291,20 @@ impl FsmEngine {
     }
 
     fn state_sets_face_latch(&self, state: &str) -> bool {
-        self.catalog
-            .fsm
-            .states
-            .get(state)
+        self.program
+            .state(state)
             .is_some_and(|entry| entry.face_inside)
     }
 
     fn state_maybe_sets_face_latch(&self, state: &str) -> bool {
-        self.catalog
-            .fsm
-            .states
-            .get(state)
+        self.program
+            .state(state)
             .is_some_and(|entry| entry.face_inside_maybe)
     }
 
     fn state_dwell_satisfied(&self, now: Instant) -> bool {
-        self.catalog
-            .fsm
-            .states
-            .get(&self.current_state)
+        self.program
+            .state(self.current_state.as_str())
             .and_then(|state| state.dwell_min_ms)
             .is_none_or(|dwell_min| {
                 now.saturating_duration_since(self.state_entered_at)
@@ -323,10 +319,10 @@ impl FsmEngine {
         context: &FsmSceneContext,
         now: Instant,
     ) {
-        self.current_state.clone_from(&result.to);
+        self.current_state = StateId::new(&result.to);
         self.state_entered_at = now;
         self.dwell_timers.clear();
-        if result.to == self.catalog.fsm.roles.reset {
+        if self.current_state == *self.program.reset() {
             self.face_was_inside = false;
         } else if self.state_sets_face_latch(&result.to)
             || (self.state_maybe_sets_face_latch(&result.to) && context.face_present)
@@ -336,10 +332,8 @@ impl FsmEngine {
     }
 
     pub fn current_models(&self) -> Vec<String> {
-        self.catalog
-            .fsm
-            .states
-            .get(&self.current_state)
+        self.program
+            .state(self.current_state.as_str())
             .map(|s| s.models.clone())
             .unwrap_or_default()
     }
@@ -360,7 +354,7 @@ impl FsmEngine {
     /// espurio. Este método es un salto de estado directo, sin pasar por
     /// el evaluador.
     pub fn force_safe_state(&mut self, now: Instant) {
-        self.current_state.clone_from(&self.catalog.fsm.roles.safe);
+        self.current_state.clone_from(self.program.safe());
         self.state_entered_at = now;
         self.dwell_timers.clear();
     }

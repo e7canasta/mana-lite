@@ -3,12 +3,13 @@
 mod dwell;
 mod engine;
 mod guard;
+mod program;
 
 pub use engine::{
     FsmDwellTimerSnapshot, FsmEngine, FsmSceneContext, FsmSnapshot, FsmTransitionResult,
 };
-pub use guard::GuardCtx;
-
+pub use guard::{FsmGuard, GuardCtx};
+pub use program::FsmProgram;
 
 #[cfg(test)]
 mod tests {
@@ -16,9 +17,11 @@ mod tests {
     use std::collections::HashMap;
     use std::time::Instant;
 
-    use crate::config::{FsmCatalog, FsmGuard, FsmRoles, FsmRoot, FsmState, FsmTransition};
+    use crate::config::{
+        FsmCatalog, FsmRoles, FsmRoot, FsmState, FsmTransition, ZoneCatalog, ZoneSpec,
+    };
     use crate::depth::DepthRuleSnapshot;
-    use crate::metrics::Health;
+    use crate::health::Health;
     use crate::zones::{ZoneEngine, ZoneEvent};
 
     fn make_catalog(
@@ -120,20 +123,75 @@ mod tests {
         catalog
     }
 
+    fn test_zones(catalog: &FsmCatalog) -> ZoneCatalog {
+        let mut zones = HashMap::new();
+        let mut needs_face_dwell = false;
+        for transition in &catalog.fsm.transitions {
+            for guard in &transition.guards {
+                match guard {
+                    FsmGuard::ZonePresent { zone }
+                    | FsmGuard::ZoneOccupied { zone, .. }
+                    | FsmGuard::ZoneVacated { zone, .. } => {
+                        zones.entry(zone.clone()).or_insert(ZoneSpec {
+                            x1: 0,
+                            y1: 0,
+                            x2: 1,
+                            y2: 1,
+                            label: None,
+                            hysteresis_ms: 0,
+                        });
+                    }
+                    FsmGuard::FaceInDwell | FsmGuard::FaceNotInDwell => {
+                        needs_face_dwell = true;
+                    }
+                    _ => {}
+                }
+            }
+        }
+        ZoneCatalog {
+            zones,
+            face_dwell: needs_face_dwell.then_some(ZoneSpec {
+                x1: 0,
+                y1: 0,
+                x2: 1,
+                y2: 1,
+                label: None,
+                hysteresis_ms: 0,
+            }),
+        }
+    }
+
+    fn engine(catalog: &FsmCatalog) -> FsmEngine {
+        engine_at(catalog, Instant::now())
+    }
+
+    fn engine_at(catalog: &FsmCatalog, now: Instant) -> FsmEngine {
+        FsmEngine::from_program_at(
+            FsmProgram::compile_lenient(catalog, &test_zones(catalog))
+                .expect("test FSM must compile"),
+            now,
+        )
+    }
+
     #[test]
     fn force_safe_state_uses_roles_in_real_catalogs() {
         let start = Instant::now();
-        for path in [
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        for rel in [
             "config/fsm.toml",
             "config/blueprints/detect-room-face/fsm.toml",
         ] {
-            let catalog = crate::config::load_fsm_catalog(std::path::Path::new(path)).unwrap();
-            let mut engine = FsmEngine::from_catalog_at(&catalog, start);
+            let path = root.join(rel);
+            let catalog: FsmCatalog = toml::from_str(
+                &std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {path:?}: {e}")),
+            )
+            .unwrap_or_else(|e| panic!("parse {path:?}: {e}"));
+            let mut engine = engine_at(&catalog, start);
 
             engine.force_safe_state(start);
 
-            assert_eq!(engine.current_state(), catalog.fsm.roles.safe, "{path}");
-            assert!(engine.current_models().is_empty(), "{path}");
+            assert_eq!(engine.current_state(), catalog.fsm.roles.safe, "{rel}");
+            assert!(engine.current_models().is_empty(), "{rel}");
         }
     }
 
@@ -145,7 +203,7 @@ mod tests {
             reset: "home".into(),
         });
         catalog.fsm.states.get_mut("engaged").unwrap().face_inside = true;
-        let mut engine = FsmEngine::from_catalog_at(&catalog, start);
+        let mut engine = engine_at(&catalog, start);
         let health = Health::new_at(10_000, 5_000, start);
         let depth = DepthRuleSnapshot::default();
 
@@ -194,7 +252,7 @@ mod tests {
                 dwell: None,
             }],
         );
-        let mut engine = FsmEngine::from_catalog(&catalog);
+        let mut engine = engine(&catalog);
         let start = Instant::now();
         let zones = ZoneEngine::from_catalog(&crate::config::ZoneCatalog {
             zones: HashMap::new(),
@@ -243,7 +301,7 @@ mod tests {
             ],
         );
         let start = Instant::now();
-        let mut engine = FsmEngine::from_catalog_at(&catalog, start);
+        let mut engine = engine_at(&catalog, start);
         let zones = ZoneEngine::from_catalog(&crate::config::ZoneCatalog {
             zones: HashMap::new(),
             face_dwell: None,
@@ -281,7 +339,10 @@ mod tests {
             .expect("stale signal forces blind");
         assert_eq!(blind.to, "blind");
         assert_eq!(engine.current_state(), "blind");
-        assert!(engine.current_models().is_empty(), "blind declares no models");
+        assert!(
+            engine.current_models().is_empty(),
+            "blind declares no models"
+        );
 
         let recovered_from_blind = health.touch_at(start + std::time::Duration::from_millis(300));
         assert!(recovered_from_blind, "touch reports the exit from blind");
@@ -296,7 +357,10 @@ mod tests {
             )
             .expect("fresh signal exits blind");
         assert_eq!(result.to, "idle");
-        assert!(!engine.face_was_inside(), "el latch no sobrevive a la ceguera");
+        assert!(
+            !engine.face_was_inside(),
+            "el latch no sobrevive a la ceguera"
+        );
         assert!(!engine.current_models().is_empty(), "la inferencia vuelve");
     }
 
@@ -340,7 +404,7 @@ mod tests {
             ],
         );
         let start = Instant::now();
-        let mut engine = FsmEngine::from_catalog_at(&catalog, start);
+        let mut engine = engine_at(&catalog, start);
         let zones = ZoneEngine::from_catalog(&crate::config::ZoneCatalog {
             zones: HashMap::new(),
             face_dwell: None,
@@ -376,15 +440,25 @@ mod tests {
         );
         assert!(pending.is_none(), "dwell de 1s todavia no cumple");
         assert_eq!(
-            engine.snapshot_at(start + std::time::Duration::from_millis(50)).active_timers.len(),
+            engine
+                .snapshot_at(start + std::time::Duration::from_millis(50))
+                .active_timers
+                .len(),
             1,
             "timer de dwell armado"
         );
 
         // El panic fuerza el estado seguro.
         engine.force_safe_state(start + std::time::Duration::from_millis(200));
-        assert_eq!(engine.current_state(), "blind", "blind directo, sin pasar por el evaluador");
-        assert!(engine.current_models().is_empty(), "blind declara cero modelos");
+        assert_eq!(
+            engine.current_state(),
+            "blind",
+            "blind directo, sin pasar por el evaluador"
+        );
+        assert!(
+            engine.current_models().is_empty(),
+            "blind declara cero modelos"
+        );
         let snap = engine.snapshot_at(start + std::time::Duration::from_millis(200));
         assert_eq!(snap.active_timers.len(), 0, "dwell_timers purgados");
         assert_eq!(snap.state_dwell_ms, 0, "state_entered_at reiniciado");
@@ -419,7 +493,7 @@ mod tests {
             }],
         );
         let start = Instant::now();
-        let mut engine = FsmEngine::from_catalog_at(&catalog, start);
+        let mut engine = engine_at(&catalog, start);
         let health = Health::new(10_000, 5_000);
         let inside = FsmSceneContext {
             face_in_dwell: Some(true),
@@ -470,7 +544,7 @@ mod tests {
                 dwell: None,
             }],
         );
-        let mut engine = FsmEngine::from_catalog(&catalog);
+        let mut engine = engine(&catalog);
         let zones = ZoneEngine::from_catalog(&crate::config::ZoneCatalog {
             zones: HashMap::new(),
             face_dwell: None,
@@ -507,7 +581,7 @@ mod tests {
                 dwell: None,
             }],
         );
-        let mut engine = FsmEngine::from_catalog(&catalog);
+        let mut engine = engine(&catalog);
         let zones = ZoneEngine::from_catalog(&crate::config::ZoneCatalog {
             zones: HashMap::new(),
             face_dwell: None,
@@ -549,7 +623,7 @@ mod tests {
                 dwell: None,
             }],
         );
-        let mut engine = FsmEngine::from_catalog(&catalog);
+        let mut engine = engine(&catalog);
         let zones = ZoneEngine::from_catalog(&crate::config::ZoneCatalog {
             zones: HashMap::new(),
             face_dwell: None,
@@ -581,7 +655,7 @@ mod tests {
             }],
         );
         let start = Instant::now();
-        let mut engine = FsmEngine::from_catalog_at(&catalog, start);
+        let mut engine = engine_at(&catalog, start);
         let zones = ZoneEngine::from_catalog(&crate::config::ZoneCatalog {
             zones: HashMap::new(),
             face_dwell: None,
@@ -631,7 +705,7 @@ mod tests {
             }],
         );
         let start = Instant::now();
-        let mut engine = FsmEngine::from_catalog_at(&catalog, start);
+        let mut engine = engine_at(&catalog, start);
         let zones = ZoneEngine::from_catalog(&crate::config::ZoneCatalog {
             zones: HashMap::new(),
             face_dwell: None,
@@ -681,7 +755,7 @@ mod tests {
                 dwell: None,
             }],
         );
-        let mut engine = FsmEngine::from_catalog(&catalog);
+        let mut engine = engine(&catalog);
         let zones = ZoneEngine::from_catalog(&crate::config::ZoneCatalog {
             zones: HashMap::new(),
             face_dwell: None,
@@ -709,7 +783,7 @@ mod tests {
                 dwell: None,
             }],
         );
-        let mut engine = FsmEngine::from_catalog(&catalog);
+        let mut engine = engine(&catalog);
         let zones = ZoneEngine::from_catalog(&crate::config::ZoneCatalog {
             zones: HashMap::new(),
             face_dwell: None,
@@ -745,7 +819,7 @@ mod tests {
                 dwell: None,
             }],
         );
-        let mut engine = FsmEngine::from_catalog(&catalog);
+        let mut engine = engine(&catalog);
         let zones = ZoneEngine::from_catalog(&crate::config::ZoneCatalog {
             zones: HashMap::new(),
             face_dwell: None,
@@ -777,7 +851,7 @@ mod tests {
                 dwell: None,
             }],
         );
-        let mut engine = FsmEngine::from_catalog(&catalog);
+        let mut engine = engine(&catalog);
         let health = Health::new(10_000, 5_000);
         let outside = FsmSceneContext {
             face_in_dwell: Some(false),
@@ -814,7 +888,7 @@ mod tests {
             }],
         );
         let start = Instant::now();
-        let mut engine = FsmEngine::from_catalog_at(&catalog, start);
+        let mut engine = engine_at(&catalog, start);
         let health = Health::new(10_000, 5_000);
         let inside = FsmSceneContext {
             cardinality: Some("single".into()),
@@ -873,7 +947,7 @@ mod tests {
             ],
         );
         let start = Instant::now();
-        let mut engine = FsmEngine::from_catalog_at(&catalog, start);
+        let mut engine = engine_at(&catalog, start);
         let health = Health::new(10_000, 5_000);
         let at_edge = FsmSceneContext {
             person_present: true,
@@ -964,7 +1038,7 @@ mod tests {
             ],
         );
         let start = Instant::now();
-        let mut engine = FsmEngine::from_catalog_at(&catalog, start);
+        let mut engine = engine_at(&catalog, start);
         let zones = ZoneEngine::from_catalog(&crate::config::ZoneCatalog {
             zones: HashMap::new(),
             face_dwell: None,
@@ -1088,7 +1162,7 @@ mod tests {
             ],
         );
         let start = Instant::now();
-        let mut engine = FsmEngine::from_catalog_at(&catalog, start);
+        let mut engine = engine_at(&catalog, start);
         let health = Health::new(10_000, 5_000);
         let absent = FsmSceneContext {
             cardinality: Some("single".into()),

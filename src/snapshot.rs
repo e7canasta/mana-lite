@@ -6,7 +6,9 @@ use ffmpeg_next::util::frame::Video;
 use image::ExtendedColorType;
 use image::ImageEncoder;
 use image::codecs::png::{CompressionType, FilterType, PngEncoder};
+use mana_video::PixelFormat;
 use mana_video::decoder::SoftwareDecoder;
+use mana_video::format::pack_frame_into;
 
 // ── Frame buffer ─────────────────────────────────────────────────
 
@@ -99,13 +101,9 @@ fn yuv_to_rgb24(frame: &Video, cached: &mut CachedScaler) -> std::io::Result<Fra
         .run(frame, &mut rgb_frame)
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
 
-    let data = rgb_frame.data(0);
-    let stride = rgb_frame.stride(0);
-    let row_bytes = w as usize * 3;
-    let mut packed = Vec::with_capacity(row_bytes * h as usize);
-    for y in 0..h as usize {
-        packed.extend_from_slice(&data[y * stride..y * stride + row_bytes]);
-    }
+    let mut packed =
+        Vec::with_capacity(w as usize * h as usize * PixelFormat::Rgb8.bytes_per_pixel());
+    pack_frame_into(&mut packed, &rgb_frame, PixelFormat::Rgb8);
     Ok(FrameBuffer { w, h, rgb: packed })
 }
 

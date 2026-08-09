@@ -1,64 +1,86 @@
 use std::time::Instant;
 
-use mana_lite::config::{OccupancyPolicy, PresencePoiPolicy};
-use mana_lite::detection::{ConsolidatedObservation, DetectionEvidence};
-use mana_lite::occupancy::{OccupancyEvidence, OccupancyStateMachine, RoomCardinality};
+use mana_control::config::{OccupancyPolicy, PresencePoiPolicy};
+use mana_lite::health::Health;
+use mana_lite::occupancy::{OccupancyStateMachine, RoomCardinality};
 use mana_lite::presence::PresenceFilter;
-use mana_lite::scan::ScanTimeline;
+use mana_lite::scan::{
+    AgedEvidence, ClinicalSample, ControlPolicy, ControlState, ProcessImage, ScanTimeline,
+    SceneEvent, SceneObservation, scan,
+};
 
-fn person() -> ConsolidatedObservation {
-    ConsolidatedObservation {
+fn person() -> SceneObservation {
+    SceneObservation {
         class: "person".into(),
-        confidence: 0.9,
         bbox: [0.0, 0.0, 100.0, 100.0],
-        primary_model: "synthetic".into(),
-        evidence: vec![DetectionEvidence {
-            model: "synthetic".into(),
-            class: "person".into(),
-            confidence: 0.9,
-            bbox: [0.0, 0.0, 100.0, 100.0],
-            mask: None,
-        }],
-        components: Vec::new(),
+        confidence: 0.9,
+        source_models: vec!["synthetic".into()],
+        face: None,
     }
 }
 
 fn single_at(start: Instant, period_ms: u64) -> Instant {
     let mut timeline = ScanTimeline::new(start, period_ms);
-    let mut presence = PresenceFilter::new(
-        true,
-        "person",
-        PresencePoiPolicy {
-            on_ms: 0,
-            off_ms: 500,
+    let mut state = ControlState {
+        tracker: None,
+        presence: PresenceFilter::new(
+            true,
+            "person",
+            PresencePoiPolicy {
+                on_ms: 0,
+                off_ms: 500,
+            },
+        ),
+        occupancy: OccupancyStateMachine::new(OccupancyPolicy {
+            single_confirm_ms: 400,
+            empty_confirm_ms: 500,
+            multiple_confirm_ms: 300,
+            multiple_exit_ms: 300,
+            require_confirmed_tracks: false,
+        }),
+        zone_engine: None,
+        fsm_engine: None,
+        health: Health::new_at(10_000, 5_000, start),
+        fsm_context: Default::default(),
+        last_scan_at: start,
+        scan_seq: 0,
+        policy: ControlPolicy {
+            person_class: "person".into(),
+            presence_enabled: true,
+            data_stale_ms: 10_000,
+            scan_period_ms: period_ms,
+            face_dwell_roi: None,
+            person_detection_roi: None,
+            face_edge_margin_px: 0,
         },
-    );
-    let mut occupancy = OccupancyStateMachine::new(OccupancyPolicy {
-        single_confirm_ms: 400,
-        empty_confirm_ms: 500,
-        multiple_confirm_ms: 300,
-        multiple_exit_ms: 300,
-        require_confirmed_tracks: false,
-    });
+    };
     let observations = [person()];
+    let process_image = ProcessImage {
+        observations: Some(AgedEvidence::new(
+            ClinicalSample {
+                observations: observations.to_vec(),
+                signal_valid: true,
+                raw_person_count: 1,
+                frame_number: 1,
+                face_model_ran: false,
+            },
+            start,
+        )),
+        depth: None,
+        measurement_pending: false,
+    };
 
     loop {
         let now = timeline.now();
-        let (_, presence_update) = presence.update_at(&observations, true, now);
-        let update = occupancy.update_at(
-            OccupancyEvidence {
-                signal_valid: true,
-                raw_person_count: 1,
-                poi_present: matches!(
-                    presence_update.state,
-                    mana_lite::presence::PresenceState::Present
-                ),
-                confirmed_person_count: 0,
-            },
-            now,
-        );
-        if update.state == RoomCardinality::Single {
-            return now;
+        for event in scan(&mut state, &process_image, now) {
+            if let SceneEvent::Presence {
+                state: room,
+                ..
+            } = event
+                && room == RoomCardinality::Single
+            {
+                return now.as_instant();
+            }
         }
         timeline.advance();
     }

@@ -1,5 +1,6 @@
 use crate::fsm::{FsmSceneContext, FsmSnapshot};
-use crate::logger::{Event, FaceDwellTimerRecord, LogSink};
+use crate::logger::{Event, FaceDwellTimerRecord};
+use crate::scan::ControlStamp;
 
 /// Application strategy that publishes the facial state machine as diagnostic
 /// evidence without owning or duplicating its transition logic.
@@ -7,34 +8,31 @@ use crate::logger::{Event, FaceDwellTimerRecord, LogSink};
 pub struct FaceDwellLogStrategy;
 
 impl FaceDwellLogStrategy {
-    pub fn log_keyframe(
+    pub fn keyframe_event(
         &self,
-        log: &mut dyn LogSink,
-        frame_id: u64,
+        stamp: ControlStamp,
         context: &FsmSceneContext,
         snapshot: &FsmSnapshot,
-    ) {
-        self.log(log, frame_id, "keyframe", context, snapshot);
+    ) -> Event {
+        self.event(stamp, "keyframe", context, snapshot)
     }
 
-    pub fn log_wildcard(
+    pub fn wildcard_event(
         &self,
-        log: &mut dyn LogSink,
-        frame_id: u64,
+        stamp: ControlStamp,
         context: &FsmSceneContext,
         snapshot: &FsmSnapshot,
-    ) {
-        self.log(log, frame_id, "wildcard", context, snapshot);
+    ) -> Event {
+        self.event(stamp, "wildcard", context, snapshot)
     }
 
-    fn log(
+    fn event(
         &self,
-        log: &mut dyn LogSink,
-        frame_id: u64,
+        stamp: ControlStamp,
         source: &str,
         context: &FsmSceneContext,
         snapshot: &FsmSnapshot,
-    ) {
+    ) -> Event {
         let active_timers = snapshot
             .active_timers
             .iter()
@@ -45,8 +43,8 @@ impl FaceDwellLogStrategy {
             })
             .collect();
 
-        log.emit(Event::face_dwell(
-            frame_id,
+        Event::face_dwell(
+            stamp,
             source,
             &snapshot.state,
             snapshot.state_label.as_deref(),
@@ -61,6 +59,6 @@ impl FaceDwellLogStrategy {
             snapshot.face_was_inside,
             context.face_model_ran,
             active_timers,
-        ));
+        )
     }
 }

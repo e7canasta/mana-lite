@@ -1,10 +1,9 @@
 use std::collections::HashMap;
 
 use crate::assignment::hungarian_min;
-use crate::detection::{ConsolidatedObservation, DetectionEvidence};
+use crate::SceneObservation;
 use crate::kalman::{Kalman7, KalmanConfig};
-use crate::logger::Event;
-use mana_geometry::iou::{box_overlap, OverlapMetric};
+use mana_geometry::iou::{OverlapMetric, box_overlap};
 
 /// Per-track state: position, motion model, lifecycle.
 #[derive(Debug, Clone)]
@@ -14,8 +13,8 @@ pub struct Track {
     pub class: String,
     pub bbox: [f32; 4],
     pub confidence: f32,
-    pub evidence: Vec<DetectionEvidence>,
-    pub(crate) kalman: Kalman7,
+    pub evidence: Vec<String>,
+    pub kalman: Kalman7,
     pub hits: u32,
     pub hit_streak: u32,
     pub misses: u32,
@@ -53,22 +52,17 @@ pub struct TrackObservation {
     pub class: String,
     pub confidence: f32,
     pub bbox: [f32; 4],
-    pub evidence: Vec<DetectionEvidence>,
+    pub evidence: Vec<String>,
 }
 
-impl From<&ConsolidatedObservation> for TrackObservation {
-    fn from(observation: &ConsolidatedObservation) -> Self {
+impl From<&SceneObservation> for TrackObservation {
+    fn from(observation: &SceneObservation) -> Self {
         Self {
-            primary_model: observation.primary_model.clone(),
+            primary_model: observation.source_models.first().cloned().unwrap_or_default(),
             class: observation.class.clone(),
             confidence: observation.confidence,
             bbox: observation.bbox,
-            evidence: observation
-                .evidence
-                .iter()
-                .chain(observation.components.iter())
-                .cloned()
-                .collect(),
+            evidence: observation.source_models.clone(),
         }
     }
 }
@@ -185,7 +179,7 @@ impl Tracker {
 
     pub fn update_observations(
         &mut self,
-        observations: &[ConsolidatedObservation],
+        observations: &[SceneObservation],
         dt_ms: u64,
     ) -> Vec<TrackEvent> {
         let track_observations: Vec<TrackObservation> =
@@ -196,7 +190,7 @@ impl Tracker {
     /// Associate already-predicted consolidated observations.
     pub fn associate_observations(
         &mut self,
-        observations: &[ConsolidatedObservation],
+        observations: &[SceneObservation],
         allow_single_reacquire: bool,
         dt_ms: u64,
     ) -> Vec<TrackEvent> {
@@ -210,7 +204,7 @@ impl Tracker {
     /// jump or detector dropout.
     pub fn update_single_person(
         &mut self,
-        observations: &[ConsolidatedObservation],
+        observations: &[SceneObservation],
         dt_ms: u64,
     ) -> Vec<TrackEvent> {
         let track_observations: Vec<TrackObservation> =
@@ -218,14 +212,23 @@ impl Tracker {
         self.update_with_mode(&track_observations, true, dt_ms)
     }
 
-    pub fn enrich_observations(&mut self, observations: &[ConsolidatedObservation]) {
+    pub fn enrich_observations(&mut self, observations: &[SceneObservation]) {
         for observation in observations {
             let Some(track_id) = self
                 .tracks
                 .iter()
                 .filter(|(_, track)| track.is_confirmed && track.class == observation.class)
                 .filter_map(|(id, track)| {
-                    let iou = compute_iou(&track.bbox, &observation.bbox);
+                    let iou = box_overlap(
+                        (track.bbox[0], track.bbox[1], track.bbox[2], track.bbox[3]),
+                        (
+                            observation.bbox[0],
+                            observation.bbox[1],
+                            observation.bbox[2],
+                            observation.bbox[3],
+                        ),
+                        OverlapMetric::Iou,
+                    );
                     (iou >= self.iou_threshold).then_some((*id, iou))
                 })
                 .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
@@ -238,12 +241,7 @@ impl Tracker {
                 .get_mut(&track_id)
                 .expect("track selected above");
             track.confidence = track.confidence.max(observation.confidence);
-            let evidence: Vec<DetectionEvidence> = observation
-                .evidence
-                .iter()
-                .chain(observation.components.iter())
-                .cloned()
-                .collect();
+            let evidence = observation.source_models.clone();
             merge_evidence(&mut track.evidence, &evidence);
         }
     }
@@ -269,7 +267,9 @@ impl Tracker {
                 if track.class != detection.class {
                     continue;
                 }
-                let distance = track.kalman.mahalanobis_sq(bbox_to_measurement(detection.bbox));
+                let distance = track
+                    .kalman
+                    .mahalanobis_sq(bbox_to_measurement(detection.bbox));
                 if distance.is_finite() && distance <= self.mahalanobis_threshold {
                     cost[row][col] = distance;
                 }
@@ -292,10 +292,28 @@ impl Tracker {
                 .values()
                 .filter(|track| track.is_confirmed && track.class == detection.class)
                 .max_by(|a, b| {
-                    compute_iou(&a.bbox, &detection.bbox)
-                        .partial_cmp(&compute_iou(&b.bbox, &detection.bbox))
-                        .unwrap_or(std::cmp::Ordering::Equal)
-                        .then_with(|| b.misses.cmp(&a.misses))
+                    box_overlap(
+                        (a.bbox[0], a.bbox[1], a.bbox[2], a.bbox[3]),
+                        (
+                            detection.bbox[0],
+                            detection.bbox[1],
+                            detection.bbox[2],
+                            detection.bbox[3],
+                        ),
+                        OverlapMetric::Iou,
+                    )
+                    .partial_cmp(&box_overlap(
+                        (b.bbox[0], b.bbox[1], b.bbox[2], b.bbox[3]),
+                        (
+                            detection.bbox[0],
+                            detection.bbox[1],
+                            detection.bbox[2],
+                            detection.bbox[3],
+                        ),
+                        OverlapMetric::Iou,
+                    ))
+                    .unwrap_or(std::cmp::Ordering::Equal)
+                    .then_with(|| b.misses.cmp(&a.misses))
                 });
             if let Some(track) = best {
                 track_matched.insert(track.id, 0);
@@ -444,78 +462,13 @@ impl Tracker {
     }
 }
 
-fn merge_evidence(target: &mut Vec<DetectionEvidence>, incoming: &[DetectionEvidence]) {
-    for evidence in incoming {
-        if let Some(existing) = target.iter_mut().find(|item| item.model == evidence.model) {
-            *existing = evidence.clone();
-        } else {
-            target.push(evidence.clone());
-        }
-    }
-}
+fn merge_evidence(target: &mut Vec<String>, incoming: &[String]) { for evidence in incoming { if !target.contains(evidence) { target.push(evidence.clone()); } } }
 
 fn bbox_to_measurement(bbox: [f32; 4]) -> [f32; 4] {
     let [x1, y1, x2, y2] = bbox;
     let w = (x2 - x1).max(1e-3);
     let h = (y2 - y1).max(1e-3);
     [(x1 + x2) * 0.5, (y1 + y2) * 0.5, w * h, w / h]
-}
-
-/// Intersection over Union for axis-aligned bounding boxes.
-fn compute_iou(a: &[f32; 4], b: &[f32; 4]) -> f32 {
-    box_overlap(
-        (a[0], a[1], a[2], a[3]),
-        (b[0], b[1], b[2], b[3]),
-        OverlapMetric::Iou,
-    )
-}
-
-/// Convert tracker events to logger events.
-pub fn track_event_to_log(event: &TrackEvent, frame_id: u64) -> Event {
-    match event {
-        TrackEvent::Created { id, class, bbox } => Event::Meta {
-            event: "track_created".into(),
-            detail: format!("track{id}"),
-            attrs: vec![
-                ("class".into(), class.clone()),
-                ("frame_id".into(), frame_id.to_string()),
-                ("bbox".into(), format_bbox(bbox)),
-            ],
-        },
-        TrackEvent::Updated { id, bbox } => Event::Meta {
-            event: "track_updated".into(),
-            detail: format!("track{id}"),
-            attrs: vec![
-                ("frame_id".into(), frame_id.to_string()),
-                ("bbox".into(), format_bbox(bbox)),
-            ],
-        },
-        TrackEvent::Lost { id, class, misses } => Event::Meta {
-            event: "track_lost".into(),
-            detail: format!("track{id}"),
-            attrs: vec![
-                ("class".into(), class.clone()),
-                ("misses".into(), misses.to_string()),
-                ("frame_id".into(), frame_id.to_string()),
-            ],
-        },
-        TrackEvent::Deleted { id, class, reason } => Event::Meta {
-            event: "track_deleted".into(),
-            detail: format!("track{id}"),
-            attrs: vec![
-                ("class".into(), class.clone()),
-                ("reason".into(), reason.clone()),
-                ("frame_id".into(), frame_id.to_string()),
-            ],
-        },
-    }
-}
-
-fn format_bbox(bbox: &[f32; 4]) -> String {
-    format!(
-        "[{:.0},{:.0},{:.0},{:.0}]",
-        bbox[0], bbox[1], bbox[2], bbox[3]
-    )
 }
 
 #[cfg(test)]
@@ -534,14 +487,13 @@ mod tests {
         }
     }
 
-    fn consolidated(bbox: [f32; 4]) -> crate::detection::ConsolidatedObservation {
-        crate::detection::ConsolidatedObservation {
+    fn consolidated(bbox: [f32; 4]) -> SceneObservation {
+        SceneObservation {
             class: "person".into(),
             confidence: 0.9,
             bbox,
-            primary_model: "detect-fast".into(),
-            evidence: Vec::new(),
-            components: Vec::new(),
+            source_models: vec!["detect-fast".into()],
+            face: None,
         }
     }
 
@@ -594,19 +546,31 @@ mod tests {
 
     #[test]
     fn iou_matching_handles_overlap() {
-        let iou = compute_iou(&[0.0, 0.0, 100.0, 100.0], &[50.0, 50.0, 150.0, 150.0]);
+        let iou = box_overlap(
+            (0.0, 0.0, 100.0, 100.0),
+            (50.0, 50.0, 150.0, 150.0),
+            OverlapMetric::Iou,
+        );
         assert!((iou - 0.142).abs() < 0.01, "expected IoU ~0.14, got {iou}");
     }
 
     #[test]
     fn non_overlapping_boxes_iou_zero() {
-        let iou = compute_iou(&[0.0, 0.0, 50.0, 50.0], &[100.0, 100.0, 150.0, 150.0]);
+        let iou = box_overlap(
+            (0.0, 0.0, 50.0, 50.0),
+            (100.0, 100.0, 150.0, 150.0),
+            OverlapMetric::Iou,
+        );
         assert_eq!(iou, 0.0);
     }
 
     #[test]
     fn identical_boxes_iou_one() {
-        let iou = compute_iou(&[10.0, 20.0, 110.0, 220.0], &[10.0, 20.0, 110.0, 220.0]);
+        let iou = box_overlap(
+            (10.0, 20.0, 110.0, 220.0),
+            (10.0, 20.0, 110.0, 220.0),
+            OverlapMetric::Iou,
+        );
         assert!((iou - 1.0).abs() < 0.001);
     }
 
@@ -616,8 +580,14 @@ mod tests {
             mahalanobis_threshold: 10_000.0,
             ..TrackerConfig::default()
         });
-        tracker.update(&[observation("person", [100.0, 200.0, 300.0, 500.0])], DT_MS);
-        tracker.update(&[observation("person", [100.0, 200.0, 300.0, 500.0])], DT_MS);
+        tracker.update(
+            &[observation("person", [100.0, 200.0, 300.0, 500.0])],
+            DT_MS,
+        );
+        tracker.update(
+            &[observation("person", [100.0, 200.0, 300.0, 500.0])],
+            DT_MS,
+        );
 
         let events = tracker.update(
             &[observation("person", [110.0, 210.0, 310.0, 510.0])],
@@ -654,7 +624,10 @@ mod tests {
     #[test]
     fn class_mismatch_does_not_reuse_track() {
         let mut tracker = Tracker::new();
-        tracker.update(&[observation("person", [100.0, 100.0, 200.0, 300.0])], DT_MS);
+        tracker.update(
+            &[observation("person", [100.0, 100.0, 200.0, 300.0])],
+            DT_MS,
+        );
         let events = tracker.update(&[observation("chair", [100.0, 100.0, 200.0, 300.0])], DT_MS);
         assert!(
             events
@@ -712,7 +685,10 @@ mod tests {
             iou_threshold: 0.2,
             ..TrackerConfig::default()
         });
-        tracker.update(&[observation("person", [100.0, 100.0, 200.0, 300.0])], DT_MS);
+        tracker.update(
+            &[observation("person", [100.0, 100.0, 200.0, 300.0])],
+            DT_MS,
+        );
         tracker.update(&[], DT_MS);
         let events = tracker.update(&[], DT_MS);
 
@@ -734,7 +710,11 @@ mod tests {
         tracker.update(&[at(200.0)], 2_000);
         let id = tracker.current_tracks()[0].id;
         let events = tracker.update(&[at(300.0)], 2_000);
-        assert!(!events.iter().any(|e| matches!(e, TrackEvent::Created { .. })));
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, TrackEvent::Created { .. }))
+        );
         assert_eq!(tracker.current_tracks()[0].id, id);
     }
 
@@ -749,7 +729,11 @@ mod tests {
         let id = tracker.current_tracks()[0].id;
         // Stall de 6 s: la persona avanzó 300 px proporcionalmente al tiempo.
         let events = tracker.update(&[at(500.0)], 6_000);
-        assert!(!events.iter().any(|e| matches!(e, TrackEvent::Created { .. })));
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, TrackEvent::Created { .. }))
+        );
         assert_eq!(tracker.current_tracks()[0].id, id);
     }
 

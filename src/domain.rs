@@ -291,8 +291,7 @@ impl ModelRegistry {
 
     #[must_use]
     pub fn is_depth(&self, id: &str) -> bool {
-        self.role_of(id) == Some(ModelRole::DepthMap)
-            || self.task_of(id) == Some(ModelTask::Depth)
+        self.role_of(id) == Some(ModelRole::DepthMap) || self.task_of(id) == Some(ModelTask::Depth)
     }
 
     #[must_use]
@@ -334,22 +333,10 @@ mod tests {
 
     #[test]
     fn roles_map_tasks_to_render_capabilities() {
-        assert_eq!(
-            ModelRole::from_task(ModelTask::Detect),
-            ModelRole::Boxes
-        );
-        assert_eq!(
-            ModelRole::from_task(ModelTask::Pose),
-            ModelRole::Skeleton
-        );
-        assert_eq!(
-            ModelRole::from_task(ModelTask::Depth),
-            ModelRole::DepthMap
-        );
-        assert_eq!(
-            ModelRole::from_task(ModelTask::Segment),
-            ModelRole::Mask
-        );
+        assert_eq!(ModelRole::from_task(ModelTask::Detect), ModelRole::Boxes);
+        assert_eq!(ModelRole::from_task(ModelTask::Pose), ModelRole::Skeleton);
+        assert_eq!(ModelRole::from_task(ModelTask::Depth), ModelRole::DepthMap);
+        assert_eq!(ModelRole::from_task(ModelTask::Segment), ModelRole::Mask);
     }
 
     #[test]

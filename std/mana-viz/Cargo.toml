@@ -4,8 +4,12 @@ version = "0.1.0"
 edition = "2024"
 description = "Rerun.io visualization bridge for mana-lite"
 
+[features]
+default = ["rerun"]
+rerun = ["dep:rerun"]
+
 [dependencies]
 mana-types = { path = "../mana-types" }
-rerun = "0.35"
+rerun = { version = "0.35", optional = true }
 anyhow = "1"
 tracing = "0.1"

@@ -5,43 +5,21 @@ use std::time::Instant;
 
 use image::{DynamicImage, RgbImage};
 use mana_geometry::compact_mask::CompactMask;
+use mana_geometry::iou::{OverlapMetric, box_overlap};
 use mana_geometry::polygonize::{filter_small_components, mask_to_polygons};
 use ndarray::s;
 use ultralytics_inference::{DepthMap, Device, InferenceConfig, Results, YOLOModel};
 
 use crate::config::{CropConfig, CropType, ModelCatalog, ModelEntry, PostprocessConfig};
 use crate::depth_map::DepthFrame;
+use crate::detection::{CropRect, Detection, DetectionMask};
 use crate::error::Result;
-use crate::logger::{DetRecord, MaskRecord};
 use crate::model_runner::{ModelRunner, RunnerOutput};
 
 mod crop;
 mod segment_post;
-pub use crop::{compute_bbox_roi, compute_largest_class_roi, compute_upper_square_roi};
 use crop::extract_crop_frame;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct CropRect {
-    pub x1: u32,
-    pub y1: u32,
-    pub x2: u32,
-    pub y2: u32,
-}
-
-impl CropRect {
-    pub fn from_array(a: [u32; 4]) -> Self {
-        CropRect {
-            x1: a[0],
-            y1: a[1],
-            x2: a[2],
-            y2: a[3],
-        }
-    }
-
-    pub fn to_array(self) -> [u32; 4] {
-        [self.x1, self.y1, self.x2, self.y2]
-    }
-}
+pub use crop::{compute_bbox_roi, compute_largest_class_roi, compute_upper_square_roi};
 
 pub struct CropFrameInfo {
     pub rgb: Vec<u8>,
@@ -71,99 +49,6 @@ struct LoadedModel {
     postprocess: PostprocessConfig,
     crop_config: Option<CropConfig>,
     static_roi: Option<CropRect>,
-}
-
-#[derive(Debug, Clone)]
-pub struct Detection {
-    pub class: String,
-    pub confidence: f32,
-    pub bbox: [f32; 4],
-    pub keypoints: Option<Vec<[f32; 3]>>,
-    pub mask: Option<DetectionMask>,
-}
-
-impl Detection {
-    pub fn area_px(&self) -> f32 {
-        ((self.bbox[2] - self.bbox[0]) * (self.bbox[3] - self.bbox[1])).max(0.0)
-    }
-
-    pub fn area_ratio(&self, frame_w: u32, frame_h: u32) -> f32 {
-        let frame_area = (frame_w as f32) * (frame_h as f32);
-        if frame_area > 0.0 {
-            self.area_px() / frame_area
-        } else {
-            0.0
-        }
-    }
-}
-
-/// Instance mask attached to a detection.
-///
-/// The mask raster lives in *mask space* (the image passed to the model,
-/// i.e. the crop for cascade models), stored as a crop-RLE `CompactMask`.
-/// `origin` is the position of mask space within the original frame and
-/// `mask_dims` its size, so consumers can place and rasterize the mask.
-/// `polygons` are simplified contours normalized to the full frame.
-///
-/// `compact` and `polygons` are `Arc`-shared: the mask travels from
-/// inference through consolidation and tracking without deep copies;
-/// the only owned copy happens at the wire boundary (`to_wire_record`).
-#[derive(Debug, Clone)]
-pub struct DetectionMask {
-    pub compact: Arc<CompactMask>,
-    pub polygons: Arc<Vec<Vec<[f32; 2]>>>,
-    pub origin: [u32; 2],
-    pub mask_dims: [u32; 2],
-}
-
-impl DetectionMask {
-    /// JSONL wire record (Spec-003). `rle` are column-major run-length
-    /// counts of the mask crop; `bbox` is the detection box inside mask
-    /// space; `origin`/`mask_dims` place mask space in the frame and
-    /// `polygons` are contours normalized to the full frame.
-    #[allow(
-        clippy::cast_possible_truncation,
-        clippy::cast_sign_loss,
-        clippy::cast_precision_loss
-    )]
-    pub fn to_wire_record(&self) -> MaskRecord {
-        let (bbox_h, bbox_w) = if let Some(rle) = self.compact.rles.first() {
-            (rle.h, rle.w)
-        } else {
-            (0, 0)
-        };
-        let (off_x, off_y) = self.compact.offsets.first().copied().unwrap_or((0, 0));
-        MaskRecord {
-            rle: self
-                .compact
-                .rles
-                .first()
-                .map(|rle| rle.counts.to_vec())
-                .unwrap_or_default(),
-            bbox: [
-                off_x as f32,
-                off_y as f32,
-                (off_x + bbox_w) as f32,
-                (off_y + bbox_h) as f32,
-            ],
-            origin: self.origin,
-            mask_dims: self.mask_dims,
-            polygons: self.polygons.as_ref().clone(),
-        }
-    }
-}
-
-impl Detection {
-    pub fn to_det_record(&self, frame_w: u32, frame_h: u32) -> DetRecord {
-        DetRecord {
-            class: self.class.clone(),
-            confidence: self.confidence,
-            bbox: self.bbox,
-            area_px: self.area_px(),
-            area_ratio: self.area_ratio(frame_w, frame_h),
-            mask: self.mask.as_ref().map(DetectionMask::to_wire_record),
-        }
-    }
 }
 
 impl InferEngine {
@@ -659,7 +544,21 @@ fn apply_nms(mut detections: Vec<Detection>, iou_threshold: f32) -> (Vec<Detecti
     for candidate in detections {
         if kept.iter().any(|accepted: &Detection| {
             accepted.class == candidate.class
-                && bbox_iou(&accepted.bbox, &candidate.bbox) > iou_threshold
+                && box_overlap(
+                    (
+                        accepted.bbox[0],
+                        accepted.bbox[1],
+                        accepted.bbox[2],
+                        accepted.bbox[3],
+                    ),
+                    (
+                        candidate.bbox[0],
+                        candidate.bbox[1],
+                        candidate.bbox[2],
+                        candidate.bbox[3],
+                    ),
+                    OverlapMetric::Iou,
+                ) > iou_threshold
         }) {
             suppressed += 1;
         } else {
@@ -676,14 +575,6 @@ fn apply_max_detections(detections: &mut Vec<Detection>, max_detections: Option<
     let removed = detections.len().saturating_sub(max_detections);
     detections.truncate(max_detections);
     removed
-}
-
-fn bbox_iou(a: &[f32; 4], b: &[f32; 4]) -> f32 {
-    mana_geometry::iou::box_overlap(
-        (a[0], a[1], a[2], a[3]),
-        (b[0], b[1], b[2], b[3]),
-        mana_geometry::iou::OverlapMetric::Iou,
-    )
 }
 
 #[allow(dead_code)]
@@ -797,16 +688,6 @@ mod tests {
             keypoints: None,
             mask: None,
         }
-    }
-
-    #[test]
-    fn detection_area_and_ratio_use_frame_coordinates() {
-        let detection = person(10.0, 20.0, 110.0, 220.0);
-        assert_eq!(detection.area_px(), 20_000.0);
-        assert!((detection.area_ratio(1_000, 1_000) - 0.02).abs() < f32::EPSILON);
-        let record = detection.to_det_record(1_000, 1_000);
-        assert_eq!(record.area_px, 20_000.0);
-        assert!((record.area_ratio - 0.02).abs() < f32::EPSILON);
     }
 
     fn solid_mask(

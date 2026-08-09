@@ -7,20 +7,20 @@ use crate::cascade::{BlueprintConfig, CascadeRule, CascadeScheduler};
 use crate::config::{
     AppConfig, CropType, MetricsLogConfig, RerunBlueprintConfig, apply_model_overlay, load_config,
     load_depth_rules, load_fsm_catalog, load_metrics_log, load_model_catalog, load_rerun_blueprint,
-    load_viz_data, load_zone_catalog, validate_fsm, validate_model_catalog,
+    load_viz_data, load_zone_catalog, validate_model_catalog, ZoneCatalog,
 };
+use crate::detection::CropRect;
 use crate::detection::DetectionConsolidator;
 use crate::domain::{ModelRegistry, ModelRole};
 use crate::error::{ConfigError, ManaError, Result};
-use crate::face_dwell::FaceDwellLogStrategy;
-use crate::fsm::{FsmEngine, FsmSceneContext};
-use crate::infer::{CropRect, InferEngine};
+use crate::fsm::{FsmEngine, FsmProgram, FsmSceneContext};
+use crate::health::Health;
+use crate::infer::InferEngine;
 use crate::ingest::{FrameReader, IngestEngine, RetinaReader};
 use crate::logger::{Event, JsonlLevel, LogManager, LogSink};
-use crate::metrics::{Health, MetricsEngine};
-use crate::occupancy::OccupancyStateMachine;
+use crate::metrics::MetricsEngine;
 use crate::pipeline::PipelineState;
-use crate::presence::PresenceFilter;
+use crate::scan::{ControlPolicy, ControlState};
 use crate::snapshot::{FrameDecoder, SnapshotSaver};
 use crate::track::{Tracker, TrackerConfig};
 use crate::viz::{FixedRoi, VizBridge};
@@ -258,23 +258,38 @@ impl<R: FrameReader> App<R> {
         if let Some(ref z) = zones {
             log::info!("zones loaded: {} zones", z.zones.len());
         }
-        if let Some(ref f) = fsm {
+        let fsm_program = if let Some(ref f) = fsm {
             log::info!(
                 "fsm loaded: {} states, {} transitions",
                 f.fsm.states.len(),
                 f.fsm.transitions.len()
             );
-            let errors = validate_fsm(f, &runtime_catalog, &zones, &Some(depth_rules.clone()));
-            for e in &errors {
-                log::error!("fsm validation: {e}");
+            let depth_rule_names: std::collections::HashSet<String> = depth_rules
+                .rules
+                .iter()
+                .map(|rule| rule.name.clone())
+                .collect();
+            let program = FsmProgram::compile_with_references(
+                f,
+                zones.as_ref(),
+                &runtime_catalog,
+                Some(&depth_rule_names),
+            );
+            match program {
+                Ok(program) => Some(program),
+                Err(errors) => {
+                    for e in &errors {
+                        log::error!("fsm validation: {e}");
+                    }
+                    return Err(ManaError::FsmGuardError(format!(
+                        "{} FSM validation errors",
+                        errors.len()
+                    )));
+                }
             }
-            if !errors.is_empty() {
-                return Err(ManaError::FsmGuardError(format!(
-                    "{} FSM validation errors",
-                    errors.len()
-                )));
-            }
-        }
+        } else {
+            None
+        };
 
         let jsonl_level = JsonlLevel::from_str(&config.output.jsonl_level);
         let mut log = if let Some(ref dir) = config.output.save_dir {
@@ -361,8 +376,17 @@ impl<R: FrameReader> App<R> {
             process_position_noise: config.tracking.noise.process_position,
             process_velocity_noise: config.tracking.noise.process_velocity,
         });
-        let zone_engine = zones.as_ref().map(|z| ZoneEngine::from_catalog(z));
-        let fsm_engine = fsm.as_ref().map(|f| FsmEngine::from_catalog(f));
+        let tracker = config.pipeline.track.then_some(tracker);
+        let zone_engine = config
+            .pipeline
+            .zones
+            .then(|| zones.as_ref().map(ZoneEngine::from_catalog))
+            .flatten();
+        let fsm_engine = config
+            .pipeline
+            .fsm
+            .then(|| fsm_program.map(FsmEngine::from_program))
+            .flatten();
         let (cascade_rules, cascade_regions) = if let Some(ref bp) = blueprint {
             let cfg = crate::cascade::CascadeConfig {
                 rules: bp.rules.clone(),
@@ -456,10 +480,32 @@ impl<R: FrameReader> App<R> {
             infer,
             primary_model,
             models,
-            tracker,
-            zone_engine,
-            fsm_engine,
-            face_dwell_logger: FaceDwellLogStrategy,
+            control: ControlState {
+                tracker,
+                zone_engine,
+                fsm_engine,
+                health,
+                presence: crate::presence::PresenceFilter::new(
+                    config.presence.enabled,
+                    config.presence.class.clone(),
+                    mana_control::config::PresencePoiPolicy { on_ms: config.presence.poi.on_ms, off_ms: config.presence.poi.off_ms },
+                ),
+                occupancy: crate::occupancy::OccupancyStateMachine::new(
+                    mana_control::config::OccupancyPolicy { single_confirm_ms: config.presence.occupancy.single_confirm_ms, empty_confirm_ms: config.presence.occupancy.empty_confirm_ms, multiple_confirm_ms: config.presence.occupancy.multiple_confirm_ms, multiple_exit_ms: config.presence.occupancy.multiple_exit_ms, require_confirmed_tracks: config.presence.occupancy.require_confirmed_tracks },
+                ),
+                fsm_context: FsmSceneContext::default(),
+                last_scan_at: boot_instant,
+                scan_seq: 0,
+                policy: ControlPolicy {
+                    person_class: config.presence.class.clone(),
+                    presence_enabled: config.presence.enabled,
+                    data_stale_ms: config.health.data_stale_ms,
+                    scan_period_ms: config.scan.period_ms,
+                    face_dwell_roi: face_dwell_roi.map(|x| x.to_array()),
+                    person_detection_roi: person_detection_roi.map(|x| x.to_array()),
+                    face_edge_margin_px: config.detection.face_edge_margin_px,
+                },
+            },
             cascade,
             detection_consolidator: DetectionConsolidator::new(
                 config.detection.face_component_coverage,
@@ -468,20 +514,8 @@ impl<R: FrameReader> App<R> {
             ),
             ingest,
             metrics,
-            health,
-            presence: PresenceFilter::new(
-                config.presence.enabled,
-                config.presence.class.clone(),
-                config.presence.poi.clone(),
-            ),
-            occupancy: OccupancyStateMachine::new(config.presence.occupancy.clone()),
             depth_context_roi,
-            person_detection_roi,
-            face_dwell_roi,
-            face_edge_margin_px: config.detection.face_edge_margin_px,
-            fsm_context: FsmSceneContext::default(),
             depth_rules,
-            depth_rule_snapshot: crate::depth::DepthRuleSnapshot::default(),
             decoder,
             snapshots,
             observer: FanoutObserver::new(viz, log),
@@ -489,9 +523,7 @@ impl<R: FrameReader> App<R> {
             boot_wall,
             boot_instant,
             crop_frames_pending: Vec::new(),
-            latest_evidence: None,
-            measurement_pending: false,
-            last_scan_at: boot_instant,
+            control_image: mana_control::ProcessImage::empty(),
         })
     }
 }

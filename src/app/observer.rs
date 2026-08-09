@@ -64,8 +64,7 @@ impl PipelineObserver for FanoutObserver {
         second_person: SecondPersonState,
         signal: SignalValidity,
     ) {
-        self.viz
-            .log_occupancy_state(state, second_person, signal);
+        self.viz.log_occupancy_state(state, second_person, signal);
     }
 
     fn emit(&mut self, event: Event) {

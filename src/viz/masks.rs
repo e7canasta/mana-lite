@@ -4,7 +4,7 @@ use image::{Rgb, RgbImage};
 use imageproc::drawing::draw_line_segment_mut;
 use mana_geometry::compact_mask::CompactMask;
 
-use crate::infer::{CropRect, Detection, DetectionMask};
+use crate::detection::{CropRect, Detection};
 
 use super::PALETTE;
 
@@ -214,4 +214,3 @@ pub(super) fn render_mask_debug_images(
 
     Some((mask_img, poly_img, mask_w, mask_h))
 }
-

@@ -1,5 +1,79 @@
-use crate::infer::{Detection, DetectionMask};
+use std::sync::Arc;
+
+use mana_geometry::compact_mask::CompactMask;
 use mana_geometry::iou::{OverlapMetric, box_overlap};
+
+/// Region rectangular en pixeles del frame original.
+///
+/// Acota donde se detecta: recorte previo a la inferencia y clipping de las
+/// detecciones que caen fuera.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CropRect {
+    pub x1: u32,
+    pub y1: u32,
+    pub x2: u32,
+    pub y2: u32,
+}
+
+impl CropRect {
+    pub fn from_array(a: [u32; 4]) -> Self {
+        CropRect {
+            x1: a[0],
+            y1: a[1],
+            x2: a[2],
+            y2: a[3],
+        }
+    }
+
+    pub fn to_array(self) -> [u32; 4] {
+        [self.x1, self.y1, self.x2, self.y2]
+    }
+}
+
+/// Una deteccion de un modelo en un frame, sin identidad temporal.
+#[derive(Debug, Clone)]
+pub struct Detection {
+    pub class: String,
+    pub confidence: f32,
+    pub bbox: [f32; 4],
+    pub keypoints: Option<Vec<[f32; 3]>>,
+    pub mask: Option<DetectionMask>,
+}
+
+impl Detection {
+    pub fn area_px(&self) -> f32 {
+        ((self.bbox[2] - self.bbox[0]) * (self.bbox[3] - self.bbox[1])).max(0.0)
+    }
+
+    pub fn area_ratio(&self, frame_w: u32, frame_h: u32) -> f32 {
+        let frame_area = (frame_w as f32) * (frame_h as f32);
+        if frame_area > 0.0 {
+            self.area_px() / frame_area
+        } else {
+            0.0
+        }
+    }
+}
+
+/// Instance mask attached to a detection.
+///
+/// The mask raster lives in *mask space* (the image passed to the model,
+/// i.e. the crop for cascade models), stored as a crop-RLE `CompactMask`.
+/// `origin` is the position of mask space within the original frame and
+/// `mask_dims` its size, so consumers can place and rasterize the mask.
+/// `polygons` are simplified contours normalized to the full frame.
+///
+/// `compact` and `polygons` are `Arc`-shared: the mask travels from
+/// inference through consolidation and tracking without deep copies;
+/// the only owned copy happens at the wire boundary, which belongs to
+/// `logger` — no a este modulo.
+#[derive(Debug, Clone)]
+pub struct DetectionMask {
+    pub compact: Arc<CompactMask>,
+    pub polygons: Arc<Vec<Vec<[f32; 2]>>>,
+    pub origin: [u32; 2],
+    pub mask_dims: [u32; 2],
+}
 
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
@@ -68,7 +142,21 @@ impl DetectionConsolidator {
                     .iter()
                     .enumerate()
                     .filter_map(|(index, observation)| {
-                        let iou = bbox_iou(&observation.bbox, &detection.bbox);
+                        let iou = box_overlap(
+                            (
+                                observation.bbox[0],
+                                observation.bbox[1],
+                                observation.bbox[2],
+                                observation.bbox[3],
+                            ),
+                            (
+                                detection.bbox[0],
+                                detection.bbox[1],
+                                detection.bbox[2],
+                                detection.bbox[3],
+                            ),
+                            OverlapMetric::Iou,
+                        );
                         (observation.class == detection.class && iou >= self.same_class_iou)
                             .then_some((index, iou))
                     })
@@ -159,14 +247,6 @@ fn bbox_coverage(inner: &[f32; 4], outer: &[f32; 4]) -> f32 {
     }
 }
 
-fn bbox_iou(a: &[f32; 4], b: &[f32; 4]) -> f32 {
-    box_overlap(
-        (a[0], a[1], a[2], a[3]),
-        (b[0], b[1], b[2], b[3]),
-        OverlapMetric::Iou,
-    )
-}
-
 fn bbox_area(bbox: &[f32; 4]) -> f32 {
     (bbox[2] - bbox[0]).max(0.0) * (bbox[3] - bbox[1]).max(0.0)
 }
@@ -193,6 +273,13 @@ mod tests {
             keypoints: None,
             mask: None,
         }
+    }
+
+    #[test]
+    fn detection_area_and_ratio_use_frame_coordinates() {
+        let detection = detection("person", [10.0, 20.0, 110.0, 220.0]);
+        assert_eq!(detection.area_px(), 20_000.0);
+        assert!((detection.area_ratio(1_000, 1_000) - 0.02).abs() < f32::EPSILON);
     }
 
     #[test]

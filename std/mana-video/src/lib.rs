@@ -12,7 +12,6 @@
 //! | [`FrameDecoder`] trait | Async video frame source contract | `next_frame()` → `DecodedFrame` |
 //! | [`buffer_pool`] | Zero-alloc `Vec<u8>` recycling | `BufferPool::acquire()` / `release()` |
 //! | [`format`] | Pixel format mapping + stride stripping | `parse_pixel_format()`, `pack_frame_into()` |
-//! | [`raw`] | Pre-decoded `.raw` file reader | `RawFrameReader` |
 //!
 //! # Quick example
 //!
@@ -36,7 +35,9 @@
 #![forbid(unsafe_code)]
 
 pub mod buffer_pool;
+#[cfg(feature = "ffmpeg")]
 pub mod decoder;
+#[cfg(feature = "ffmpeg")]
 pub mod format;
 
 pub use mana_types::PixelFormat;

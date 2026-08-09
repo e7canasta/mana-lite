@@ -2,7 +2,6 @@ use std::collections::HashMap;
 use std::time::Instant;
 
 use crate::config::ZoneCatalog;
-use crate::logger::Event;
 use crate::timing::Dwell;
 use crate::track::Track;
 
@@ -139,34 +138,10 @@ fn rect_intersects(bbox: &[f32; 4], zone: &[f32; 4]) -> bool {
     bbox[0] < zone[2] && bbox[2] > zone[0] && bbox[1] < zone[3] && bbox[3] > zone[1]
 }
 
-pub fn zone_event_to_log(ev: &ZoneEvent, frame_id: u64) -> Event {
-    match ev {
-        ZoneEvent::Occupied {
-            zone,
-            label,
-            track_id: _,
-            class,
-            confidence,
-        } => Event::zone_occupied(
-            zone,
-            label.as_deref().unwrap_or(zone),
-            class,
-            *confidence,
-            frame_id,
-        ),
-        ZoneEvent::Vacated {
-            zone,
-            label,
-            track_id: _,
-            class,
-        } => Event::zone_vacated(zone, label.as_deref().unwrap_or(zone), class, frame_id),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::ZoneEntry;
+    use crate::config::ZoneSpec;
 
     fn make_track(id: u64, class: &str, bbox: [f32; 4], confirmed: bool) -> Track {
         Track {
@@ -191,7 +166,7 @@ mod tests {
         let catalog = ZoneCatalog {
             zones: HashMap::from([(
                 "bed".into(),
-                ZoneEntry {
+                ZoneSpec {
                     x1: 0,
                     y1: 0,
                     x2: 200,
@@ -217,7 +192,7 @@ mod tests {
         let catalog = ZoneCatalog {
             zones: HashMap::from([(
                 "bed".into(),
-                ZoneEntry {
+                ZoneSpec {
                     x1: 0,
                     y1: 0,
                     x2: 500,
@@ -245,7 +220,7 @@ mod tests {
         let catalog = ZoneCatalog {
             zones: HashMap::from([(
                 "bed".into(),
-                ZoneEntry {
+                ZoneSpec {
                     x1: 0,
                     y1: 0,
                     x2: 500,

@@ -1,6 +1,7 @@
 use crate::config::MetricsTextConfig;
+use crate::health::{Health, HealthTransition};
 use crate::logger::{Event, LogSink};
-use crate::metrics::{Health, HealthTransition, MetricsEngine, MetricsReport, PerModelMetrics};
+use crate::metrics::{MetricsEngine, MetricsReport, PerModelMetrics};
 use crate::window::ErrorWindow;
 use std::time::Instant;
 
@@ -105,6 +106,13 @@ impl PipelineState {
         if health.is_blind() {
             metrics.tick_blind();
         }
+        self.emit_metrics(log, metrics);
+    }
+
+    /// Publish periodic telemetry after the control loop has evaluated health.
+    /// Kept outside `scan()` because reports are application instrumentation,
+    /// not scene-control decisions.
+    pub fn emit_metrics(&self, log: &mut dyn LogSink, metrics: &mut MetricsEngine) {
         if let Some((report, model_order)) = metrics.take_report() {
             log_report(&report, &model_order, &self.metrics_text);
             log.emit(Event::metrics(report));
@@ -394,7 +402,10 @@ mod tests {
         for _ in 0..20 {
             assert!(!state.on_ok(), "trabajo sano envejece la ventana");
         }
-        assert!(!state.on_panic(), "un panic aislado post-recuperacion no suena");
+        assert!(
+            !state.on_panic(),
+            "un panic aislado post-recuperacion no suena"
+        );
     }
 
     #[test]

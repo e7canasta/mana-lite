@@ -9,25 +9,17 @@ pub use observer::{FanoutObserver, NullObserver, PipelineObserver};
 
 use crate::cascade::{CascadeScheduler, CascadeTarget};
 use crate::config::{AppConfig, CropType};
-use crate::detection::{
-    ConsolidatedObservation, DetectionConsolidator, DetectionRole, ModelDetections,
-};
+use crate::detection::CropRect;
+use crate::detection::{ConsolidatedObservation, DetectionConsolidator, DetectionRole, ModelDetections};
 use crate::domain::ModelRegistry;
 use crate::error::Result;
-use crate::face_dwell::FaceDwellLogStrategy;
-use crate::fsm::{FsmEngine, FsmSceneContext};
-use crate::infer::{
-    CropRect, InferEngine, InferenceResult, compute_bbox_roi, compute_upper_square_roi,
-};
+use crate::infer::{InferEngine, InferenceResult, compute_bbox_roi, compute_upper_square_roi};
 use crate::ingest::{FrameReader, IngestEngine, RawKeyframe, RetinaReader};
-use crate::logger::{Event, LogSink};
-use crate::metrics::{Health, MetricsEngine, PerClassFrameStats};
-use crate::occupancy::OccupancyStateMachine;
+use crate::logger::{DetRecord, Event};
+use crate::metrics::{MetricsEngine, PerClassFrameStats};
 use crate::pipeline::PipelineState;
-use crate::presence::PresenceFilter;
+use crate::scan::{ControlState, SceneEvent};
 use crate::snapshot::{FrameBuffer, FrameDecoder, SnapshotSaver};
-use crate::track::{Tracker, track_event_to_log};
-use crate::zones::{ZoneEngine, zone_event_to_log};
 use mana_types::RawFrameV1;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::time::Instant;
@@ -35,28 +27,20 @@ use tokio::signal::unix::{SignalKind, signal};
 
 pub(crate) static VERSION: &str = env!("CARGO_PKG_VERSION");
 
+#[derive(Debug, Clone)]
+struct ClinicalSample { observations: Vec<ConsolidatedObservation>, signal_valid: bool, raw_person_count: usize, frame_number: u64, face_model_ran: bool }
+
 pub struct App<R: FrameReader = RetinaReader> {
     pub(crate) infer: InferEngine,
     pub(crate) primary_model: String,
-    pub(crate) tracker: Tracker,
-    pub(crate) zone_engine: Option<ZoneEngine>,
-    pub(crate) fsm_engine: Option<FsmEngine>,
-    pub(crate) face_dwell_logger: FaceDwellLogStrategy,
+    pub(crate) control: ControlState,
     pub(crate) cascade: CascadeScheduler,
     pub(crate) detection_consolidator: DetectionConsolidator,
     pub(crate) models: ModelRegistry,
     pub(crate) ingest: IngestEngine<R>,
     pub(crate) metrics: MetricsEngine,
-    pub(crate) health: Health,
-    pub(crate) presence: PresenceFilter,
-    pub(crate) occupancy: OccupancyStateMachine,
     pub(crate) depth_context_roi: Option<CropRect>,
-    pub(crate) person_detection_roi: Option<CropRect>,
-    pub(crate) face_dwell_roi: Option<CropRect>,
-    pub(crate) face_edge_margin_px: u32,
-    pub(crate) fsm_context: FsmSceneContext,
     pub(crate) depth_rules: crate::depth::DepthRules,
-    pub(crate) depth_rule_snapshot: crate::depth::DepthRuleSnapshot,
     pub(crate) decoder: FrameDecoder,
     pub(crate) snapshots: SnapshotSaver,
     pub(crate) observer: FanoutObserver,
@@ -64,27 +48,14 @@ pub struct App<R: FrameReader = RetinaReader> {
     pub(crate) boot_wall: chrono::DateTime<chrono::Utc>,
     pub(crate) boot_instant: Instant,
     pub(crate) crop_frames_pending: Vec<CropFrameQueue>,
-    latest_evidence: Option<crate::scan::AgedEvidence<ClinicalSample>>,
-    pub(crate) measurement_pending: bool,
-    pub(crate) last_scan_at: Instant,
+    /// Control's vocabulary mirror. The legacy scan state remains temporarily
+    /// available for compatibility with the existing integration-test facade.
+    control_image: mana_control::ProcessImage,
 }
 
 pub(crate) struct CropFrameQueue {
     pub(crate) model: String,
     pub(crate) crop_frame: Option<crate::infer::CropFrameInfo>,
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct ClinicalSample {
-    observations: Vec<ConsolidatedObservation>,
-    signal_valid: bool,
-    raw_person_count: usize,
-    keyframe_gap_ms: u64,
-    source_window_ms: u64,
-    keyframes_seen: u64,
-    keyframes_dropped: u64,
-    frame_number: u64,
-    face_model_ran: bool,
 }
 
 struct PendingModelOutput {
@@ -124,7 +95,7 @@ impl<R: FrameReader> App<R> {
                                 log::error!("keyframe processing panicked: {msg}");
                                 // No reanudar desde estado roto: blind forzado, y que
                                 // el ciclo siguiente reconstruya desde idle.
-                                if let Some(fsm) = self.fsm_engine.as_mut() {
+                                if let Some(fsm) = self.control.fsm_engine.as_mut() {
                                     fsm.force_safe_state(cycle_now);
                                 }
                                 if self.state.on_panic() {
@@ -156,7 +127,7 @@ impl<R: FrameReader> App<R> {
                                 .or_else(|| e.downcast_ref::<&str>().map(|s| s.to_string()))
                                 .unwrap_or_else(|| "unknown panic".into());
                             log::error!("scan processing panicked: {msg}");
-                            if let Some(fsm) = self.fsm_engine.as_mut() {
+                                if let Some(fsm) = self.control.fsm_engine.as_mut() {
                                 fsm.force_safe_state(now);
                             }
                             if self.state.on_panic() {
@@ -181,8 +152,11 @@ impl<R: FrameReader> App<R> {
         if frame_buf.is_some() {
             // Solo un frame decodificable es senal fresca: si el decode falla,
             // Health queda sin touch y la ceguera sigue su curso.
-            self.state
-                .mark_health_fresh(&mut self.health, self.observer.log.as_mut(), cycle_now);
+            self.state.mark_health_fresh(
+                &mut self.control.health,
+                self.observer.log.as_mut(),
+                cycle_now,
+            );
         }
         let dt_ms = self.state.on_keyframe(
             decode_us,
@@ -190,7 +164,8 @@ impl<R: FrameReader> App<R> {
             self.observer.log.as_mut(),
             cycle_now,
         );
-        self.observer.viz
+        self.observer
+            .viz
             .set_frame_time(self.state.frame_number(), frame_timestamp_ns);
         self.observer.viz.log_keyframe_selection(
             kf.keyframes_seen,
@@ -204,7 +179,7 @@ impl<R: FrameReader> App<R> {
         let Some(ref fb) = frame_buf else { return };
 
         // Depth guards require evidence from this frame, never a stale result.
-        self.depth_rule_snapshot = crate::depth::DepthRuleSnapshot::default();
+        self.control_image.reset_depth(cycle_now);
         if config.pipeline.infer {
             let cycle = CycleContext::new(
                 fb,
@@ -221,142 +196,28 @@ impl<R: FrameReader> App<R> {
         self.flush_viz_metrics(&frame_buf, frame_timestamp_ns);
     }
 
-    fn scan_tick(&mut self, config: &AppConfig, now: Instant) {
-        let dt_ms = now
-            .saturating_duration_since(self.last_scan_at)
-            .as_millis() as u64;
-        let dt_ms = dt_ms.max(config.scan.period_ms.max(1));
-        self.last_scan_at = now;
+    fn scan_tick(&mut self, _config: &AppConfig, now: Instant) {
         self.metrics.tick_cycle_at(now, false);
         self.drain_ingest_counters();
-
-        if config.pipeline.track {
-            self.tracker.predict_at(dt_ms);
-        }
-
-        let sample = self.latest_evidence.as_ref().map(|evidence| {
-            (
-                evidence.value.clone(),
-                evidence.age_ms(now),
-            )
-        });
-        let (sample, age_ms) = sample.unwrap_or((
-            ClinicalSample {
-                observations: Vec::new(),
-                signal_valid: false,
-                raw_person_count: 0,
-                keyframe_gap_ms: 0,
-                source_window_ms: 0,
-                keyframes_seen: 0,
-                keyframes_dropped: 0,
-                frame_number: self.state.frame_number(),
-                face_model_ran: false,
-            },
-            u64::MAX,
-        ));
-        let signal_valid = sample.signal_valid && age_ms <= config.health.data_stale_ms;
-        let (effective_observations, presence_update) =
-            self.presence.update_at(&sample.observations, signal_valid, now);
-        let tracking_observations = if matches!(
-            presence_update.state,
-            crate::presence::PresenceState::Ambiguous
-        ) {
-            &[][..]
-        } else {
-            effective_observations.as_slice()
-        };
-
-        if config.pipeline.track {
-            let single_person = sample.raw_person_count == 1
-                && tracking_observations.len() == 1
-                && tracking_observations[0].class == config.presence.class;
-            let association_observations = if self.measurement_pending {
-                tracking_observations
-            } else {
-                &[]
-            };
-            let track_events = self.tracker.associate_observations(
-                association_observations,
-                single_person && self.measurement_pending,
-                dt_ms,
-            );
-            for event in &track_events {
-                self.observer
-                    .emit(track_event_to_log(event, sample.frame_number));
-            }
-            if self.measurement_pending {
-                self.tracker.enrich_observations(&sample.observations);
+        let scene_events = crate::scan::scan(
+            &mut self.control,
+            &self.control_image,
+            crate::scan::ScanInstant::from_instant(now),
+        );
+        self.control_image.measurement_pending = false;
+        for event in scene_events {
+            match event {
+                SceneEvent::Occupancy { state, second_person, signal } => self.observer.on_occupancy(state, second_person, signal),
+                SceneEvent::EntityBoxes(tracks) => { let track_refs: Vec<_> = tracks.iter().collect(); self.observer.viz.log_entity_boxes(&track_refs); }
+                SceneEvent::FsmState(state) => self.observer.viz.log_face_state(&state),
+                _ => {}
             }
         }
-        self.measurement_pending = false;
-
-        let confirmed_person_count = if config.pipeline.track {
-            self.tracker
-                .current_tracks()
-                .into_iter()
-                .filter(|track| track.class == config.presence.class)
-                .count()
-        } else {
-            0
-        };
-        let occupancy_evidence = crate::occupancy::build_evidence(
-            crate::occupancy::OccupancyEvidenceInputs {
-                tracking_enabled: config.pipeline.track,
-                presence_enabled: config.presence.enabled,
-                signal_valid,
-                raw_person_count: sample.raw_person_count,
-                confirmed_person_count,
-                presence_is_present: matches!(
-                    presence_update.state,
-                    crate::presence::PresenceState::Present
-                ),
-                presence_held: presence_update.held,
-            },
-        );
-        let occupancy_update = self.occupancy.update_at(occupancy_evidence, now);
-        self.observer.on_occupancy(
-            occupancy_update.state,
-            occupancy_update.second_person,
-            crate::occupancy::SignalValidity::from_bool(signal_valid),
-        );
-        self.observer.emit(Event::presence(
-            sample.frame_number,
-            sample.keyframe_gap_ms,
-            sample.source_window_ms,
-            sample.keyframes_seen,
-            sample.keyframes_dropped,
-            occupancy_update.state.as_str(),
-            presence_update.state.as_str(),
-            occupancy_update.second_person.as_str(),
-            sample.raw_person_count,
-            confirmed_person_count,
-            signal_valid,
-            presence_update.held,
-            presence_update.positive_ms,
-            presence_update.empty_ms,
-            occupancy_update.single_timer_ms,
-            occupancy_update.empty_timer_ms,
-            occupancy_update.multiple_candidate_timer_ms,
-            occupancy_update.multiple_exit_timer_ms,
-        ));
-        self.update_fsm_context(
-            &config.presence.class,
-            occupancy_update.state,
-            sample.raw_person_count,
-            sample.face_model_ran,
-            &sample.observations,
-        );
-        if config.pipeline.track {
-            self.publish_entities();
+        if self.control.health.is_blind() {
+            self.metrics.tick_blind();
         }
-        self.evaluate_scene(config);
-        self.evaluate_fsm_wildcard(config);
-        self.state.evaluate_health(
-            now,
-            &mut self.health,
-            self.observer.log.as_mut(),
-            &mut self.metrics,
-        );
+        self.state
+            .emit_metrics(self.observer.log.as_mut(), &mut self.metrics);
         self.observer.flush();
     }
 
@@ -373,10 +234,6 @@ impl<R: FrameReader> App<R> {
 
     fn run_inference(&mut self, cycle: CycleContext<'_>, config: &AppConfig) {
         let fb = cycle.frame;
-        let keyframe_gap_ms = cycle.keyframe_gap_ms;
-        let source_window_ms = cycle.source_window_ms;
-        let keyframes_seen = cycle.keyframes_seen;
-        let keyframes_dropped = cycle.keyframes_dropped;
         self.observer.viz.clear_depth_context_boxes();
         let requested = self.resolve_models(config);
         let ordered = self.cascade.ordered(&requested);
@@ -401,9 +258,14 @@ impl<R: FrameReader> App<R> {
             .map(|model| (*model).to_owned())
             .collect();
         for model_key in children {
-            if self.tracker.current_tracks().into_iter().filter(|track| {
-                track.class == config.presence.class
-            }).count() != 1 {
+            if self.control.tracker.as_ref().map_or(0, |tracker| {
+                tracker
+                    .current_tracks()
+                    .into_iter()
+                    .filter(|track| track.class == config.presence.class)
+                    .count()
+            }) != 1
+            {
                 self.metrics.tick_infer_skip(&model_key);
                 continue;
             }
@@ -421,7 +283,11 @@ impl<R: FrameReader> App<R> {
                             .target_for_detections(&model_key, detections, fb.w, fb.h)
                     })
             } else {
-                let current_tracks = self.tracker.current_tracks();
+                let current_tracks = self
+                    .control
+                    .tracker
+                    .as_ref()
+                    .map_or_else(Vec::new, |tracker| tracker.current_tracks());
                 self.cascade
                     .target_for(&model_key, &current_tracks, fb.w, fb.h)
             };
@@ -469,8 +335,10 @@ impl<R: FrameReader> App<R> {
                 sources,
             ));
         }
-        self.observer.viz
-            .log_consolidated_observations(&observations, mana_viz::util::FrameSize::new(fb.w, fb.h));
+        self.observer.viz.log_consolidated_observations(
+            &observations,
+            mana_viz::util::FrameSize::new(fb.w, fb.h),
+        );
         for item in pending {
             self.record_model_result(
                 &item.model_key,
@@ -484,21 +352,18 @@ impl<R: FrameReader> App<R> {
             .iter()
             .filter(|observation| observation.class == config.presence.class)
             .count();
-        self.latest_evidence = Some(crate::scan::AgedEvidence::new(
-            ClinicalSample {
-                observations,
-                signal_valid: primary_root_valid,
-                raw_person_count,
-                keyframe_gap_ms,
-                source_window_ms,
-                keyframes_seen,
-                keyframes_dropped,
-                frame_number: cycle.frame_number,
-                face_model_ran,
-            },
+        let sample = ClinicalSample {
+            observations,
+            signal_valid: primary_root_valid,
+            raw_person_count,
+            frame_number: cycle.frame_number,
+            face_model_ran,
+        };
+        self.control_image.observations = Some(mana_control::AgedEvidence::new(
+            project_scene_sample(&sample),
             cycle.now,
         ));
-        self.measurement_pending = true;
+        self.control_image.measurement_pending = true;
     }
 
     fn run_scheduled_model(
@@ -532,7 +397,7 @@ impl<R: FrameReader> App<R> {
         model_key: &str,
         target: Option<CascadeTarget>,
         fb: &FrameBuffer,
-    ) -> Option<crate::infer::CropRect> {
+    ) -> Option<crate::detection::CropRect> {
         let crop_cfg = self.infer.crop_info(model_key)?;
 
         if crop_cfg.crop_type == CropType::Static {
@@ -575,14 +440,10 @@ impl<R: FrameReader> App<R> {
     }
 
     fn resolve_models(&self, config: &AppConfig) -> Vec<String> {
-        let models = if config.pipeline.fsm {
-            self.fsm_engine
-                .as_ref()
-                .map(|f| f.current_models())
-                .unwrap_or_else(|| self.cascade.all_models().to_vec())
-        } else {
-            self.cascade.all_models().to_vec()
-        };
+        let models = self.control.fsm_engine.as_ref().map_or_else(
+            || self.cascade.all_models().to_vec(),
+            |fsm| fsm.current_models(),
+        );
         models
             .into_iter()
             .filter(|name| self.is_model_enabled(config, name))
@@ -615,17 +476,26 @@ impl<R: FrameReader> App<R> {
             &output.detections,
             crop_rect.map(|r| r.to_array()),
         );
-        self.observer.viz
+        self.observer
+            .viz
             .log_infer_latency(model_key, output.infer_ms * 1000, output.pipeline_us);
         if let Some(rect) = crop_rect {
             self.observer.viz.log_roi_boxes(model_key, rect);
         }
-        self.observer.viz.log_per_frame_class_stats(model_key, &per_class);
-        self.observer.viz
+        self.observer
+            .viz
+            .log_per_frame_class_stats(model_key, &per_class);
+        self.observer
+            .viz
             .log_model_detections(model_key, &output.detections, crop_rect, frame);
-        self.observer.viz.log_model_pose(model_key, &output.detections);
-        self.observer.viz
-            .log_depth_context_boxes(model_key, &output.detections, self.depth_context_roi);
+        self.observer
+            .viz
+            .log_model_pose(model_key, &output.detections);
+        self.observer.viz.log_depth_context_boxes(
+            model_key,
+            &output.detections,
+            self.depth_context_roi,
+        );
         self.observer.viz.log_depth_context_polygons(
             model_key,
             &output.detections,
@@ -633,7 +503,8 @@ impl<R: FrameReader> App<R> {
             frame,
         );
         if output.detections.iter().any(|d| d.mask.is_some()) {
-            self.observer.viz
+            self.observer
+                .viz
                 .log_model_masks(model_key, &output.detections, frame);
         }
         if crop_rect.is_some()
@@ -652,7 +523,7 @@ impl<R: FrameReader> App<R> {
             output
                 .detections
                 .iter()
-                .map(|detection| detection.to_det_record(frame.w, frame.h))
+                .map(|detection| DetRecord::from_detection(detection, frame.w, frame.h))
                 .collect(),
             output.postprocess_rejected,
             output.post_nms_suppressed,
@@ -679,12 +550,15 @@ impl<R: FrameReader> App<R> {
             output.depth.as_ref(),
             crop_rect.map(|rect| rect.to_array()),
         );
-        self.observer.viz
+        self.observer
+            .viz
             .log_infer_latency(model_key, output.infer_ms * 1000, output.pipeline_us);
         if let Some(rect) = crop_rect {
             self.observer.viz.log_roi_boxes(model_key, rect);
         }
-        self.observer.viz.log_model_depth(model_key, output.depth.as_ref());
+        self.observer
+            .viz
+            .log_model_depth(model_key, output.depth.as_ref());
         self.observer.emit(Event::depth(
             self.state.frame_number(),
             model_key,
@@ -712,7 +586,9 @@ impl<R: FrameReader> App<R> {
             return;
         };
         let results = self.depth_rules.evaluate(depth, roi);
-        self.depth_rule_snapshot = crate::depth::DepthRuleSnapshot::from_results(&results);
+        // Depth policy is projected into the control-owned process image.
+        // FIXME: map app depth results to `mana_control::DepthRuleResult`.
+        self.control_image.reset_depth(Instant::now());
         for result in results {
             self.observer.emit(Event::depth_region(
                 self.state.frame_number(),
@@ -729,162 +605,15 @@ impl<R: FrameReader> App<R> {
         }
     }
 
-    fn update_fsm_context(
-        &mut self,
-        person_class: &str,
-        cardinality: crate::occupancy::RoomCardinality,
-        raw_person_count: usize,
-        face_model_ran: bool,
-        observations: &[ConsolidatedObservation],
-    ) {
-        let person = observations
-            .iter()
-            .filter(|observation| observation.class == person_class)
-            .max_by(|a, b| {
-                a.confidence
-                    .partial_cmp(&b.confidence)
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            });
-        let face = person.and_then(|observation| {
-            observation
-                .components
-                .iter()
-                .filter(|component| component.class == "face")
-                .max_by(|a, b| {
-                    a.confidence
-                        .partial_cmp(&b.confidence)
-                        .unwrap_or(std::cmp::Ordering::Equal)
-                })
-        });
-        let person_present = raw_person_count > 0;
-        let face_present = face.is_some();
-        let face_in_dwell = self
-            .face_dwell_roi
-            .map(|roi| face.is_some_and(|evidence| bbox_intersects_roi(evidence.bbox, roi)));
-        let at_edge = person.is_some_and(|observation| {
-            self.bbox_near_roi(observation.bbox, self.person_detection_roi)
-        });
-
-        self.fsm_context = FsmSceneContext {
-            cardinality: Some(cardinality.as_str().into()),
-            person_present,
-            face_present,
-            face_confidence: face.map(|evidence| evidence.confidence),
-            face_in_dwell,
-            at_edge,
-            face_model_ran,
-        };
-    }
-
-    fn bbox_near_roi(&self, bbox: [f32; 4], roi: Option<CropRect>) -> bool {
-        let Some(roi) = roi else { return false };
-        let margin = self.face_edge_margin_px as f32;
-        bbox[0] <= roi.x1 as f32 + margin
-            || bbox[1] <= roi.y1 as f32 + margin
-            || bbox[2] >= roi.x2 as f32 - margin
-            || bbox[3] >= roi.y2 as f32 - margin
-    }
-
-    fn publish_entities(&mut self) {
-        let current_tracks = self.tracker.current_tracks();
-        self.observer.viz.log_entity_boxes(&current_tracks);
-        for track in self.tracker.current_tracks() {
-            let mut sources: Vec<String> = track.evidence.iter().map(|e| e.model.clone()).collect();
-            sources.sort();
-            sources.dedup();
-            self.observer.emit(Event::entity(
-                track.id,
-                &track.class,
-                track.bbox,
-                sources,
-                self.state.frame_number(),
-            ));
-        }
-    }
-
-    fn evaluate_scene(&mut self, config: &AppConfig) {
-        if !config.pipeline.zones && !config.pipeline.fsm {
-            return;
-        }
-        let zone_events = if config.pipeline.zones {
-            if let Some(zone) = self.zone_engine.as_mut() {
-                let current: Vec<&crate::track::Track> = self.tracker.current_tracks();
-                let events = zone.evaluate(&current);
-                for ev in &events {
-                    self.observer
-                        .emit(zone_event_to_log(ev, self.state.frame_number()));
-                }
-                events
-            } else {
-                Vec::new()
-            }
-        } else {
-            Vec::new()
-        };
-
-        if config.pipeline.fsm {
-            if self.fsm_engine.is_some() {
-                let zone = self.zone_engine.as_ref();
-                let snapshot = {
-                    let fsm = self.fsm_engine.as_mut().expect("checked above");
-                    Self::try_advance_fsm(
-                        fsm,
-                        &zone_events,
-                        zone,
-                        &self.health,
-                        &self.depth_rule_snapshot,
-                        &self.fsm_context,
-                        false,
-                        self.observer.log.as_mut(),
-                    );
-                    fsm.snapshot()
-                };
-                self.face_dwell_logger.log_keyframe(
-                    self.observer.log.as_mut(),
-                    self.state.frame_number(),
-                    &self.fsm_context,
-                    &snapshot,
-                );
-                self.observer.viz.log_face_state(&snapshot.state);
-            }
-        }
-    }
-
-    fn try_advance_fsm(
-        fsm: &mut FsmEngine,
-        zone_events: &[crate::zones::ZoneEvent],
-        zone: Option<&ZoneEngine>,
-        health: &Health,
-        depth: &crate::depth::DepthRuleSnapshot,
-        context: &FsmSceneContext,
-        wildcard_only: bool,
-        log: &mut dyn LogSink,
-    ) -> Option<crate::fsm::FsmTransitionResult> {
-        let transition = if wildcard_only {
-            fsm.evaluate_wildcard_with_context(zone_events, zone, health, depth, context)
-        } else {
-            fsm.evaluate_with_context(zone_events, zone, health, depth, context)
-        };
-        if let Some(tr) = transition.as_ref() {
-            log.emit(Event::fsm_transition(
-                &tr.from,
-                tr.from_label.as_deref(),
-                &tr.to,
-                tr.to_label.as_deref(),
-                &tr.trigger,
-                tr.dwell_ms,
-            ));
-        }
-        transition
-    }
-
     fn flush_viz_metrics(&mut self, frame_buf: &Option<FrameBuffer>, timestamp_ns: i64) {
         if let Some(fb) = frame_buf.as_ref() {
             let header = raw_frame_header(fb, self.state.frame_number(), timestamp_ns);
             self.observer.viz.log_frame(&header, &fb.rgb);
             for entry in self.crop_frames_pending.drain(..) {
                 if let Some(crop) = entry.crop_frame {
-                    self.observer.viz.log_crop_frame(&entry.model, &header, crop);
+                    self.observer
+                        .viz
+                        .log_crop_frame(&entry.model, &header, crop);
                 }
             }
         }
@@ -908,39 +637,47 @@ impl<R: FrameReader> App<R> {
             );
         }
     }
+}
 
-    fn evaluate_fsm_wildcard(&mut self, config: &AppConfig) {
-        if !config.pipeline.fsm {
-            return;
-        }
-        if self.fsm_engine.is_some() {
-            let depth = self.depth_rule_snapshot.clone();
-            let zone = self.zone_engine.as_ref();
-            let context = self.fsm_context.clone();
-            let snapshot = {
-                let fsm = self.fsm_engine.as_mut().expect("checked above");
-                Self::try_advance_fsm(
-                    fsm,
-                    &[],
-                    zone,
-                    &self.health,
-                    &depth,
-                    &context,
-                    true,
-                    self.observer.log.as_mut(),
-                )
-                .map(|_| fsm.snapshot())
-            };
-            if let Some(snapshot) = snapshot {
-                self.face_dwell_logger.log_wildcard(
-                    self.observer.log.as_mut(),
-                    self.state.frame_number(),
-                    &context,
-                    &snapshot,
-                );
-                self.observer.viz.log_face_state(&snapshot.state);
-            }
-        }
+/// Application adapter from perception's rich consolidated evidence to the
+/// narrow control input port. Mask payloads and model-specific components stay
+/// on the perception side; control receives only scene facts it can decide on.
+fn project_scene_sample(sample: &ClinicalSample) -> mana_control::SceneSample {
+    mana_control::SceneSample {
+        observations: sample
+            .observations
+            .iter()
+            .map(|observation| {
+                let mut source_models: Vec<_> = observation
+                    .evidence
+                    .iter()
+                    .chain(&observation.components)
+                    .map(|evidence| evidence.model.clone())
+                    .collect();
+                source_models.sort();
+                source_models.dedup();
+                let face = observation
+                    .components
+                    .iter()
+                    .filter(|component| component.class == "face")
+                    .max_by(|a, b| a.confidence.total_cmp(&b.confidence))
+                    .map(|face| mana_control::FaceObservation {
+                        bbox: face.bbox,
+                        confidence: face.confidence,
+                    });
+                mana_control::SceneObservation {
+                    class: observation.class.clone(),
+                    bbox: observation.bbox,
+                    confidence: observation.confidence,
+                    source_models,
+                    face,
+                }
+            })
+            .collect(),
+        signal_valid: sample.signal_valid,
+        raw_person_count: sample.raw_person_count,
+        frame_number: sample.frame_number,
+        face_model_ran: sample.face_model_ran,
     }
 }
 
@@ -952,13 +689,6 @@ fn raw_frame_header(fb: &FrameBuffer, frame_id: u64, timestamp_ns: i64) -> RawFr
         timestamp_ns,
         ..Default::default()
     }
-}
-
-fn bbox_intersects_roi(bbox: [f32; 4], roi: CropRect) -> bool {
-    bbox[0] < roi.x2 as f32
-        && bbox[2] > roi.x1 as f32
-        && bbox[1] < roi.y2 as f32
-        && bbox[3] > roi.y1 as f32
 }
 
 fn depth_summary(

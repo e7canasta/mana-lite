@@ -3,10 +3,14 @@
 Relevant source files
 
 - [](src/error.rs)
-- [](src/main.rs)
+- [](src/app/mod.rs)
 - [](src/pipeline.rs)
 
-The `mana-lite` system is built around a synchronous processing loop encapsulated in the `App` struct [src/main.rs65-94](src/main.rs#L65-L94) It transforms raw RTSP network packets into high-level state machine transitions through a multi-stage pipeline. The architecture prioritizes low-latency processing of keyframes, utilizing a "cascade" model where secondary inferences are triggered based on the results of primary detections.
+The `mana-lite` system is built around a synchronous processing loop
+encapsulated in [`App`](src/app/mod.rs). It transforms raw RTSP network packets
+into high-level state machine transitions through a multi-stage pipeline. The
+architecture prioritizes low-latency processing of keyframes, utilizing a
+"cascade" model where secondary inferences are triggered by primary detections.
 
 ### High-Level Data Flow
 
@@ -69,21 +73,23 @@ sequenceDiagram
 
     FSM->>APP: State Transitions / Events
 ```
-Sources: [src/main.rs611-850](src/main.rs#L611-L850) [src/ingest.rs16-45](src/ingest.rs#L16-L45) [src/snapshot.rs21-40](src/snapshot.rs#L21-L40)
+Sources: [`App::run`](src/app/mod.rs), [`IngestEngine`](src/ingest.rs), [`FrameDecoder`](src/snapshot.rs)
 
 ### The App Struct and Main Loop
 
-The `App` struct serves as the central orchestrator, holding the state for all major subsystems including the `InferEngine`, `Tracker`, `ZoneEngine`, and `FsmEngine` [src/main.rs65-94](src/main.rs#L65-L94)
+[`App`](src/app/mod.rs) is the central orchestrator, holding the state for all major subsystems including `InferEngine`, `Tracker`, `ZoneEngine`, and `FsmEngine`.
 
-The `App::run` method [src/main.rs604-640](src/main.rs#L604-L640) executes an infinite loop that:
+[`App::run`](src/app/mod.rs) executes an infinite loop that:
 
-1. Polls the `IngestEngine` for new `RawKeyframe` data [src/main.rs611-615](src/main.rs#L611-L615)
-2. Updates `PipelineState` and `Health` metrics [src/main.rs625-634](src/main.rs#L625-L634)
-3. Triggers the `App::process_keyframe` logic [src/main.rs636](src/main.rs#L636-L636)
+1. Polls `IngestEngine` for new `RawKeyframe` data.
+2. Updates `PipelineState` and `Health` metrics.
+3. Triggers `App::process_keyframe`.
 
-Within `process_keyframe` [src/main.rs642-850](src/main.rs#L642-L850) the system performs the heavy lifting of inference and state evaluation. This method is wrapped in `catch_unwind` to ensure that a panic in a specific frame's processing does not crash the entire ingest service [src/main.rs643-645](src/main.rs#L643-L645)
+Within `App::process_keyframe`, the system performs inference and state
+evaluation. The method is wrapped in `catch_unwind` so a panic in one frame
+does not crash the ingest service.
 
-Sources: [src/main.rs65-94](src/main.rs#L65-L94) [src/main.rs604-640](src/main.rs#L604-L640) [src/main.rs642-850](src/main.rs#L642-L850)
+Sources: [`App`](src/app/mod.rs), [`App::run`](src/app/mod.rs), [`App::process_keyframe`](src/app/mod.rs)
 
 ### Pipeline Stages
 
@@ -97,7 +103,10 @@ The `IngestEngine` manages the `RetinaReader`, which handles RTSP session neg
 
 #### 2. Inference Engine
 
-The `InferEngine` executes YOLO models defined in the `ModelCatalog` [src/infer.rs152-170](src/infer.rs#L152-L170) It supports a primary model (usually full-frame) and a "cascade" of secondary models that run on specific crops (e.g., a face model running on a head crop) [src/main.rs727-750](src/main.rs#L727-L750)
+[`InferEngine`](src/infer/mod.rs) executes YOLO models defined in the
+`ModelCatalog`. `App` schedules primary full-frame models and secondary
+cascade models that run on selected crops (for example, a face model on a head
+crop).
 
 - For details, see [Inference Engine](https://deepwiki.com/ernestovisiona-netizen/kik8/2.2-inference-engine).
 
@@ -272,7 +281,7 @@ flowchart TD
 ```
 `ZoneEngine → OccupancyStateMachine` y `ZoneEngine → DepthRules` como en tu imagen, y ambos convergen en `FsmEngine`. También dejé `FSM → Output` bifurcado hacia los dos sinks.
 
-Sources: [src/main.rs65-94](src/main.rs#L65-L94) [src/pipeline.rs6-11](src/pipeline.rs#L6-L11) [src/main.rs642-850](src/main.rs#L642-L850)
+Sources: [`App`](src/app/mod.rs), [`PipelineState`](src/pipeline.rs), [`App::process_keyframe`](src/app/mod.rs)
 
 ### Pipeline State and Health
 
@@ -280,13 +289,13 @@ The `PipelineState` struct tracks frame counts and timing [src/pipeline.rs6-1
 
 |Entity|Role|File|
 |---|---|---|
-|`App`|Main orchestrator and loop owner|[src/main.rs65](src/main.rs#L65-L65)|
+|`App`|Main orchestrator and loop owner|[`App`](src/app/mod.rs)|
 |`PipelineState`|Tracks frame counters and panic recovery|[src/pipeline.rs6](src/pipeline.rs#L6-L6)|
 |`IngestEngine`|Manages RTSP connection and keyframe filtering|[src/ingest.rs135](src/ingest.rs#L135-L135)|
-|`InferEngine`|Interface for AI model execution|[src/infer.rs152](src/infer.rs#L152-L152)|
-|`FsmEngine`|Evaluates high-level business logic|[src/fsm.rs101](src/fsm.rs#L101-L101)|
+|`InferEngine`|Interface for AI model execution|[`InferEngine`](src/infer/mod.rs)|
+|`FsmEngine`|Evaluates high-level business logic|[`FsmEngine`](src/fsm/engine.rs)|
 
-Sources: [src/main.rs65-94](src/main.rs#L65-L94) [src/pipeline.rs6-11](src/pipeline.rs#L6-L11) [src/metrics.rs253-270](src/metrics.rs#L253-L270)
+Sources: [`App`](src/app/mod.rs), [`PipelineState`](src/pipeline.rs), [`Health`](src/health.rs)
 
 
 ### On this page

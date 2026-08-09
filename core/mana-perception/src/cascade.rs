@@ -195,7 +195,7 @@ impl CascadeScheduler {
     pub fn target_for_detections(
         &self,
         model: &str,
-        detections: &[crate::infer::Detection],
+        detections: &[crate::detection::Detection],
         frame_w: u32,
         frame_h: u32,
     ) -> Option<CascadeTarget> {
@@ -204,7 +204,7 @@ impl CascadeScheduler {
             return None;
         }
 
-        let candidates: Vec<&crate::infer::Detection> = detections
+        let candidates: Vec<&crate::detection::Detection> = detections
             .iter()
             .filter(|detection| {
                 entry
@@ -402,7 +402,7 @@ mod tests {
                 requires_region_coverage: None,
             },
         ]);
-        let one_person = [crate::infer::Detection {
+        let one_person = [crate::detection::Detection {
             class: "person".into(),
             confidence: 0.9,
             bbox: [0.0, 0.0, 100.0, 100.0],
@@ -410,14 +410,14 @@ mod tests {
             mask: None,
         }];
         let two_people = [
-            crate::infer::Detection {
+            crate::detection::Detection {
                 class: "person".into(),
                 confidence: 0.9,
                 bbox: [0.0, 0.0, 100.0, 100.0],
                 keypoints: None,
                 mask: None,
             },
-            crate::infer::Detection {
+            crate::detection::Detection {
                 class: "person".into(),
                 confidence: 0.9,
                 bbox: [120.0, 0.0, 220.0, 100.0],
@@ -463,14 +463,14 @@ mod tests {
                 requires_region_coverage: None,
             },
         ]);
-        let low_confidence = [crate::infer::Detection {
+        let low_confidence = [crate::detection::Detection {
             class: "person".into(),
             confidence: 0.7,
             bbox: [0.0, 0.0, 640.0, 480.0],
             keypoints: None,
             mask: None,
         }];
-        let small = [crate::infer::Detection {
+        let small = [crate::detection::Detection {
             class: "person".into(),
             confidence: 0.9,
             bbox: [0.0, 0.0, 100.0, 100.0],

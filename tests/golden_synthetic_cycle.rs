@@ -1,11 +1,36 @@
 use std::time::{Duration, Instant};
 
-use mana_lite::config::{OccupancyPolicy, PresencePoiPolicy};
+use mana_control::config::{OccupancyPolicy, PresencePoiPolicy};
+use mana_lite::detection::Detection;
 use mana_lite::detection::{DetectionConsolidator, DetectionRole, ModelDetections};
-use mana_lite::infer::Detection;
 use mana_lite::logger::{Event, LogSink, RecordingSink, render_events_fixed_ts};
 use mana_lite::occupancy::{OccupancyEvidence, OccupancyStateMachine};
 use mana_lite::presence::PresenceFilter;
+use mana_lite::scan::{ControlStamp, SceneObservation};
+
+fn to_scene(observations: &[mana_lite::detection::ConsolidatedObservation]) -> Vec<SceneObservation> {
+    observations
+        .iter()
+        .map(|observation| SceneObservation {
+            class: observation.class.clone(),
+            bbox: observation.bbox,
+            confidence: observation.confidence,
+            source_models: observation
+                .evidence
+                .iter()
+                .map(|e| e.model.clone())
+                .collect(),
+            face: observation
+                .components
+                .iter()
+                .find(|c| c.class == "face")
+                .map(|face| mana_control::FaceObservation {
+                    bbox: face.bbox,
+                    confidence: face.confidence,
+                }),
+        })
+        .collect()
+}
 
 #[test]
 fn synthetic_cycle_matches_golden_jsonl() {
@@ -16,13 +41,13 @@ fn synthetic_cycle_matches_golden_jsonl() {
         keypoints: None,
         mask: None,
     }];
-    let observations = DetectionConsolidator::new(0.70, 0.65, 0.5).consolidate(&[
-        ModelDetections {
+    let observations =
+        DetectionConsolidator::new(0.70, 0.65, 0.5).consolidate(&[ModelDetections {
             model: "detect-fast",
             role: DetectionRole::Primary,
             detections: &person,
-        },
-    ]);
+        }]);
+    let scene = to_scene(&observations);
     let t0 = Instant::now();
     let mut presence = PresenceFilter::new(
         true,
@@ -32,9 +57,9 @@ fn synthetic_cycle_matches_golden_jsonl() {
             off_ms: 500,
         },
     );
-    presence.update_at(&observations, true, t0);
+    presence.update_at(&scene, true, t0);
     let (_, presence_update) =
-        presence.update_at(&observations, true, t0 + Duration::from_millis(100));
+        presence.update_at(&scene, true, t0 + Duration::from_millis(100));
     let mut occupancy = OccupancyStateMachine::new(OccupancyPolicy {
         single_confirm_ms: 200,
         empty_confirm_ms: 500,
@@ -64,7 +89,7 @@ fn synthetic_cycle_matches_golden_jsonl() {
     let mut sink = RecordingSink::default();
     sink.emit(Event::meta_startup("test", "synthetic"));
     sink.emit(Event::frame_ingest(1, true, 3, 200));
-    for observation in observations {
+    for observation in &observations {
         sink.emit(Event::consolidated_detection(
             1,
             &observation.class,
@@ -75,11 +100,12 @@ fn synthetic_cycle_matches_golden_jsonl() {
         ));
     }
     sink.emit(Event::presence(
-        1,
-        200,
-        200,
-        1,
-        0,
+        ControlStamp {
+            scan_seq: 1,
+            evidence_frame_id: 1,
+            observations_age_ms: 0,
+            depth_age_ms: None,
+        },
         occupancy_update.state.as_str(),
         presence_update.state.as_str(),
         occupancy_update.second_person.as_str(),
@@ -95,7 +121,10 @@ fn synthetic_cycle_matches_golden_jsonl() {
         occupancy_update.multiple_exit_timer_ms,
     ));
     let actual = render_events_fixed_ts(&sink.events, "1970-01-01T00:00:00.000Z");
-    let golden_path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/golden/synthetic_cycle.jsonl");
+    let golden_path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/golden/synthetic_cycle.jsonl"
+    );
     if std::env::var_os("UPDATE_GOLDEN").is_some() {
         std::fs::write(golden_path, &actual).expect("write golden");
     }

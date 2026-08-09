@@ -1,0 +1,6 @@
+use std::{borrow::Borrow, fmt, hash::{Hash, Hasher}, ops::Deref, sync::Arc};
+#[derive(Clone, Eq)] pub struct DomStr(Arc<str>);
+impl DomStr { pub fn new(value: impl AsRef<str>) -> Self { Self(Arc::from(value.as_ref())) } pub fn as_str(&self)->&str { &self.0 } }
+impl PartialEq for DomStr { fn eq(&self, other:&Self)->bool { self.0==other.0 } } impl Hash for DomStr { fn hash<H:Hasher>(&self,s:&mut H){self.as_str().hash(s)} } impl Borrow<str> for DomStr { fn borrow(&self)->&str{self.as_str()} } impl fmt::Display for DomStr { fn fmt(&self,f:&mut fmt::Formatter<'_>)->fmt::Result{f.write_str(self.as_str())} }
+macro_rules! id { ($n:ident) => { #[derive(Clone,PartialEq,Eq,Hash)] pub struct $n(DomStr); impl $n { pub fn new(v:impl AsRef<str>)->Self{Self(DomStr::new(v))} pub fn as_str(&self)->&str{self.0.as_str()} } impl Deref for $n { type Target=str; fn deref(&self)->&str {self.as_str()} } impl Borrow<str> for $n { fn borrow(&self)->&str{self.as_str()} } impl fmt::Display for $n { fn fmt(&self,f:&mut fmt::Formatter<'_>)->fmt::Result{f.write_str(self.as_str())} } impl fmt::Debug for $n { fn fmt(&self,f:&mut fmt::Formatter<'_>)->fmt::Result{f.debug_tuple(stringify!($n)).field(&self.as_str()).finish()} } }; }
+id!(StateId); id!(ZoneId);

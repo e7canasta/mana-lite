@@ -116,4 +116,3 @@ pub fn bilinear_resize_mask(
 
     dst
 }
-

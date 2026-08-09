@@ -1,0 +1,12 @@
+[package]
+name = "mana-perception"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.89"
+description = "Asynchronous perception primitives for mana-lite"
+license = "AGPL-3.0"
+
+[dependencies]
+mana-geometry = { path = "../../std/mana-geometry" }
+ultralytics-inference = { path = "../../../inference", default-features = false }
+

@@ -19,11 +19,7 @@ pub enum SignalValidity {
 impl SignalValidity {
     #[must_use]
     pub const fn from_bool(valid: bool) -> Self {
-        if valid {
-            Self::Valid
-        } else {
-            Self::Invalid
-        }
+        if valid { Self::Valid } else { Self::Invalid }
     }
 
     #[must_use]

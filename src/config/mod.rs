@@ -12,14 +12,16 @@ mod validation;
 mod zones;
 
 pub use app::{
-    AppConfig, DetectionConfig, HealthConfig, InferenceConfig, IngestConfig, MANA_TOML_SCHEMA_VERSION,
-    OccupancyPolicy, OutputConfig, PipelineConfig, PresenceConfig, PresencePoiPolicy, Rotate,
-    ScanConfigSection, SourceConfig, TrackingConfig, TrackingNoiseConfig, VizConfig,
+    AppConfig, DetectionConfig, HealthConfig, InferenceConfig, IngestConfig,
+    MANA_TOML_SCHEMA_VERSION, OccupancyPolicy, OutputConfig, PipelineConfig, PresenceConfig,
+    PresencePoiPolicy, Rotate, ScanConfigSection, SourceConfig, TrackingConfig,
+    TrackingNoiseConfig, VizConfig,
 };
 pub use blueprint::{
     BlueprintConfig, BlueprintMetadata, CascadeConfig, CascadeRule, SemanticRegion,
 };
-pub use fsm::{FsmCatalog, FsmGuard, FsmRoles, FsmRoot, FsmState, FsmTransition};
+pub use fsm::{FsmCatalog, FsmRoles, FsmRoot, FsmState, FsmTransition};
+pub use crate::fsm::FsmGuard;
 pub use loader::{
     load_app_config, load_config, load_depth_rules, load_fsm_catalog, load_metrics_log,
     load_rerun_blueprint, load_viz_data, load_zone_catalog,
@@ -33,13 +35,32 @@ pub use observability::{
     RerunBlueprintConfig, RerunOverride, RerunPanel, RerunRoot, RerunRow, VizDataConfig,
     VizDataInner, VizSendToggles,
 };
-pub use validation::{validate_fsm, validate_model_catalog};
+pub use validation::validate_model_catalog;
 pub use zones::{ZoneCatalog, ZoneEntry};
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::fsm::FsmProgram;
     use std::path::{Path, PathBuf};
+
+    fn fsm_compile_errors(
+        fsm: &FsmCatalog,
+        models: &ModelCatalog,
+        zones: Option<&ZoneCatalog>,
+        depth_rules: Option<&crate::depth::DepthRules>,
+    ) -> Vec<String> {
+        let names = depth_rules.map(|rules| {
+            rules
+                .rules
+                .iter()
+                .map(|rule| rule.name.clone())
+                .collect::<std::collections::HashSet<_>>()
+        });
+        FsmProgram::compile_with_references(fsm, zones, models, names.as_ref())
+            .err()
+            .unwrap_or_default()
+    }
 
     #[test]
     fn test_load_model_catalog() {
@@ -98,7 +119,7 @@ mod tests {
         let fsm =
             load_fsm_catalog(Path::new("config/blueprints/detect-room-face/fsm.toml")).unwrap();
         let zones = load_zone_catalog(Path::new("config/zones.toml")).unwrap();
-        let errors = validate_fsm(&fsm, &models, &Some(zones), &None);
+        let errors = fsm_compile_errors(&fsm, &models, Some(&zones), None);
         assert!(errors.is_empty(), "face FSM should be valid: {errors:?}");
         assert_eq!(fsm.fsm.initial, "idle");
         for state in [
@@ -337,7 +358,7 @@ mod tests {
         let models = load_model_catalog(Path::new("config/models.toml")).unwrap();
         let fsm = load_fsm_catalog(Path::new("config/fsm.toml")).unwrap();
         let depth_rules = load_depth_rules(Path::new("config/depth-rules.toml")).unwrap();
-        let errors = validate_fsm(&fsm, &models, &None, &Some(depth_rules));
+        let errors = fsm_compile_errors(&fsm, &models, None, Some(&depth_rules));
         assert!(
             errors.is_empty(),
             "config/fsm.toml should be valid: {errors:?}"
@@ -351,7 +372,7 @@ mod tests {
         broken.fsm.roles.safe = "ghost-safe".into();
         broken.fsm.roles.reset = "ghost-reset".into();
 
-        let errors = validate_fsm(&broken, &models, &None, &None);
+        let errors = fsm_compile_errors(&broken, &models, None, None);
         assert!(errors.iter().any(|e| e.contains("safe state 'ghost-safe'")));
         assert!(
             errors
@@ -365,7 +386,7 @@ mod tests {
             .fsm
             .transitions
             .retain(|transition| transition.from != "idle");
-        let errors = validate_fsm(&without_safe_exit, &models, &None, &None);
+        let errors = fsm_compile_errors(&without_safe_exit, &models, None, None);
         assert!(
             errors
                 .iter()
@@ -384,7 +405,7 @@ mod tests {
             guards: vec![],
             dwell: None,
         });
-        let errors = validate_fsm(&fsm, &models, &None, &None);
+        let errors = fsm_compile_errors(&fsm, &models, None, None);
         assert!(!errors.is_empty());
     }
 
@@ -403,7 +424,7 @@ mod tests {
             }],
             dwell: None,
         });
-        let errors = validate_fsm(&broken, &models, &None, &Some(rules));
+        let errors = fsm_compile_errors(&broken, &models, None, Some(&rules));
         assert!(
             errors.iter().any(|e| e.contains("depth rule 'ghost-rule'")),
             "expected unknown depth rule error: {errors:?}"

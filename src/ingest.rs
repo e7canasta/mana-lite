@@ -149,8 +149,6 @@ fn h264_digest(h264: &[u8]) -> u64 {
     hasher.finish()
 }
 
-
-
 pub struct RetinaReader {
     demuxed: retina::client::Demuxed,
     url: url::Url,
@@ -343,7 +341,6 @@ impl FrameReader for RetinaReader {
     }
 }
 
-
 /// In-memory frame source for integration tests (no RTSP).
 pub struct SyntheticReader {
     frames: std::collections::VecDeque<Frame>,
@@ -372,7 +369,7 @@ impl FrameReader for SyntheticReader {
 #[cfg(test)]
 mod tests {
     use super::*;
-            fn make_keyframe(id: u8) -> Frame {
+    fn make_keyframe(id: u8) -> Frame {
         Frame {
             h264: vec![id; 64],
             is_keyframe: true,

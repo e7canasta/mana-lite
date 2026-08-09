@@ -2,7 +2,8 @@
 
 use image::RgbImage;
 
-use super::{CropFrameInfo, CropRect, Detection};
+use super::CropFrameInfo;
+use crate::detection::{CropRect, Detection};
 
 pub(super) fn extract_crop_frame(
     rgb: &[u8],
@@ -173,4 +174,3 @@ pub fn compute_upper_square_roi(
         y2: y1 + side,
     })
 }
-

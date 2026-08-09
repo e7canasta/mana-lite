@@ -394,14 +394,14 @@ session.demuxed()
 ### Archivos
 
 ```text
-[src/ingest.rs:43]
-[src/snapshot.rs:21]
+src/ingest.rs · IngestEngine
+src/snapshot.rs · FrameDecoder
 ```
 
-Siempre:
+Las referencias deben identificar el archivo y el símbolo, nunca una línea:
 
 ```text
-[nombre/archivo.ext:línea]
+[nombre/archivo.ext · Símbolo]
 ```
 
 y debajo del nombre del componente.
@@ -409,7 +409,7 @@ y debajo del nombre del componente.
 Ejemplo:
 
 ```mermaid
-FrameDecoder["FrameDecoder<br/><small>[src/snapshot.rs:21]</small>"]
+FrameDecoder["FrameDecoder<br/><small>[src/snapshot.rs · FrameDecoder]</small>"]
 ```
 
 ---
@@ -422,13 +422,13 @@ Siempre:
 
 ```text
 ComponentName
-[src/path/file.rs:123]
+[src/path/file.rs · SymbolName]
 ```
 
 Visualmente:
 
 ```mermaid
-A["FrameDecoder<br/><small>[src/snapshot.rs:21]</small>"]
+A["FrameDecoder<br/><small>[src/snapshot.rs · FrameDecoder]</small>"]
 ```
 
 La referencia **nunca debe competir con el nombre del componente**.
@@ -509,9 +509,9 @@ flowchart TB
     subgraph DOMAIN["Domain Name"]
         direction TB
 
-        ComponentA["ComponentA<br/><small>[src/example.rs:10]</small>"]
-        ComponentB["ComponentB<br/><small>[src/example.rs:20]</small>"]
-        ComponentC["ComponentC<br/><small>[src/example.rs:30]</small>"]
+        ComponentA["ComponentA<br/><small>[src/example.rs · ComponentA]</small>"]
+        ComponentB["ComponentB<br/><small>[src/example.rs · ComponentB]</small>"]
+        ComponentC["ComponentC<br/><small>[src/example.rs · ComponentC]</small>"]
 
         ComponentA -->|produces| ComponentB
         ComponentB -->|updates| ComponentC

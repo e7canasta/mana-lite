@@ -2,7 +2,10 @@ mod event;
 mod serialize;
 
 #[allow(unused_imports)]
-pub use event::{DetRecord, Event, FaceDwellTimerRecord, JsonlLevel, MaskRecord};
+pub use event::{
+    DetRecord, Event, FaceDwellTimerRecord, JsonlLevel, MaskRecord, track_event_to_log,
+    zone_event_to_log,
+};
 use serialize::write_event;
 
 use crate::config::{MetricsJsonlConfig, Rotate};
@@ -587,8 +590,22 @@ mod tests {
     }
 
     #[test]
+    fn det_record_carries_frame_relative_area() {
+        let detection = crate::detection::Detection {
+            class: "person".into(),
+            confidence: 0.9,
+            bbox: [10.0, 20.0, 110.0, 220.0],
+            keypoints: None,
+            mask: None,
+        };
+        let record = DetRecord::from_detection(&detection, 1_000, 1_000);
+        assert_eq!(record.area_px, 20_000.0);
+        assert!((record.area_ratio - 0.02).abs() < f32::EPSILON);
+    }
+
+    #[test]
     fn detection_emits_mask_wire_record() {
-        use crate::infer::DetectionMask;
+        use crate::detection::DetectionMask;
         use mana_geometry::compact_mask::CompactMask;
         use std::sync::Arc;
         let compact = CompactMask::from_dense(&[1, 1, 1, 1], 2, 2, (3, 4), (10, 10)).unwrap();
@@ -598,7 +615,7 @@ mod tests {
             origin: [0, 0],
             mask_dims: [10, 10],
         };
-        let record = mask.to_wire_record();
+        let record = MaskRecord::from_mask(&mask);
         let det = vec![DetRecord {
             class: "person".into(),
             confidence: 0.9,
@@ -632,7 +649,7 @@ mod tests {
 
     #[test]
     fn mask_wire_record_round_trips_through_rle() {
-        use crate::infer::DetectionMask;
+        use crate::detection::DetectionMask;
         use mana_geometry::compact_mask::CompactMask;
         use std::sync::Arc;
         let compact = CompactMask::from_dense(&[1, 1, 1, 1], 2, 2, (3, 4), (10, 10)).unwrap();
@@ -642,7 +659,7 @@ mod tests {
             origin: [0, 0],
             mask_dims: [10, 10],
         };
-        let record = mask.to_wire_record();
+        let record = MaskRecord::from_mask(&mask);
         let rebuilt = vernier_mask::Rle::from_counts(
             (record.bbox[3] - record.bbox[1]) as u32,
             (record.bbox[2] - record.bbox[0]) as u32,
@@ -721,11 +738,12 @@ mod tests {
     fn presence_event_serializes_cardinality_evidence() {
         let mut log = test_logger();
         log.emit(Event::presence(
-            10,
-            2_500,
-            2_500,
-            10,
-            1,
+            crate::scan::ControlStamp {
+                scan_seq: 12,
+                evidence_frame_id: 10,
+                observations_age_ms: 2_500,
+                depth_age_ms: None,
+            },
             "single",
             "present",
             "candidate",
@@ -742,7 +760,10 @@ mod tests {
         ));
         let out = collect(&mut log);
         assert!(out.contains("\"type\":\"presence\""));
-        assert!(out.contains("\"keyframe_gap_ms\":2500"));
+        assert!(out.contains("\"scan_seq\":12"));
+        assert!(out.contains("\"evidence_frame_id\":10"));
+        assert!(out.contains("\"observations_age_ms\":2500"));
+        assert!(out.contains("\"depth_age_ms\":null"));
         assert!(out.contains("\"state\":\"single\""));
         assert!(out.contains("\"poi_state\":\"present\""));
         assert!(out.contains("\"poi_positive_ms\":3"));
@@ -756,7 +777,12 @@ mod tests {
     fn face_dwell_event_serializes_state_evidence_and_timers() {
         let mut log = test_logger();
         log.emit(Event::face_dwell(
-            42,
+            crate::scan::ControlStamp {
+                scan_seq: 7,
+                evidence_frame_id: 42,
+                observations_age_ms: 0,
+                depth_age_ms: Some(0),
+            },
             "keyframe",
             "searching",
             Some("Buscando cara"),
@@ -778,7 +804,8 @@ mod tests {
         ));
         let out = collect(&mut log);
         assert!(out.contains("\"type\":\"face_dwell\""));
-        assert!(out.contains("\"frame_id\":42"));
+        assert!(out.contains("\"scan_seq\":7"));
+        assert!(out.contains("\"evidence_frame_id\":42"));
         assert!(out.contains("\"source\":\"keyframe\""));
         assert!(out.contains("\"state\":\"searching\""));
         assert!(out.contains("\"state_label\":\"Buscando cara\""));

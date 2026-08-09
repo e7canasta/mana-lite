@@ -4,8 +4,12 @@ version = "0.1.0"
 edition = "2024"
 description = "Video decoding commons: FrameDecoder trait, BufferPool, pixel format utils"
 
+[features]
+default = ["ffmpeg"]
+ffmpeg = ["dep:ffmpeg-next"]
+
 [dependencies]
 mana-types = { path = "../mana-types" }
 log = "0.4"
 anyhow = "1"
-ffmpeg-next = "8"
+ffmpeg-next = { version = "8", optional = true }

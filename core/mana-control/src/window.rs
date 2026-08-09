@@ -81,7 +81,10 @@ mod tests {
                 break;
             }
         }
-        assert!(tripped, "1 fallo de cada 2 eventos al final es densidad alta");
+        assert!(
+            tripped,
+            "1 fallo de cada 2 eventos al final es densidad alta"
+        );
     }
 
     #[test]

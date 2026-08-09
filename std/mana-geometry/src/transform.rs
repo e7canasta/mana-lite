@@ -90,17 +90,16 @@ pub fn calculate_iou(a: &[f32; 4], b: &[f32; 4]) -> f32 {
     )
 }
 
-/// Compute proto mask crop region from letterbox geometry.
+/// Compute the crop region in letterbox geometry.
 ///
 /// Given the model input size and the ROI (region-of-interest) dimensions,
 /// returns `(crop_x, crop_y, crop_w, crop_h)` in proto pixel space — the
-/// sub-region of the proto mask that corresponds to actual image content
+/// sub-region that corresponds to actual image content
 /// (excluding letterbox padding).
 ///
-/// Used by segment decoders across all families (YOLO, YOLO26, RF-DETR) to
-/// crop proto masks before bilinear resize.
+/// Used by mask decoders to crop the letterbox padding before bilinear resize.
 #[must_use]
-pub fn proto_crop_region(
+pub fn crop_region_in_letterbox(
     input_w: u32,
     input_h: u32,
     roi_w: u32,
@@ -110,11 +109,11 @@ pub fn proto_crop_region(
 ) -> (usize, usize, usize, usize) {
     debug_assert!(
         roi_w > 0 && roi_h > 0,
-        "proto_crop_region: roi_w and roi_h must be > 0"
+        "crop_region_in_letterbox: roi_w and roi_h must be > 0"
     );
     debug_assert!(
         proto_w > 0 && proto_h > 0,
-        "proto_crop_region: proto_w and proto_h must be > 0"
+        "crop_region_in_letterbox: proto_w and proto_h must be > 0"
     );
     let iw = input_w as f32;
     let ih = input_h as f32;

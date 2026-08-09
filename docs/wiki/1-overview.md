@@ -5,7 +5,7 @@ Relevant source files
 - [](.gitignore)
 - [](README.md?plain=1)
 - [](src/lib.rs)
-- [](src/main.rs)
+- [](src/app/mod.rs)
 
 The `mana-lite` system is a high-performance, real-time room presence and face-detection pipeline. It is designed to ingest RTSP video streams and execute a multi-stage computer vision pipeline including object detection, pose estimation, segmentation, and depth analysis. The system tracks individuals across frames, evaluates spatial occupancy within defined zones, and drives a finite state machine (FSM) to determine complex room states such as occupancy cardinality and specific behavioral events (e.g., "in bed" or "exiting").
 
@@ -13,17 +13,19 @@ The `mana-lite` system is a high-performance, real-time room presence and face
 
 ## System Architecture
 
-The application is structured as a linear pipeline managed by the `App` struct [src/main.rs65-94](src/main.rs#L65-L94) The lifecycle of a video frame involves ingestion, decoding, inference, and sequential logic processing.
+The application is structured as a linear pipeline managed by
+[`App`](src/app/mod.rs). The lifecycle of a video frame involves ingestion,
+decoding, inference, and sequential logic processing.
 
 ### Data Flow Overview
 
-1. **Ingest**: The `IngestEngine` [src/main.rs76](src/main.rs#L76-L76) utilizes `RetinaReader` [src/main.rs36](src/main.rs#L36-L36) to capture H.264 Annex-B streams from RTSP sources.
-2. **Inference**: The `InferEngine` [src/main.rs66](src/main.rs#L66-L66) executes models defined in a central `ModelCatalog`. It supports cascading models, where a primary detection (e.g., a person) triggers secondary crops for higher-resolution analysis (e.g., a face).
-3. **Tracking & Spatial Logic**: Detections are fed into a `Tracker` [src/main.rs68](src/main.rs#L68-L68) (using Kalman filters and Hungarian assignment). The resulting tracks are evaluated against a `ZoneEngine` [src/main.rs69](src/main.rs#L69-L69) to determine spatial presence.
-4. **State Evaluation**: The `OccupancyStateMachine` [src/main.rs80](src/main.rs#L80-L80) and `FsmEngine` [src/main.rs70](src/main.rs#L70-L70) consume presence and depth data to transition between high-level application states.
-5. **Observability**: Data is simultaneously published via `VizBridge` [src/main.rs90](src/main.rs#L90-L90) to Rerun.io and logged as structured JSONL by the `LogManager` [src/main.rs37](src/main.rs#L37-L37)
+1. **Ingest**: [`IngestEngine`](src/ingest.rs) uses [`RetinaReader`](src/ingest.rs) to capture H.264 Annex-B streams from RTSP sources.
+2. **Inference**: [`InferEngine`](src/infer/mod.rs) executes models defined in a central `ModelCatalog`. It supports cascading models, where a primary detection (e.g., a person) triggers secondary crops for higher-resolution analysis (e.g., a face).
+3. **Tracking & Spatial Logic**: Detections are fed into [`Tracker`](src/track.rs) (using Kalman filters and Hungarian assignment). The resulting tracks are evaluated against [`ZoneEngine`](src/zones.rs) to determine spatial presence.
+4. **State Evaluation**: [`OccupancyStateMachine`](src/occupancy.rs) and [`FsmEngine`](src/fsm/engine.rs) consume presence and depth data to transition between high-level application states.
+5. **Observability**: Data is simultaneously published via `VizBridge` to Rerun.io and logged as structured JSONL by [`LogManager`](src/logger/mod.rs).
 
-**Sources:** [src/main.rs1-94](src/main.rs#L1-L94) [README.md10-21](README.md?plain=1#L10-L21)
+**Sources:** [`App`](src/app/mod.rs), [README.md](README.md?plain=1)
 
 ### Code Entity Mapping: Pipeline Logic
 
@@ -39,7 +41,7 @@ flowchart TD
     end
 
     subgraph IT["Inference & Tracking"]
-        IE["InferEngine<br/>(src/infer.rs)"]
+        IE["InferEngine<br/>(src/infer/mod.rs)"]
         TR["Tracker<br/>(src/track.rs)"]
         IE --> TR
     end
@@ -47,15 +49,15 @@ flowchart TD
     subgraph SSL["Spatial & State Logic"]
         ZE["ZoneEngine<br/>(src/zones.rs)"]
         OSM["OccupancyStateMachine<br/>(src/occupancy.rs)"]
-        FSM["FsmEngine<br/>(src/fsm.rs)"]
+        FSM["FsmEngine<br/>(src/fsm/engine.rs)"]
 
         ZE --> OSM
         OSM --> FSM
     end
 
     subgraph OO["Output & Observability"]
-        LM["LogManager<br/>(src/logger.rs)"]
-        VB["VizBridge<br/>(src/viz.rs)"]
+        LM["LogManager<br/>(src/logger/mod.rs)"]
+        VB["VizBridge<br/>(src/viz/mod.rs)"]
     end
 
     FD --> IE
@@ -63,7 +65,7 @@ flowchart TD
     FSM --> LM
     FSM --> VB
 ```
-**Sources:** [src/main.rs65-94](src/main.rs#L65-L94) [src/main.rs22-51](src/main.rs#L22-L51)
+**Sources:** [`App`](src/app/mod.rs), [`InferEngine`](src/infer/mod.rs), [`FsmEngine`](src/fsm/engine.rs)
 
 ## Workspace Layout
 
@@ -97,11 +99,13 @@ cargo build --release
 
 ### Execution Flow
 
-The binary starts by loading the `AppConfig` via `load_app_config` [src/main.rs60](src/main.rs#L60-L60) It then initializes the `App` state through the `bootstrap` function [src/main.rs109](src/main.rs#L109-L109) which validates the model catalog and blueprints before starting the main processing loop.
+The binary loads `AppConfig`, then [`bootstrap`](src/app/bootstrap.rs)
+initializes [`App`](src/app/mod.rs), validating the model catalog and
+blueprints before the main processing loop starts.
 
 For detailed setup and environment variable configuration (e.g., `MANA_SOURCE_USERNAME`), see [Getting Started (#1.1)](Getting%20Started%20\(#1.1\))
 
-**Sources:** [README.md31-40](README.md?plain=1#L31-L40) [src/main.rs55-63](src/main.rs#L55-L63)
+**Sources:** [README.md](README.md?plain=1), [`bootstrap`](src/app/bootstrap.rs), [`App`](src/app/mod.rs)
 
 ### Code Entity Mapping: Configuration & Setup
 
@@ -118,7 +122,7 @@ flowchart LR
         BLUEPRINT["blueprint.toml"]
     end
 
-    subgraph SETUP["Setup Logic (src/main.rs)"]
+    subgraph SETUP["Setup Logic (src/app/bootstrap.rs)"]
         direction TB
         LOAD_APP["load_app_config"]
         LOAD_MODELS["load_model_catalog"]
@@ -147,7 +151,7 @@ flowchart LR
     class LOAD_APP,LOAD_MODELS,LOAD_CONFIG setup
     class INFER,CASCADE runtime
 ```
-**Sources:** [src/main.rs59-61](src/main.rs#L59-L61) [src/main.rs126-140](src/main.rs#L126-L140) [src/main.rs65-72](src/main.rs#L65-L72)
+**Sources:** [`bootstrap`](src/app/bootstrap.rs), [`App`](src/app/mod.rs)
 
 ## Child Pages
 

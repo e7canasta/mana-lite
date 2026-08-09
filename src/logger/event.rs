@@ -1,10 +1,16 @@
+use crate::detection::{Detection, DetectionMask};
 use crate::metrics::{MetricsReport, PerClassFrameStats};
+use crate::scan::ControlStamp;
+use crate::track::TrackEvent;
+use crate::zones::ZoneEvent;
 
 /// Version del esquema del evento `depth`. v2 agrega `roi`, `map_width`,
 /// `map_height` y `valid_ratio` (contrato `DepthRoiMap`, spec §8/§10).
 pub const DEPTH_EVENT_VERSION: u8 = 2;
 /// Version of the top-level JSONL event stream schema.
-pub const JSONL_SCHEMA_VERSION: u8 = 1;
+/// v2: control events carry scan_seq / evidence_frame_id / observations_age_ms /
+/// depth_age_ms instead of perception coordinates (frame_id, keyframe_gap_ms, …).
+pub const JSONL_SCHEMA_VERSION: u8 = 2;
 
 #[derive(Debug, Clone)]
 pub enum Event {
@@ -76,7 +82,10 @@ pub enum Event {
         class: String,
         bbox: [f32; 4],
         sources: Vec<String>,
-        frame_id: u64,
+        scan_seq: u64,
+        evidence_frame_id: u64,
+        observations_age_ms: u64,
+        depth_age_ms: Option<u64>,
     },
     Zone {
         zone: String,
@@ -84,7 +93,10 @@ pub enum Event {
         class: String,
         label: Option<String>,
         confidence: Option<f32>,
-        frame_id: u64,
+        scan_seq: u64,
+        evidence_frame_id: u64,
+        observations_age_ms: u64,
+        depth_age_ms: Option<u64>,
     },
     Fsm {
         from: String,
@@ -95,11 +107,10 @@ pub enum Event {
         dwell_ms: u64,
     },
     Presence {
-        frame_id: u64,
-        keyframe_gap_ms: u64,
-        source_window_ms: u64,
-        keyframes_seen: u64,
-        keyframes_dropped: u64,
+        scan_seq: u64,
+        evidence_frame_id: u64,
+        observations_age_ms: u64,
+        depth_age_ms: Option<u64>,
         state: String,
         poi_state: String,
         second_person: String,
@@ -115,7 +126,10 @@ pub enum Event {
         multiple_exit_timer_ms: u64,
     },
     FaceDwell {
-        frame_id: u64,
+        scan_seq: u64,
+        evidence_frame_id: u64,
+        observations_age_ms: u64,
+        depth_age_ms: Option<u64>,
         source: String,
         state: String,
         state_label: Option<String>,
@@ -202,8 +216,8 @@ pub struct FaceDwellTimerRecord {
 /// original frame; `mask_dims` is its size. `polygons` are contours
 /// normalized to the full frame.
 ///
-/// Built by [`crate::infer::DetectionMask::to_wire_record`], which owns the
-/// wire format of the mask.
+/// Built by [`MaskRecord::from_mask`]: el formato de cable lo posee este
+/// modulo, no el tipo de dominio.
 #[derive(Debug, Clone)]
 pub struct MaskRecord {
     pub rle: Vec<u32>,
@@ -211,6 +225,150 @@ pub struct MaskRecord {
     pub origin: [u32; 2],
     pub mask_dims: [u32; 2],
     pub polygons: Vec<Vec<[f32; 2]>>,
+}
+
+impl MaskRecord {
+    /// JSONL wire record (Spec-003). `rle` are column-major run-length
+    /// counts of the mask crop; `bbox` is the detection box inside mask
+    /// space; `origin`/`mask_dims` place mask space in the frame and
+    /// `polygons` are contours normalized to the full frame.
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        clippy::cast_precision_loss
+    )]
+    pub fn from_mask(mask: &DetectionMask) -> Self {
+        let (bbox_h, bbox_w) = if let Some(rle) = mask.compact.rles.first() {
+            (rle.h, rle.w)
+        } else {
+            (0, 0)
+        };
+        let (off_x, off_y) = mask.compact.offsets.first().copied().unwrap_or((0, 0));
+        MaskRecord {
+            rle: mask
+                .compact
+                .rles
+                .first()
+                .map(|rle| rle.counts.to_vec())
+                .unwrap_or_default(),
+            bbox: [
+                off_x as f32,
+                off_y as f32,
+                (off_x + bbox_w) as f32,
+                (off_y + bbox_h) as f32,
+            ],
+            origin: mask.origin,
+            mask_dims: mask.mask_dims,
+            polygons: mask.polygons.as_ref().clone(),
+        }
+    }
+}
+
+impl DetRecord {
+    pub fn from_detection(detection: &Detection, frame_w: u32, frame_h: u32) -> Self {
+        DetRecord {
+            class: detection.class.clone(),
+            confidence: detection.confidence,
+            bbox: detection.bbox,
+            area_px: detection.area_px(),
+            area_ratio: detection.area_ratio(frame_w, frame_h),
+            mask: detection.mask.as_ref().map(MaskRecord::from_mask),
+        }
+    }
+}
+
+/// Convert tracker events to logger events.
+pub fn track_event_to_log(event: &TrackEvent, stamp: ControlStamp) -> Event {
+    match event {
+        TrackEvent::Created { id, class, bbox } => Event::Meta {
+            event: "track_created".into(),
+            detail: format!("track{id}"),
+            attrs: control_stamp_attrs(stamp, vec![
+                ("class".into(), class.clone()),
+                ("bbox".into(), format_bbox(bbox)),
+            ]),
+        },
+        TrackEvent::Updated { id, bbox } => Event::Meta {
+            event: "track_updated".into(),
+            detail: format!("track{id}"),
+            attrs: control_stamp_attrs(stamp, vec![("bbox".into(), format_bbox(bbox))]),
+        },
+        TrackEvent::Lost { id, class, misses } => Event::Meta {
+            event: "track_lost".into(),
+            detail: format!("track{id}"),
+            attrs: control_stamp_attrs(
+                stamp,
+                vec![
+                    ("class".into(), class.clone()),
+                    ("misses".into(), misses.to_string()),
+                ],
+            ),
+        },
+        TrackEvent::Deleted { id, class, reason } => Event::Meta {
+            event: "track_deleted".into(),
+            detail: format!("track{id}"),
+            attrs: control_stamp_attrs(
+                stamp,
+                vec![
+                    ("class".into(), class.clone()),
+                    ("reason".into(), reason.clone()),
+                ],
+            ),
+        },
+    }
+}
+
+fn control_stamp_attrs(
+    stamp: ControlStamp,
+    mut extra: Vec<(String, String)>,
+) -> Vec<(String, String)> {
+    let mut attrs = vec![
+        ("scan_seq".into(), stamp.scan_seq.to_string()),
+        (
+            "evidence_frame_id".into(),
+            stamp.evidence_frame_id.to_string(),
+        ),
+        (
+            "observations_age_ms".into(),
+            stamp.observations_age_ms.to_string(),
+        ),
+    ];
+    if let Some(age) = stamp.depth_age_ms {
+        attrs.push(("depth_age_ms".into(), age.to_string()));
+    }
+    attrs.append(&mut extra);
+    attrs
+}
+
+fn format_bbox(bbox: &[f32; 4]) -> String {
+    format!(
+        "[{:.0},{:.0},{:.0},{:.0}]",
+        bbox[0], bbox[1], bbox[2], bbox[3]
+    )
+}
+
+pub fn zone_event_to_log(ev: &ZoneEvent, stamp: ControlStamp) -> Event {
+    match ev {
+        ZoneEvent::Occupied {
+            zone,
+            label,
+            track_id: _,
+            class,
+            confidence,
+        } => Event::zone_occupied(
+            zone,
+            label.as_deref().unwrap_or(zone),
+            class,
+            *confidence,
+            stamp,
+        ),
+        ZoneEvent::Vacated {
+            zone,
+            label,
+            track_id: _,
+            class,
+        } => Event::zone_vacated(zone, label.as_deref().unwrap_or(zone), class, stamp),
+    }
 }
 
 impl Event {
@@ -379,14 +537,17 @@ impl Event {
         class: &str,
         bbox: [f32; 4],
         sources: Vec<String>,
-        frame_id: u64,
+        stamp: ControlStamp,
     ) -> Self {
         Event::Entity {
             track_id,
             class: class.into(),
             bbox,
             sources,
-            frame_id,
+            scan_seq: stamp.scan_seq,
+            evidence_frame_id: stamp.evidence_frame_id,
+            observations_age_ms: stamp.observations_age_ms,
+            depth_age_ms: stamp.depth_age_ms,
         }
     }
 
@@ -395,7 +556,7 @@ impl Event {
         label: &str,
         by_class: &str,
         confidence: f32,
-        frame_id: u64,
+        stamp: ControlStamp,
     ) -> Self {
         Event::Zone {
             zone: zone.into(),
@@ -407,11 +568,14 @@ impl Event {
                 Some(label.into())
             },
             confidence: Some(confidence),
-            frame_id,
+            scan_seq: stamp.scan_seq,
+            evidence_frame_id: stamp.evidence_frame_id,
+            observations_age_ms: stamp.observations_age_ms,
+            depth_age_ms: stamp.depth_age_ms,
         }
     }
 
-    pub fn zone_vacated(zone: &str, label: &str, by_class: &str, frame_id: u64) -> Self {
+    pub fn zone_vacated(zone: &str, label: &str, by_class: &str, stamp: ControlStamp) -> Self {
         Event::Zone {
             zone: zone.into(),
             event: "vacated".into(),
@@ -422,7 +586,10 @@ impl Event {
                 Some(label.into())
             },
             confidence: None,
-            frame_id,
+            scan_seq: stamp.scan_seq,
+            evidence_frame_id: stamp.evidence_frame_id,
+            observations_age_ms: stamp.observations_age_ms,
+            depth_age_ms: stamp.depth_age_ms,
         }
     }
 
@@ -445,11 +612,7 @@ impl Event {
     }
 
     pub fn presence(
-        frame_id: u64,
-        keyframe_gap_ms: u64,
-        source_window_ms: u64,
-        keyframes_seen: u64,
-        keyframes_dropped: u64,
+        stamp: ControlStamp,
         state: &str,
         poi_state: &str,
         second_person: &str,
@@ -465,11 +628,10 @@ impl Event {
         multiple_exit_timer_ms: u64,
     ) -> Self {
         Event::Presence {
-            frame_id,
-            keyframe_gap_ms,
-            source_window_ms,
-            keyframes_seen,
-            keyframes_dropped,
+            scan_seq: stamp.scan_seq,
+            evidence_frame_id: stamp.evidence_frame_id,
+            observations_age_ms: stamp.observations_age_ms,
+            depth_age_ms: stamp.depth_age_ms,
             state: state.into(),
             poi_state: poi_state.into(),
             second_person: second_person.into(),
@@ -487,7 +649,7 @@ impl Event {
     }
 
     pub fn face_dwell(
-        frame_id: u64,
+        stamp: ControlStamp,
         source: &str,
         state: &str,
         state_label: Option<&str>,
@@ -504,7 +666,10 @@ impl Event {
         active_timers: Vec<FaceDwellTimerRecord>,
     ) -> Self {
         Event::FaceDwell {
-            frame_id,
+            scan_seq: stamp.scan_seq,
+            evidence_frame_id: stamp.evidence_frame_id,
+            observations_age_ms: stamp.observations_age_ms,
+            depth_age_ms: stamp.depth_age_ms,
             source: source.into(),
             state: state.into(),
             state_label: state_label.map(str::to_string),

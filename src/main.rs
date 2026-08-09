@@ -2,9 +2,9 @@
 
 use std::path::PathBuf;
 
+use mana_lite::App;
 use mana_lite::config::load_app_config;
 use mana_lite::error::{ConfigError, ManaError, Result};
-use mana_lite::App;
 
 static VERSION: &str = env!("CARGO_PKG_VERSION");
 

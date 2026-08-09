@@ -1,0 +1,15 @@
+[package]
+name = "mana-control"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.89"
+description = "Fixed-cadence scene control for mana-lite"
+license = "AGPL-3.0"
+
+[dependencies]
+mana-geometry = { path = "../../std/mana-geometry" }
+serde = { version = "1", features = ["derive"] }
+
+[dev-dependencies]
+toml = "0.8"
+

@@ -1,5 +1,5 @@
 use crate::config::PresencePoiPolicy;
-use crate::detection::ConsolidatedObservation;
+use crate::SceneObservation;
 use crate::timing::Debouncer;
 use std::time::Instant;
 
@@ -35,7 +35,7 @@ pub struct PresenceFilter {
     policy: PresencePoiPolicy,
     state: PresenceState,
     debouncer: Debouncer,
-    last_person: Option<ConsolidatedObservation>,
+    last_person: Option<SceneObservation>,
 }
 
 impl PresenceFilter {
@@ -55,10 +55,10 @@ impl PresenceFilter {
     /// Invalid signal time (`signal_valid = false`) does not accumulate.
     pub fn update_at(
         &mut self,
-        observations: &[ConsolidatedObservation],
+        observations: &[SceneObservation],
         signal_valid: bool,
         now: Instant,
-    ) -> (Vec<ConsolidatedObservation>, PresenceUpdate) {
+    ) -> (Vec<SceneObservation>, PresenceUpdate) {
         if !self.enabled {
             return (
                 observations.to_vec(),
@@ -124,14 +124,11 @@ impl PresenceFilter {
             );
         }
 
-        let engaged =
-            self.debouncer
-                .update_at(false, self.policy.on_ms, self.policy.off_ms, now);
+        let engaged = self
+            .debouncer
+            .update_at(false, self.policy.on_ms, self.policy.off_ms, now);
         let empty_ms = self.debouncer.elapsed_low_ms(now);
-        if self.state == PresenceState::Present
-            && self.last_person.is_some()
-            && engaged
-        {
+        if self.state == PresenceState::Present && self.last_person.is_some() && engaged {
             let mut held = observations.to_vec();
             held.push(self.last_person.as_ref().expect("checked above").clone());
             return (
@@ -170,32 +167,21 @@ impl PresenceFilter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::detection::DetectionEvidence;
     use std::time::Duration;
 
     const DT_MS: u64 = 200;
 
     fn config(off_ms: u64) -> PresencePoiPolicy {
-        PresencePoiPolicy {
-            on_ms: 200,
-            off_ms,
-        }
+        PresencePoiPolicy { on_ms: 200, off_ms }
     }
 
-    fn person() -> ConsolidatedObservation {
-        ConsolidatedObservation {
+    fn person() -> SceneObservation {
+        SceneObservation {
             class: "person".into(),
             confidence: 0.9,
             bbox: [0.0, 0.0, 100.0, 100.0],
-            primary_model: "detect-fast".into(),
-            evidence: vec![DetectionEvidence {
-                model: "detect-fast".into(),
-                class: "person".into(),
-                confidence: 0.9,
-                bbox: [0.0, 0.0, 100.0, 100.0],
-                mask: None,
-            }],
-            components: Vec::new(),
+            source_models: vec!["detect-fast".into()],
+            face: None,
         }
     }
 
@@ -231,9 +217,24 @@ mod tests {
         let one = [person()];
         let start = Instant::now();
 
-        assert_eq!(filter.update_at(&one, true, start).1.state, PresenceState::Absent);
-        assert_eq!(filter.update_at(&one, true, start + Duration::from_millis(DT_MS)).1.state, PresenceState::Absent);
-        assert_eq!(filter.update_at(&one, true, start + Duration::from_millis(DT_MS * 3)).1.state, PresenceState::Present);
+        assert_eq!(
+            filter.update_at(&one, true, start).1.state,
+            PresenceState::Absent
+        );
+        assert_eq!(
+            filter
+                .update_at(&one, true, start + Duration::from_millis(DT_MS))
+                .1
+                .state,
+            PresenceState::Absent
+        );
+        assert_eq!(
+            filter
+                .update_at(&one, true, start + Duration::from_millis(DT_MS * 3))
+                .1
+                .state,
+            PresenceState::Present
+        );
     }
 
     #[test]

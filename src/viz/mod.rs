@@ -2,14 +2,16 @@ use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 
 use mana_types::RawFrameV1;
+use mana_viz::boxes::boxes2d_from_xyxy;
 use mana_viz::logging;
 use mana_viz::util::FrameSize;
 
 use crate::config::{RerunRoot, VizSendToggles};
 use crate::depth_map::DepthFrame;
 use crate::detection::ConsolidatedObservation;
+use crate::detection::{CropRect, Detection};
 use crate::domain::{ModelRegistry, ModelRole};
-use crate::infer::{CropFrameInfo, CropRect, Detection};
+use crate::infer::CropFrameInfo;
 use crate::metrics::PerClassFrameStats;
 use crate::occupancy::{RoomCardinality, SecondPersonState, SignalValidity};
 use crate::track::Track;
@@ -176,10 +178,7 @@ impl VizBridge {
     }
 
     fn role_of(&self, model: &str) -> ModelRole {
-        self.roles
-            .get(model)
-            .copied()
-            .unwrap_or(ModelRole::Boxes)
+        self.roles.get(model).copied().unwrap_or(ModelRole::Boxes)
     }
 
     fn is_face_model(&self, model: &str) -> bool {
@@ -387,19 +386,9 @@ impl VizBridge {
             let y1 = y1 as f32;
             let x2 = x2 as f32;
             let y2 = y2 as f32;
-            let cx = (x1 + x2) / 2.0;
-            let cy = (y1 + y2) / 2.0;
-            let hw = (x2 - x1).abs() / 2.0;
-            let hh = (y2 - y1).abs() / 2.0;
             let label = format!("fixed {model} [{:.0},{:.0} {:.0},{:.0}]", x1, y1, x2, y2);
             let color = rerun::Color::from_unmultiplied_rgba(255, 200, 0, 255);
-            let bbox = rerun::Boxes2D::from_centers_and_half_sizes(
-                [rerun::datatypes::Vec2D([cx, cy])],
-                [rerun::datatypes::Vec2D([hw, hh])],
-            )
-            .with_labels([label.as_str()])
-            .with_colors([color])
-            .with_radii([2.0]);
+            let bbox = boxes2d_from_xyxy([x1, y1, x2, y2], color, Some(&label), 2.0);
             if let Err(e) = rec.log_static(path.as_str(), &bbox) {
                 log::warn!("viz fixed ROI {model} failed: {e}");
             }
@@ -607,19 +596,14 @@ impl VizBridge {
         let y1 = rect.y1 as f32;
         let x2 = rect.x2 as f32;
         let y2 = rect.y2 as f32;
-        let cx = (x1 + x2) / 2.0;
-        let cy = (y1 + y2) / 2.0;
-        let hw = ((x2 - x1).abs()) / 2.0;
-        let hh = ((y2 - y1).abs()) / 2.0;
         let label = format!("ROI {:.0}x{:.0}", (x2 - x1).abs(), (y2 - y1).abs());
 
-        let bbox = rerun::Boxes2D::from_centers_and_half_sizes(
-            [rerun::datatypes::Vec2D([cx, cy])],
-            [rerun::datatypes::Vec2D([hw, hh])],
-        )
-        .with_labels([label.as_str()])
-        .with_colors([rerun::Color::from_unmultiplied_rgba(0, 255, 0, 255)])
-        .with_radii([2.0]);
+        let bbox = boxes2d_from_xyxy(
+            [x1, y1, x2, y2],
+            rerun::Color::from_unmultiplied_rgba(0, 255, 0, 255),
+            Some(&label),
+            2.0,
+        );
 
         let entity = format!("{path}/roi/0");
         if let Err(e) = rec.log(entity.as_str(), &bbox) {
@@ -646,16 +630,7 @@ impl VizBridge {
             } else {
                 rerun::Color::from_unmultiplied_rgba(255, 180, 0, 220)
             };
-            let bbox = rerun::Boxes2D::from_centers_and_half_sizes(
-                [rerun::datatypes::Vec2D([(x1 + x2) / 2.0, (y1 + y2) / 2.0])],
-                [rerun::datatypes::Vec2D([
-                    (x2 - x1).abs() / 2.0,
-                    (y2 - y1).abs() / 2.0,
-                ])],
-            )
-            .with_labels([label.as_str()])
-            .with_colors([color])
-            .with_radii([2.0]);
+            let bbox = boxes2d_from_xyxy([x1, y1, x2, y2], color, Some(&label), 2.0);
             let entity = format!("{path}/{}", track.id);
             if let Err(e) = rec.log(entity.as_str(), &bbox) {
                 log::warn!("viz entity bbox {entity} failed: {e}");
@@ -691,16 +666,12 @@ impl VizBridge {
                 ),
                 observation.primary_model,
             );
-            let bbox = rerun::Boxes2D::from_centers_and_half_sizes(
-                [rerun::datatypes::Vec2D([(x1 + x2) / 2.0, (y1 + y2) / 2.0])],
-                [rerun::datatypes::Vec2D([
-                    (x2 - x1).abs() / 2.0,
-                    (y2 - y1).abs() / 2.0,
-                ])],
-            )
-            .with_labels([label.as_str()])
-            .with_colors([rerun::Color::from_unmultiplied_rgba(0, 180, 255, 255)])
-            .with_radii([2.0]);
+            let bbox = boxes2d_from_xyxy(
+                [x1, y1, x2, y2],
+                rerun::Color::from_unmultiplied_rgba(0, 180, 255, 255),
+                Some(&label),
+                2.0,
+            );
             let entity = format!("{path}/{index}");
             if let Err(e) = rec.log(entity.as_str(), &bbox) {
                 log::warn!("viz consolidated observation {entity} failed: {e}");
@@ -740,16 +711,12 @@ impl VizBridge {
                 frame.h,
             );
             let log_box = |entity: String, [x1, y1, x2, y2]: [f32; 4]| {
-                let bbox = rerun::Boxes2D::from_centers_and_half_sizes(
-                    [rerun::datatypes::Vec2D([(x1 + x2) / 2.0, (y1 + y2) / 2.0])],
-                    [rerun::datatypes::Vec2D([
-                        (x2 - x1).abs() / 2.0,
-                        (y2 - y1).abs() / 2.0,
-                    ])],
-                )
-                .with_labels([label.as_str()])
-                .with_colors([rerun::Color::from_unmultiplied_rgba(255, 80, 80, 255)])
-                .with_radii([2.0]);
+                let bbox = boxes2d_from_xyxy(
+                    [x1, y1, x2, y2],
+                    rerun::Color::from_unmultiplied_rgba(255, 80, 80, 255),
+                    Some(&label),
+                    2.0,
+                );
                 if let Err(e) = rec.log(entity.as_str(), &bbox) {
                     log::warn!("viz raw detection {entity} failed: {e}");
                 }
@@ -879,17 +846,12 @@ impl VizBridge {
                 "{label_prefix} {} {:.2}",
                 detection.class, detection.confidence
             );
-            let bbox = rerun::Boxes2D::from_centers_and_half_sizes(
-                [rerun::datatypes::Vec2D([(x1 + x2) / 2.0, (y1 + y2) / 2.0])],
-                [rerun::datatypes::Vec2D([(x2 - x1) / 2.0, (y2 - y1) / 2.0])],
-            )
-            .with_colors([color])
-            .with_radii([3.0]);
-            let bbox = if is_face_model {
-                bbox
-            } else {
-                bbox.with_labels([label.as_str()])
-            };
+            let bbox = boxes2d_from_xyxy(
+                [x1, y1, x2, y2],
+                color,
+                (!is_face_model).then_some(label.as_str()),
+                3.0,
+            );
             let entity = format!("{path}/{index}");
             if let Err(e) = rec.log(entity.as_str(), &bbox) {
                 log::warn!("viz depth context box {entity} failed: {e}");
@@ -969,12 +931,7 @@ impl VizBridge {
         clippy::cast_sign_loss,
         clippy::cast_precision_loss
     )]
-    pub fn log_model_masks(
-        &self,
-        model: &str,
-        detections: &[Detection],
-        frame: FrameSize,
-    ) {
+    pub fn log_model_masks(&self, model: &str, detections: &[Detection], frame: FrameSize) {
         if !self.toggles.masks {
             return;
         }
@@ -1327,9 +1284,17 @@ mod tests {
         };
 
         bridge.set_frame_time(1, 1_000);
-        bridge.log_occupancy_state(RoomCardinality::Empty, SecondPersonState::None, SignalValidity::Valid);
+        bridge.log_occupancy_state(
+            RoomCardinality::Empty,
+            SecondPersonState::None,
+            SignalValidity::Valid,
+        );
         bridge.set_frame_time(2, 2_000);
-        bridge.log_occupancy_state(RoomCardinality::Single, SecondPersonState::None, SignalValidity::Valid);
+        bridge.log_occupancy_state(
+            RoomCardinality::Single,
+            SecondPersonState::None,
+            SignalValidity::Valid,
+        );
 
         let state_chunks = storage
             .take()
@@ -1395,7 +1360,7 @@ fn bbox_in_roi(bbox: [f32; 4], roi: CropRect) -> Option<[f32; 4]> {
 #[cfg(test)]
 mod mask_debug_tests {
     use super::*;
-    use crate::infer::DetectionMask;
+    use crate::detection::DetectionMask;
     use mana_geometry::compact_mask::CompactMask;
     use std::sync::Arc;
 

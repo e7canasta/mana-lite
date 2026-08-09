@@ -1,7 +1,7 @@
 //! Backend-agnostic inference runner trait (ARCHITECTURE principle 5).
 
-use crate::infer::{CropRect, Detection};
 use crate::depth_map::DepthFrame;
+use crate::detection::{CropRect, Detection};
 
 /// Result of a single model invocation, independent of ONNX / ultralytics types.
 #[derive(Debug)]
