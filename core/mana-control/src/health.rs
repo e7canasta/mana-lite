@@ -29,6 +29,7 @@ pub struct Health {
 }
 
 impl Health {
+    // FIXME(ADR-029): wall-clock escape hatch; prefer `new_at` with an injected clock.
     pub fn new(data_stale_ms: u64, stale_warn_ms: u64) -> Self {
         Self::new_at(data_stale_ms, stale_warn_ms, Instant::now())
     }
@@ -43,6 +44,7 @@ impl Health {
         }
     }
 
+    // FIXME(ADR-029): wall-clock escape hatch; prefer `touch_at`.
     #[allow(dead_code)]
     pub fn touch(&mut self) {
         self.touch_at(Instant::now());
@@ -60,6 +62,7 @@ impl Health {
         was_blind
     }
 
+    // FIXME(ADR-029): wall-clock escape hatch; prefer `evaluate_at`.
     #[allow(dead_code)]
     pub fn evaluate(&mut self) -> HealthTransition {
         self.evaluate_at(Instant::now())

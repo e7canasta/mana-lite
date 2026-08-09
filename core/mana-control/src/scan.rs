@@ -11,6 +11,7 @@ use crate::track::{Track,Tracker,TrackEvent};
 use crate::zones::{ZoneEngine,ZoneEvent};
 #[derive(Debug,Clone,Copy,PartialEq,Eq)] pub struct ScanInstant(Instant);
 impl ScanInstant {
+    // FIXME(ADR-029): wall-clock escape hatch; ScanInstant must only be born from ScanTimeline.
     pub fn now()->Self{Self(Instant::now())}
     pub const fn from_instant(v:Instant)->Self{Self(v)}
     pub const fn as_instant(self)->Instant{self.0}
