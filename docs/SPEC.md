@@ -28,8 +28,8 @@ fsm_file = "config/fsm.toml"
 
 [tracking]
 min_hits = 2
-max_age = 20
-tentative_max_age = 3
+max_age_ms = 4000           # real elapsed ms without update -> delete confirmed track
+tentative_max_age_ms = 600  # same, for unconfirmed tracks
 iou_threshold = 0.2
 
 [health]

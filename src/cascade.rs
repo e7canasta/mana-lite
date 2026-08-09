@@ -524,6 +524,7 @@ mod tests {
             hit_streak: 2,
             misses: 0,
             age: 2,
+            time_since_update_ms: 0,
             is_confirmed: true,
         };
         assert!(
@@ -548,6 +549,7 @@ mod tests {
             hit_streak: 2,
             misses: 0,
             age: 2,
+            time_since_update_ms: 0,
             is_confirmed: true,
         };
         assert!(
@@ -572,6 +574,7 @@ mod tests {
             hit_streak: 1,
             misses: 0,
             age: 1,
+            time_since_update_ms: 0,
             is_confirmed: false,
         };
         assert!(
@@ -633,6 +636,7 @@ mod tests {
             hit_streak: 2,
             misses: 0,
             age: 2,
+            time_since_update_ms: 0,
             is_confirmed: true,
         };
         assert!(

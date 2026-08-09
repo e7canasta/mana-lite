@@ -1,9 +1,9 @@
 /// Kalman 7D de SORT para tracking (ADR-013).
 ///
 /// Estado: [cx, cy, s, r, dcx, dcy, ds] donde `s = w*h` (escala), `r = w/h`.
-/// Transicion: modelo de velocidad constante (dt = 1 frame). Observacion
-/// directa de [cx, cy, s, r]. Implementado sin dependencias con matrices
-/// f32 de tamano fijo.
+/// Transicion: modelo de velocidad constante parametrizado por `dt` en
+/// segundos. Observacion directa de [cx, cy, s, r]. Implementado sin
+/// dependencias con matrices f32 de tamano fijo.
 #[allow(clippy::many_single_char_names)]
 #[derive(Debug, Clone)]
 pub struct Kalman7 {
@@ -11,24 +11,38 @@ pub struct Kalman7 {
     p: [[f32; 7]; 7],
 }
 
-const F: [[f32; 7]; 7] = [
-    [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0],
-    [0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0],
-    [0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0],
-    [0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0],
-    [0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0],
-    [0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0],
-    [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0],
-];
+/// Paso nominal entre keyframes procesados.
+pub const NOMINAL_DT_S: f32 = 0.2;
 
+/// Mas alla de este dt la extrapolacion es ruido: la expiracion por edad
+/// (track.rs) debe encargarse antes.
+const MAX_DT_S: f32 = 2.0;
+
+/// Matriz de transicion del modelo de velocidad constante para un `dt`
+/// dado (en segundos). Con `dt = 1` era la matriz identidad + velocidades.
+fn transition(dt: f32) -> [[f32; 7]; 7] {
+    let mut f = [[0.0f32; 7]; 7];
+    for (i, row) in f.iter_mut().enumerate() {
+        row[i] = 1.0;
+    }
+    f[0][4] = dt; // cx += dcx * dt
+    f[1][5] = dt; // cy += dcy * dt
+    f[2][6] = dt; // s  += ds  * dt
+    f
+}
+
+// Las velocidades del estado viven en px/segundo (el modelo viejo las media
+// en px/frame). P0/Q conservan los valores de siempre reescalados por
+// 1/NOMINAL_DT_S^2 = 25 en las filas/cols 4..6 para que la incertidumbre
+// inicial de velocidad y el ruido de proceso signifiquen lo mismo que antes.
 const P0: [[f32; 7]; 7] = [
     [10.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
     [0.0, 10.0, 0.0, 0.0, 0.0, 0.0, 0.0],
     [0.0, 0.0, 10.0, 0.0, 0.0, 0.0, 0.0],
     [0.0, 0.0, 0.0, 10.0, 0.0, 0.0, 0.0],
-    [0.0, 0.0, 0.0, 0.0, 10_000.0, 0.0, 0.0],
-    [0.0, 0.0, 0.0, 0.0, 0.0, 10_000.0, 0.0],
-    [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 10_000.0],
+    [0.0, 0.0, 0.0, 0.0, 250_000.0, 0.0, 0.0],
+    [0.0, 0.0, 0.0, 0.0, 0.0, 250_000.0, 0.0],
+    [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 250_000.0],
 ];
 
 const Q: [[f32; 7]; 7] = [
@@ -36,9 +50,9 @@ const Q: [[f32; 7]; 7] = [
     [0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0],
     [0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0],
     [0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0],
-    [0.0, 0.0, 0.0, 0.0, 0.01, 0.0, 0.0],
-    [0.0, 0.0, 0.0, 0.0, 0.0, 0.01, 0.0],
-    [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0001],
+    [0.0, 0.0, 0.0, 0.0, 0.25, 0.0, 0.0],
+    [0.0, 0.0, 0.0, 0.0, 0.0, 0.25, 0.0],
+    [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0025],
 ];
 
 const R: [[f32; 4]; 4] = [
@@ -63,11 +77,22 @@ impl Kalman7 {
         state_to_bbox(self.x)
     }
 
-    /// Paso de prediccion (modelo de velocidad constante, dt = 1 frame).
+    /// Paso de prediccion (modelo de velocidad constante, `dt` en segundos).
     #[allow(clippy::needless_range_loop)]
-    pub fn predict(&mut self) {
-        self.x = mat7_vec7(F, self.x);
-        self.p = add7(mat7_mat7(mat7_mat7(F, self.p), transpose7(F)), Q);
+    pub fn predict(&mut self, dt_s: f32) {
+        let dt = dt_s.clamp(1e-3, MAX_DT_S);
+        let f = transition(dt);
+        // Q escalado: la incertidumbre crece con el tiempo transcurrido,
+        // no por tick. Con dt = NOMINAL_DT_S queda igual que el modelo viejo.
+        let k = dt / NOMINAL_DT_S;
+        let mut q = Q;
+        for row in &mut q {
+            for v in row.iter_mut() {
+                *v *= k;
+            }
+        }
+        self.x = mat7_vec7(f, self.x);
+        self.p = add7(mat7_mat7(mat7_mat7(f, self.p), transpose7(f)), q);
     }
 
     /// Paso de actualizacion con una medicion [cx, cy, s, r].
@@ -256,7 +281,7 @@ mod tests {
     #[test]
     fn predict_keeps_static_position() {
         let mut kalman = Kalman7::from_bbox([0.0, 0.0, 100.0, 200.0]);
-        kalman.predict();
+        kalman.predict(NOMINAL_DT_S);
         let bbox = kalman.bbox();
         assert!((bbox[0] - 0.0).abs() < 1e-2);
         assert!((bbox[2] - 100.0).abs() < 1e-2);
@@ -267,7 +292,7 @@ mod tests {
     fn update_converges_to_measurement() {
         let mut kalman = Kalman7::from_bbox([0.0, 0.0, 100.0, 200.0]);
         for _ in 0..30 {
-            kalman.predict();
+            kalman.predict(NOMINAL_DT_S);
             kalman.update([50.0, 250.0, 20_000.0, 1.0]);
         }
         // Medicion [cx=50, cy=250, s=20000, r=1.0] -> bbox
@@ -285,7 +310,7 @@ mod tests {
         let mut kalman = Kalman7::from_bbox([0.0, 0.0, 50.0, 100.0]);
         for step in 1..=10 {
             let x = step as f32 * 10.0;
-            kalman.predict();
+            kalman.predict(NOMINAL_DT_S);
             kalman.update([x + 25.0, 50.0, 5_000.0, 0.5]);
         }
         let bbox = kalman.bbox();

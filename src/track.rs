@@ -19,6 +19,7 @@ pub struct Track {
     pub hit_streak: u32,
     pub misses: u32,
     pub age: u32,
+    pub time_since_update_ms: u64,
     pub is_confirmed: bool,
 }
 
@@ -74,8 +75,8 @@ impl From<&ConsolidatedObservation> for TrackObservation {
 #[derive(Debug, Clone, Copy)]
 pub struct TrackerConfig {
     pub min_hits: u32,
-    pub max_age: u32,
-    pub tentative_max_age: u32,
+    pub max_age_ms: u64,
+    pub tentative_max_age_ms: u64,
     pub iou_threshold: f32,
 }
 
@@ -83,8 +84,8 @@ impl Default for TrackerConfig {
     fn default() -> Self {
         Self {
             min_hits: 2,
-            max_age: 20,
-            tentative_max_age: 3,
+            max_age_ms: 4_000,
+            tentative_max_age_ms: 600,
             iou_threshold: 0.2,
         }
     }
@@ -93,8 +94,8 @@ impl Default for TrackerConfig {
 pub struct Tracker {
     tracks: HashMap<u64, Track>,
     next_id: u64,
-    max_age: u32,
-    tentative_max_age: u32,
+    max_age_ms: u64,
+    tentative_max_age_ms: u64,
     iou_threshold: f32,
     min_hits: u32,
 }
@@ -109,30 +110,31 @@ impl Tracker {
         Self {
             tracks: HashMap::new(),
             next_id: 1,
-            max_age: config.max_age,
-            tentative_max_age: config.tentative_max_age,
+            max_age_ms: config.max_age_ms,
+            tentative_max_age_ms: config.tentative_max_age_ms,
             iou_threshold: config.iou_threshold,
             min_hits: config.min_hits.max(1),
         }
     }
 
-    pub fn update(&mut self, detections: &[TrackObservation]) -> Vec<TrackEvent> {
-        self.update_with_mode(detections, false)
+    pub fn update(&mut self, detections: &[TrackObservation], dt_ms: u64) -> Vec<TrackEvent> {
+        self.update_with_mode(detections, false, dt_ms)
     }
 
     fn update_with_mode(
         &mut self,
         detections: &[TrackObservation],
         allow_single_reacquire: bool,
+        dt_ms: u64,
     ) -> Vec<TrackEvent> {
         let mut events = Vec::new();
 
-        self.predict_all();
+        self.predict_all(dt_ms);
         let (det_matched, track_matched) =
             self.match_detections(detections, allow_single_reacquire);
 
         self.update_matched(&track_matched, detections, &mut events);
-        self.age_unmatched(&track_matched, &mut events);
+        self.age_unmatched(&track_matched, dt_ms, &mut events);
         self.delete_expired(&mut events);
         self.create_tracks(&det_matched, detections, &mut events);
 
@@ -142,10 +144,11 @@ impl Tracker {
     pub fn update_observations(
         &mut self,
         observations: &[ConsolidatedObservation],
+        dt_ms: u64,
     ) -> Vec<TrackEvent> {
         let track_observations: Vec<TrackObservation> =
             observations.iter().map(TrackObservation::from).collect();
-        self.update_with_mode(&track_observations, false)
+        self.update_with_mode(&track_observations, false, dt_ms)
     }
 
     /// Reacquire the existing confirmed identity when the room is expected to
@@ -154,10 +157,11 @@ impl Tracker {
     pub fn update_single_person(
         &mut self,
         observations: &[ConsolidatedObservation],
+        dt_ms: u64,
     ) -> Vec<TrackEvent> {
         let track_observations: Vec<TrackObservation> =
             observations.iter().map(TrackObservation::from).collect();
-        self.update_with_mode(&track_observations, true)
+        self.update_with_mode(&track_observations, true, dt_ms)
     }
 
     pub fn enrich_observations(&mut self, observations: &[ConsolidatedObservation]) {
@@ -190,9 +194,10 @@ impl Tracker {
         }
     }
 
-    fn predict_all(&mut self) {
+    #[allow(clippy::cast_precision_loss)]
+    fn predict_all(&mut self, dt_ms: u64) {
         for track in self.tracks.values_mut() {
-            track.kalman.predict();
+            track.kalman.predict(dt_ms as f32 / 1000.0);
             track.bbox = track.kalman.bbox();
         }
     }
@@ -263,6 +268,7 @@ impl Tracker {
             track.hits += 1;
             track.hit_streak += 1;
             track.misses = 0;
+            track.time_since_update_ms = 0;
             track.age += 1;
             if track.hit_streak >= self.min_hits {
                 track.is_confirmed = true;
@@ -302,6 +308,7 @@ impl Tracker {
                     hit_streak: 1,
                     misses: 0,
                     age: 1,
+                    time_since_update_ms: 0,
                     is_confirmed: false,
                 },
             );
@@ -313,12 +320,18 @@ impl Tracker {
         }
     }
 
-    fn age_unmatched(&mut self, track_matched: &HashMap<u64, usize>, events: &mut Vec<TrackEvent>) {
+    fn age_unmatched(
+        &mut self,
+        track_matched: &HashMap<u64, usize>,
+        dt_ms: u64,
+        events: &mut Vec<TrackEvent>,
+    ) {
         for track in self.tracks.values_mut() {
             if track_matched.contains_key(&track.id) {
                 continue;
             }
             track.misses += 1;
+            track.time_since_update_ms += dt_ms;
             track.hit_streak = 0;
             track.age += 1;
             if track.is_confirmed {
@@ -336,8 +349,8 @@ impl Tracker {
             .tracks
             .iter()
             .filter(|(_, t)| {
-                (t.is_confirmed && t.misses > self.max_age)
-                    || (!t.is_confirmed && t.misses > self.tentative_max_age)
+                (t.is_confirmed && t.time_since_update_ms > self.max_age_ms)
+                    || (!t.is_confirmed && t.time_since_update_ms > self.tentative_max_age_ms)
             })
             .map(|(id, _)| *id)
             .collect();
@@ -462,6 +475,8 @@ fn format_bbox(bbox: &[f32; 4]) -> String {
 mod tests {
     use super::*;
 
+    const DT_MS: u64 = 200;
+
     fn observation(class: &str, bbox: [f32; 4]) -> TrackObservation {
         TrackObservation {
             primary_model: "detect-fast".into(),
@@ -487,7 +502,7 @@ mod tests {
     fn single_detection_creates_track() {
         let mut tracker = Tracker::new();
         let dets = vec![observation("person", [100.0, 200.0, 300.0, 500.0])];
-        let events = tracker.update(&dets);
+        let events = tracker.update(&dets, DT_MS);
         assert!(
             events
                 .iter()
@@ -500,10 +515,10 @@ mod tests {
     fn consecutive_detections_maintain_track_id() {
         let mut tracker = Tracker::new();
         let dets1 = vec![observation("person", [100.0, 200.0, 300.0, 500.0])];
-        tracker.update(&dets1);
+        tracker.update(&dets1, DT_MS);
 
         let dets2 = vec![observation("person", [105.0, 205.0, 305.0, 505.0])];
-        let events = tracker.update(&dets2);
+        let events = tracker.update(&dets2, DT_MS);
 
         assert!(
             events
@@ -517,12 +532,12 @@ mod tests {
     fn missing_detection_marks_track_lost() {
         let mut tracker = Tracker::new();
         let dets = vec![observation("person", [100.0, 200.0, 300.0, 500.0])];
-        tracker.update(&dets);
+        tracker.update(&dets, DT_MS);
         // second hit to confirm
-        tracker.update(&dets);
+        tracker.update(&dets, DT_MS);
 
         // no detections this frame
-        let events = tracker.update(&[]);
+        let events = tracker.update(&[], DT_MS);
         assert!(
             events
                 .iter()
@@ -551,10 +566,13 @@ mod tests {
     #[test]
     fn high_iou_matches_across_small_displacement() {
         let mut tracker = Tracker::new();
-        tracker.update(&[observation("person", [100.0, 200.0, 300.0, 500.0])]);
-        tracker.update(&[observation("person", [100.0, 200.0, 300.0, 500.0])]);
+        tracker.update(&[observation("person", [100.0, 200.0, 300.0, 500.0])], DT_MS);
+        tracker.update(&[observation("person", [100.0, 200.0, 300.0, 500.0])], DT_MS);
 
-        let events = tracker.update(&[observation("person", [110.0, 210.0, 310.0, 510.0])]);
+        let events = tracker.update(
+            &[observation("person", [110.0, 210.0, 310.0, 510.0])],
+            DT_MS,
+        );
         assert!(
             events
                 .iter()
@@ -569,9 +587,9 @@ mod tests {
         let first = consolidated([100.0, 100.0, 200.0, 300.0]);
         let jumped = consolidated([500.0, 100.0, 600.0, 300.0]);
 
-        tracker.update_single_person(std::slice::from_ref(&first));
-        tracker.update_single_person(std::slice::from_ref(&first));
-        let events = tracker.update_single_person(std::slice::from_ref(&jumped));
+        tracker.update_single_person(std::slice::from_ref(&first), DT_MS);
+        tracker.update_single_person(std::slice::from_ref(&first), DT_MS);
+        let events = tracker.update_single_person(std::slice::from_ref(&jumped), DT_MS);
 
         assert!(
             events
@@ -586,8 +604,8 @@ mod tests {
     #[test]
     fn class_mismatch_does_not_reuse_track() {
         let mut tracker = Tracker::new();
-        tracker.update(&[observation("person", [100.0, 100.0, 200.0, 300.0])]);
-        let events = tracker.update(&[observation("chair", [100.0, 100.0, 200.0, 300.0])]);
+        tracker.update(&[observation("person", [100.0, 100.0, 200.0, 300.0])], DT_MS);
+        let events = tracker.update(&[observation("chair", [100.0, 100.0, 200.0, 300.0])], DT_MS);
         assert!(
             events
                 .iter()
@@ -600,10 +618,10 @@ mod tests {
     fn current_tracks_excludes_missing_confirmed_tracks() {
         let mut tracker = Tracker::new();
         let det = observation("person", [100.0, 100.0, 200.0, 300.0]);
-        tracker.update(std::slice::from_ref(&det));
-        tracker.update(std::slice::from_ref(&det));
+        tracker.update(std::slice::from_ref(&det), DT_MS);
+        tracker.update(std::slice::from_ref(&det), DT_MS);
         assert_eq!(tracker.current_tracks().len(), 1);
-        tracker.update(&[]);
+        tracker.update(&[], DT_MS);
         assert!(tracker.current_tracks().is_empty());
         assert_eq!(tracker.active_tracks().len(), 1);
     }
@@ -612,16 +630,16 @@ mod tests {
     fn tentative_track_survives_short_detection_gap() {
         let mut tracker = Tracker::with_config(TrackerConfig {
             min_hits: 2,
-            max_age: 20,
-            tentative_max_age: 3,
+            max_age_ms: 4_000,
+            tentative_max_age_ms: 600,
             iou_threshold: 0.2,
         });
         let det = observation("person", [100.0, 100.0, 200.0, 300.0]);
 
-        tracker.update(std::slice::from_ref(&det));
-        tracker.update(&[]);
-        tracker.update(&[]);
-        let events = tracker.update(std::slice::from_ref(&det));
+        tracker.update(std::slice::from_ref(&det), DT_MS);
+        tracker.update(&[], DT_MS);
+        tracker.update(&[], DT_MS);
+        let events = tracker.update(std::slice::from_ref(&det), DT_MS);
 
         assert!(
             events
@@ -630,7 +648,7 @@ mod tests {
         );
         assert_eq!(tracker.track_count(), 1);
 
-        tracker.update(std::slice::from_ref(&det));
+        tracker.update(std::slice::from_ref(&det), DT_MS);
         assert_eq!(tracker.current_tracks()[0].id, 1);
     }
 
@@ -638,13 +656,13 @@ mod tests {
     fn tentative_track_expires_after_configured_age() {
         let mut tracker = Tracker::with_config(TrackerConfig {
             min_hits: 2,
-            max_age: 20,
-            tentative_max_age: 1,
+            max_age_ms: 4_000,
+            tentative_max_age_ms: 300,
             iou_threshold: 0.2,
         });
-        tracker.update(&[observation("person", [100.0, 100.0, 200.0, 300.0])]);
-        tracker.update(&[]);
-        let events = tracker.update(&[]);
+        tracker.update(&[observation("person", [100.0, 100.0, 200.0, 300.0])], DT_MS);
+        tracker.update(&[], DT_MS);
+        let events = tracker.update(&[], DT_MS);
 
         assert!(events.iter().any(|event| matches!(
             event,
@@ -654,12 +672,26 @@ mod tests {
     }
 
     #[test]
+    fn network_stall_does_not_switch_identity() {
+        let mut tracker = Tracker::new();
+        let at = |x: f32| observation("person", [x, 100.0, x + 100.0, 300.0]);
+        // 100 px/s, dos ciclos de 200 ms para confirmar
+        tracker.update(&[at(100.0)], 200);
+        tracker.update(&[at(120.0)], 200);
+        let id = tracker.current_tracks()[0].id;
+        // corte de 2 s: la persona avanzo 200 px
+        let events = tracker.update(&[at(320.0)], 2_000);
+        assert!(!events.iter().any(|e| matches!(e, TrackEvent::Created { .. })));
+        assert_eq!(tracker.current_tracks()[0].id, id);
+    }
+
+    #[test]
     fn optimal_matching_avoids_identity_split_that_greedy_would_cause() {
         let mut tracker = Tracker::new();
         let a = observation("person", [0.0, 0.0, 100.0, 100.0]);
         let b = observation("person", [80.0, 0.0, 180.0, 100.0]);
-        tracker.update(&[a.clone(), b.clone()]);
-        tracker.update(&[a, b]);
+        tracker.update(&[a.clone(), b.clone()], DT_MS);
+        tracker.update(&[a, b], DT_MS);
 
         // Frame conflictivo: d_high (confianza alta) superpone a y b (0.667
         // vs 0.25); d_low (confianza baja) solo superpone a (1.0). El greedy
@@ -670,7 +702,7 @@ mod tests {
         let mut d_low = observation("person", [0.0, 0.0, 100.0, 100.0]);
         d_low.confidence = 0.3;
 
-        let events = tracker.update(&[d_high, d_low]);
+        let events = tracker.update(&[d_high, d_low], DT_MS);
         assert_eq!(tracker.track_count(), 2, "no identity split");
         assert!(
             !events
@@ -691,11 +723,11 @@ mod tests {
         let mut tracker = Tracker::new();
         let jittered =
             |dx: f32| observation("person", [100.0 + dx, 100.0 + dx, 200.0 + dx, 300.0 + dx]);
-        tracker.update(&[jittered(0.0)]);
-        tracker.update(&[jittered(4.0)]);
-        tracker.update(&[jittered(-3.0)]);
-        tracker.update(&[jittered(2.0)]);
-        tracker.update(&[jittered(-1.0)]);
+        tracker.update(&[jittered(0.0)], DT_MS);
+        tracker.update(&[jittered(4.0)], DT_MS);
+        tracker.update(&[jittered(-3.0)], DT_MS);
+        tracker.update(&[jittered(2.0)], DT_MS);
+        tracker.update(&[jittered(-1.0)], DT_MS);
 
         let track = tracker.current_tracks()[0];
         let bbox = track.bbox;

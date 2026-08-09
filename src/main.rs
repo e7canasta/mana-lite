@@ -393,8 +393,8 @@ impl App {
 
         let tracker = Tracker::with_config(TrackerConfig {
             min_hits: config.tracking.min_hits,
-            max_age: config.tracking.max_age,
-            tentative_max_age: config.tracking.tentative_max_age,
+            max_age_ms: config.tracking.max_age_ms,
+            tentative_max_age_ms: config.tracking.tentative_max_age_ms,
             iou_threshold: config.tracking.iou_threshold,
         });
         let zone_engine = zones.as_ref().map(|z| ZoneEngine::from_catalog(z));
@@ -684,6 +684,7 @@ impl App {
                 raw_person_count == 1
                     && tracking_observations.len() == 1
                     && tracking_observations[0].class == config.presence.class,
+                keyframe_gap_ms,
             );
         }
         let confirmed_person_count = if config.pipeline.track {
@@ -1106,11 +1107,16 @@ impl App {
         }
     }
 
-    fn run_tracking(&mut self, observations: &[ConsolidatedObservation], single_person: bool) {
+    fn run_tracking(
+        &mut self,
+        observations: &[ConsolidatedObservation],
+        single_person: bool,
+        dt_ms: u64,
+    ) {
         let track_events = if single_person {
-            self.tracker.update_single_person(observations)
+            self.tracker.update_single_person(observations, dt_ms)
         } else {
-            self.tracker.update_observations(observations)
+            self.tracker.update_observations(observations, dt_ms)
         };
         for ev in &track_events {
             self.log

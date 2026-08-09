@@ -2,11 +2,11 @@
 
 Relevant source files
 
-- [](https://github.com/ernestovisiona-netizen/kik8/blob/43a92847/src/error.rs)
-- [](https://github.com/ernestovisiona-netizen/kik8/blob/43a92847/src/main.rs)
-- [](https://github.com/ernestovisiona-netizen/kik8/blob/43a92847/src/pipeline.rs)
+- [](src/error.rs)
+- [](src/main.rs)
+- [](src/pipeline.rs)
 
-The `mana-lite` system is built around a synchronous processing loop encapsulated in the `App` struct [src/main.rs65-94](https://github.com/ernestovisiona-netizen/kik8/blob/43a92847/src/main.rs#L65-L94) It transforms raw RTSP network packets into high-level state machine transitions through a multi-stage pipeline. The architecture prioritizes low-latency processing of keyframes, utilizing a "cascade" model where secondary inferences are triggered based on the results of primary detections.
+The `mana-lite` system is built around a synchronous processing loop encapsulated in the `App` struct [src/main.rs65-94](src/main.rs#L65-L94) It transforms raw RTSP network packets into high-level state machine transitions through a multi-stage pipeline. The architecture prioritizes low-latency processing of keyframes, utilizing a "cascade" model where secondary inferences are triggered based on the results of primary detections.
 
 ### High-Level Data Flow
 
@@ -69,21 +69,21 @@ sequenceDiagram
 
     FSM->>APP: State Transitions / Events
 ```
-Sources: [src/main.rs611-850](https://github.com/ernestovisiona-netizen/kik8/blob/43a92847/src/main.rs#L611-L850) [src/ingest.rs16-45](https://github.com/ernestovisiona-netizen/kik8/blob/43a92847/src/ingest.rs#L16-L45) [src/snapshot.rs21-40](https://github.com/ernestovisiona-netizen/kik8/blob/43a92847/src/snapshot.rs#L21-L40)
+Sources: [src/main.rs611-850](src/main.rs#L611-L850) [src/ingest.rs16-45](src/ingest.rs#L16-L45) [src/snapshot.rs21-40](src/snapshot.rs#L21-L40)
 
 ### The App Struct and Main Loop
 
-The `App` struct serves as the central orchestrator, holding the state for all major subsystems including the `InferEngine`, `Tracker`, `ZoneEngine`, and `FsmEngine` [src/main.rs65-94](https://github.com/ernestovisiona-netizen/kik8/blob/43a92847/src/main.rs#L65-L94)
+The `App` struct serves as the central orchestrator, holding the state for all major subsystems including the `InferEngine`, `Tracker`, `ZoneEngine`, and `FsmEngine` [src/main.rs65-94](src/main.rs#L65-L94)
 
-The `App::run` method [src/main.rs604-640](https://github.com/ernestovisiona-netizen/kik8/blob/43a92847/src/main.rs#L604-L640) executes an infinite loop that:
+The `App::run` method [src/main.rs604-640](src/main.rs#L604-L640) executes an infinite loop that:
 
-1. Polls the `IngestEngine` for new `RawKeyframe` data [src/main.rs611-615](https://github.com/ernestovisiona-netizen/kik8/blob/43a92847/src/main.rs#L611-L615)
-2. Updates `PipelineState` and `Health` metrics [src/main.rs625-634](https://github.com/ernestovisiona-netizen/kik8/blob/43a92847/src/main.rs#L625-L634)
-3. Triggers the `App::process_keyframe` logic [src/main.rs636](https://github.com/ernestovisiona-netizen/kik8/blob/43a92847/src/main.rs#L636-L636)
+1. Polls the `IngestEngine` for new `RawKeyframe` data [src/main.rs611-615](src/main.rs#L611-L615)
+2. Updates `PipelineState` and `Health` metrics [src/main.rs625-634](src/main.rs#L625-L634)
+3. Triggers the `App::process_keyframe` logic [src/main.rs636](src/main.rs#L636-L636)
 
-Within `process_keyframe` [src/main.rs642-850](https://github.com/ernestovisiona-netizen/kik8/blob/43a92847/src/main.rs#L642-L850) the system performs the heavy lifting of inference and state evaluation. This method is wrapped in `catch_unwind` to ensure that a panic in a specific frame's processing does not crash the entire ingest service [src/main.rs643-645](https://github.com/ernestovisiona-netizen/kik8/blob/43a92847/src/main.rs#L643-L645)
+Within `process_keyframe` [src/main.rs642-850](src/main.rs#L642-L850) the system performs the heavy lifting of inference and state evaluation. This method is wrapped in `catch_unwind` to ensure that a panic in a specific frame's processing does not crash the entire ingest service [src/main.rs643-645](src/main.rs#L643-L645)
 
-Sources: [src/main.rs65-94](https://github.com/ernestovisiona-netizen/kik8/blob/43a92847/src/main.rs#L65-L94) [src/main.rs604-640](https://github.com/ernestovisiona-netizen/kik8/blob/43a92847/src/main.rs#L604-L640) [src/main.rs642-850](https://github.com/ernestovisiona-netizen/kik8/blob/43a92847/src/main.rs#L642-L850)
+Sources: [src/main.rs65-94](src/main.rs#L65-L94) [src/main.rs604-640](src/main.rs#L604-L640) [src/main.rs642-850](src/main.rs#L642-L850)
 
 ### Pipeline Stages
 
@@ -91,31 +91,31 @@ The following stages define the lifecycle of a frame within the system:
 
 #### 1. Video Ingest and Decoding
 
-The `IngestEngine` manages the `RetinaReader`, which handles RTSP session negotiation and packetization [src/ingest.rs135-150](https://github.com/ernestovisiona-netizen/kik8/blob/43a92847/src/ingest.rs#L135-L150) It extracts Annex-B keyframes and passes them to the `FrameDecoder` [src/snapshot.rs21-40](https://github.com/ernestovisiona-netizen/kik8/blob/43a92847/src/snapshot.rs#L21-L40)
+The `IngestEngine` manages the `RetinaReader`, which handles RTSP session negotiation and packetization [src/ingest.rs135-150](src/ingest.rs#L135-L150) It extracts Annex-B keyframes and passes them to the `FrameDecoder` [src/snapshot.rs21-40](src/snapshot.rs#L21-L40)
 
 - For details, see [Video Ingest and Decoding](https://deepwiki.com/ernestovisiona-netizen/kik8/2.1-video-ingest-and-decoding).
 
 #### 2. Inference Engine
 
-The `InferEngine` executes YOLO models defined in the `ModelCatalog` [src/infer.rs152-170](https://github.com/ernestovisiona-netizen/kik8/blob/43a92847/src/infer.rs#L152-L170) It supports a primary model (usually full-frame) and a "cascade" of secondary models that run on specific crops (e.g., a face model running on a head crop) [src/main.rs727-750](https://github.com/ernestovisiona-netizen/kik8/blob/43a92847/src/main.rs#L727-L750)
+The `InferEngine` executes YOLO models defined in the `ModelCatalog` [src/infer.rs152-170](src/infer.rs#L152-L170) It supports a primary model (usually full-frame) and a "cascade" of secondary models that run on specific crops (e.g., a face model running on a head crop) [src/main.rs727-750](src/main.rs#L727-L750)
 
 - For details, see [Inference Engine](https://deepwiki.com/ernestovisiona-netizen/kik8/2.2-inference-engine).
 
 #### 3. Multi-Object Tracking
 
-Detections are passed to the `Tracker`, which maintains identities across frames using a Kalman filter for motion prediction and the Hungarian algorithm for data association [src/track.rs136-155](https://github.com/ernestovisiona-netizen/kik8/blob/43a92847/src/track.rs#L136-L155) This transforms transient detections into stable `Track` objects.
+Detections are passed to the `Tracker`, which maintains identities across frames using a Kalman filter for motion prediction and the Hungarian algorithm for data association [src/track.rs136-155](src/track.rs#L136-L155) This transforms transient detections into stable `Track` objects.
 
 - For details, see [Multi-Object Tracking](https://deepwiki.com/ernestovisiona-netizen/kik8/2.3-multi-object-tracking).
 
 #### 4. Presence and Occupancy
 
-The system converts raw tracks into room-level state. The `PresenceFilter` debounces detections [src/presence.rs44-60](https://github.com/ernestovisiona-netizen/kik8/blob/43a92847/src/presence.rs#L44-L60) while the `OccupancyStateMachine` applies temporal hysteresis to determine if a room is `Empty`, `SingleOccupancy`, or `MultipleOccupancy` [src/occupancy.rs98-120](https://github.com/ernestovisiona-netizen/kik8/blob/43a92847/src/occupancy.rs#L98-L120)
+The system converts raw tracks into room-level state. The `PresenceFilter` debounces detections [src/presence.rs44-60](src/presence.rs#L44-L60) while the `OccupancyStateMachine` applies temporal hysteresis to determine if a room is `Empty`, `SingleOccupancy`, or `MultipleOccupancy` [src/occupancy.rs98-120](src/occupancy.rs#L98-L120)
 
 - For details, see [Presence and Occupancy](https://deepwiki.com/ernestovisiona-netizen/kik8/2.4-presence-and-occupancy).
 
 #### 5. Depth Analysis
 
-If a depth-capable model is used, the `DepthRegionRule` evaluator compares depth map statistics (like median distance) against configured spatial regions [src/depth.rs188-210](https://github.com/ernestovisiona-netizen/kik8/blob/43a92847/src/depth.rs#L188-L210) This allows the system to distinguish between a person standing in a zone versus a person lying in a bed based on Z-axis data.
+If a depth-capable model is used, the `DepthRegionRule` evaluator compares depth map statistics (like median distance) against configured spatial regions [src/depth.rs188-210](src/depth.rs#L188-L210) This allows the system to distinguish between a person standing in a zone versus a person lying in a bed based on Z-axis data.
 
 - For details, see [Depth Analysis](https://deepwiki.com/ernestovisiona-netizen/kik8/2.5-depth-analysis).
 
@@ -272,21 +272,21 @@ flowchart TD
 ```
 `ZoneEngine → OccupancyStateMachine` y `ZoneEngine → DepthRules` como en tu imagen, y ambos convergen en `FsmEngine`. También dejé `FSM → Output` bifurcado hacia los dos sinks.
 
-Sources: [src/main.rs65-94](https://github.com/ernestovisiona-netizen/kik8/blob/43a92847/src/main.rs#L65-L94) [src/pipeline.rs6-11](https://github.com/ernestovisiona-netizen/kik8/blob/43a92847/src/pipeline.rs#L6-L11) [src/main.rs642-850](https://github.com/ernestovisiona-netizen/kik8/blob/43a92847/src/main.rs#L642-L850)
+Sources: [src/main.rs65-94](src/main.rs#L65-L94) [src/pipeline.rs6-11](src/pipeline.rs#L6-L11) [src/main.rs642-850](src/main.rs#L642-L850)
 
 ### Pipeline State and Health
 
-The `PipelineState` struct tracks frame counts and timing [src/pipeline.rs6-11](https://github.com/ernestovisiona-netizen/kik8/blob/43a92847/src/pipeline.rs#L6-L11) while the `Health` monitor detects "blind" states (no frames received) or "stale" states (frames received but no detections) [src/metrics.rs253-270](https://github.com/ernestovisiona-netizen/kik8/blob/43a92847/src/metrics.rs#L253-L270) Metrics are aggregated and emitted periodically as `Event::metrics` [src/pipeline.rs86-90](https://github.com/ernestovisiona-netizen/kik8/blob/43a92847/src/pipeline.rs#L86-L90)
+The `PipelineState` struct tracks frame counts and timing [src/pipeline.rs6-11](src/pipeline.rs#L6-L11) while the `Health` monitor detects "blind" states (no frames received) or "stale" states (frames received but no detections) [src/metrics.rs253-270](src/metrics.rs#L253-L270) Metrics are aggregated and emitted periodically as `Event::metrics` [src/pipeline.rs86-90](src/pipeline.rs#L86-L90)
 
 |Entity|Role|File|
 |---|---|---|
-|`App`|Main orchestrator and loop owner|[src/main.rs65](https://github.com/ernestovisiona-netizen/kik8/blob/43a92847/src/main.rs#L65-L65)|
-|`PipelineState`|Tracks frame counters and panic recovery|[src/pipeline.rs6](https://github.com/ernestovisiona-netizen/kik8/blob/43a92847/src/pipeline.rs#L6-L6)|
-|`IngestEngine`|Manages RTSP connection and keyframe filtering|[src/ingest.rs135](https://github.com/ernestovisiona-netizen/kik8/blob/43a92847/src/ingest.rs#L135-L135)|
-|`InferEngine`|Interface for AI model execution|[src/infer.rs152](https://github.com/ernestovisiona-netizen/kik8/blob/43a92847/src/infer.rs#L152-L152)|
-|`FsmEngine`|Evaluates high-level business logic|[src/fsm.rs101](https://github.com/ernestovisiona-netizen/kik8/blob/43a92847/src/fsm.rs#L101-L101)|
+|`App`|Main orchestrator and loop owner|[src/main.rs65](src/main.rs#L65-L65)|
+|`PipelineState`|Tracks frame counters and panic recovery|[src/pipeline.rs6](src/pipeline.rs#L6-L6)|
+|`IngestEngine`|Manages RTSP connection and keyframe filtering|[src/ingest.rs135](src/ingest.rs#L135-L135)|
+|`InferEngine`|Interface for AI model execution|[src/infer.rs152](src/infer.rs#L152-L152)|
+|`FsmEngine`|Evaluates high-level business logic|[src/fsm.rs101](src/fsm.rs#L101-L101)|
 
-Sources: [src/main.rs65-94](https://github.com/ernestovisiona-netizen/kik8/blob/43a92847/src/main.rs#L65-L94) [src/pipeline.rs6-11](https://github.com/ernestovisiona-netizen/kik8/blob/43a92847/src/pipeline.rs#L6-L11) [src/metrics.rs253-270](https://github.com/ernestovisiona-netizen/kik8/blob/43a92847/src/metrics.rs#L253-L270)
+Sources: [src/main.rs65-94](src/main.rs#L65-L94) [src/pipeline.rs6-11](src/pipeline.rs#L6-L11) [src/metrics.rs253-270](src/metrics.rs#L253-L270)
 
 
 ### On this page

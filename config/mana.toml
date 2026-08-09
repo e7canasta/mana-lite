@@ -54,8 +54,8 @@ require_confirmed_tracks = false
 
 [tracking]
 min_hits = 2
-max_age = 20
-tentative_max_age = 3
+max_age_ms = 4000
+tentative_max_age_ms = 600
 iou_threshold = 0.2
 
 [health]

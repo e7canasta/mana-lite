@@ -2,28 +2,28 @@
 
 Relevant source files
 
-- [](https://github.com/ernestovisiona-netizen/kik8/blob/43a92847/.gitignore)
-- [](https://github.com/ernestovisiona-netizen/kik8/blob/43a92847/README.md?plain=1)
-- [](https://github.com/ernestovisiona-netizen/kik8/blob/43a92847/src/lib.rs)
-- [](https://github.com/ernestovisiona-netizen/kik8/blob/43a92847/src/main.rs)
+- [](.gitignore)
+- [](README.md?plain=1)
+- [](src/lib.rs)
+- [](src/main.rs)
 
 The `mana-lite` system is a high-performance, real-time room presence and face-detection pipeline. It is designed to ingest RTSP video streams and execute a multi-stage computer vision pipeline including object detection, pose estimation, segmentation, and depth analysis. The system tracks individuals across frames, evaluates spatial occupancy within defined zones, and drives a finite state machine (FSM) to determine complex room states such as occupancy cardinality and specific behavioral events (e.g., "in bed" or "exiting").
 
-[README.md1-6](https://github.com/ernestovisiona-netizen/kik8/blob/43a92847/README.md?plain=1#L1-L6)
+[README.md1-6](README.md?plain=1#L1-L6)
 
 ## System Architecture
 
-The application is structured as a linear pipeline managed by the `App` struct [src/main.rs65-94](https://github.com/ernestovisiona-netizen/kik8/blob/43a92847/src/main.rs#L65-L94) The lifecycle of a video frame involves ingestion, decoding, inference, and sequential logic processing.
+The application is structured as a linear pipeline managed by the `App` struct [src/main.rs65-94](src/main.rs#L65-L94) The lifecycle of a video frame involves ingestion, decoding, inference, and sequential logic processing.
 
 ### Data Flow Overview
 
-1. **Ingest**: The `IngestEngine` [src/main.rs76](https://github.com/ernestovisiona-netizen/kik8/blob/43a92847/src/main.rs#L76-L76) utilizes `RetinaReader` [src/main.rs36](https://github.com/ernestovisiona-netizen/kik8/blob/43a92847/src/main.rs#L36-L36) to capture H.264 Annex-B streams from RTSP sources.
-2. **Inference**: The `InferEngine` [src/main.rs66](https://github.com/ernestovisiona-netizen/kik8/blob/43a92847/src/main.rs#L66-L66) executes models defined in a central `ModelCatalog`. It supports cascading models, where a primary detection (e.g., a person) triggers secondary crops for higher-resolution analysis (e.g., a face).
-3. **Tracking & Spatial Logic**: Detections are fed into a `Tracker` [src/main.rs68](https://github.com/ernestovisiona-netizen/kik8/blob/43a92847/src/main.rs#L68-L68) (using Kalman filters and Hungarian assignment). The resulting tracks are evaluated against a `ZoneEngine` [src/main.rs69](https://github.com/ernestovisiona-netizen/kik8/blob/43a92847/src/main.rs#L69-L69) to determine spatial presence.
-4. **State Evaluation**: The `OccupancyStateMachine` [src/main.rs80](https://github.com/ernestovisiona-netizen/kik8/blob/43a92847/src/main.rs#L80-L80) and `FsmEngine` [src/main.rs70](https://github.com/ernestovisiona-netizen/kik8/blob/43a92847/src/main.rs#L70-L70) consume presence and depth data to transition between high-level application states.
-5. **Observability**: Data is simultaneously published via `VizBridge` [src/main.rs90](https://github.com/ernestovisiona-netizen/kik8/blob/43a92847/src/main.rs#L90-L90) to Rerun.io and logged as structured JSONL by the `LogManager` [src/main.rs37](https://github.com/ernestovisiona-netizen/kik8/blob/43a92847/src/main.rs#L37-L37)
+1. **Ingest**: The `IngestEngine` [src/main.rs76](src/main.rs#L76-L76) utilizes `RetinaReader` [src/main.rs36](src/main.rs#L36-L36) to capture H.264 Annex-B streams from RTSP sources.
+2. **Inference**: The `InferEngine` [src/main.rs66](src/main.rs#L66-L66) executes models defined in a central `ModelCatalog`. It supports cascading models, where a primary detection (e.g., a person) triggers secondary crops for higher-resolution analysis (e.g., a face).
+3. **Tracking & Spatial Logic**: Detections are fed into a `Tracker` [src/main.rs68](src/main.rs#L68-L68) (using Kalman filters and Hungarian assignment). The resulting tracks are evaluated against a `ZoneEngine` [src/main.rs69](src/main.rs#L69-L69) to determine spatial presence.
+4. **State Evaluation**: The `OccupancyStateMachine` [src/main.rs80](src/main.rs#L80-L80) and `FsmEngine` [src/main.rs70](src/main.rs#L70-L70) consume presence and depth data to transition between high-level application states.
+5. **Observability**: Data is simultaneously published via `VizBridge` [src/main.rs90](src/main.rs#L90-L90) to Rerun.io and logged as structured JSONL by the `LogManager` [src/main.rs37](src/main.rs#L37-L37)
 
-**Sources:** [src/main.rs1-94](https://github.com/ernestovisiona-netizen/kik8/blob/43a92847/src/main.rs#L1-L94) [README.md10-21](https://github.com/ernestovisiona-netizen/kik8/blob/43a92847/README.md?plain=1#L10-L21)
+**Sources:** [src/main.rs1-94](src/main.rs#L1-L94) [README.md10-21](README.md?plain=1#L10-L21)
 
 ### Code Entity Mapping: Pipeline Logic
 
@@ -63,7 +63,7 @@ flowchart TD
     FSM --> LM
     FSM --> VB
 ```
-**Sources:** [src/main.rs65-94](https://github.com/ernestovisiona-netizen/kik8/blob/43a92847/src/main.rs#L65-L94) [src/main.rs22-51](https://github.com/ernestovisiona-netizen/kik8/blob/43a92847/src/main.rs#L22-L51)
+**Sources:** [src/main.rs65-94](src/main.rs#L65-L94) [src/main.rs22-51](src/main.rs#L22-L51)
 
 ## Workspace Layout
 
@@ -78,9 +78,9 @@ The project is organized as a Cargo workspace to separate core logic from reusab
 |**mana-rtsp**|`std/mana-rtsp`|Low-level H.264 Annex-B and RTSP stream utilities.|
 |**mana-viz**|`std/mana-viz`|The bridge for logging data to the Rerun.io visualization engine.|
 
-For a detailed breakdown of these crates, see [Workspace Crates (#1.2)](https://github.com/ernestovisiona-netizen/kik8/blob/43a92847/Workspace%20Crates%20\(#1.2\))
+For a detailed breakdown of these crates, see [Workspace Crates (#1.2)](Workspace%20Crates%20\(#1.2\))
 
-**Sources:** [README.md8-21](https://github.com/ernestovisiona-netizen/kik8/blob/43a92847/README.md?plain=1#L8-L21)
+**Sources:** [README.md8-21](README.md?plain=1#L8-L21)
 
 ## Building and Running
 
@@ -97,11 +97,11 @@ cargo build --release
 
 ### Execution Flow
 
-The binary starts by loading the `AppConfig` via `load_app_config` [src/main.rs60](https://github.com/ernestovisiona-netizen/kik8/blob/43a92847/src/main.rs#L60-L60) It then initializes the `App` state through the `bootstrap` function [src/main.rs109](https://github.com/ernestovisiona-netizen/kik8/blob/43a92847/src/main.rs#L109-L109) which validates the model catalog and blueprints before starting the main processing loop.
+The binary starts by loading the `AppConfig` via `load_app_config` [src/main.rs60](src/main.rs#L60-L60) It then initializes the `App` state through the `bootstrap` function [src/main.rs109](src/main.rs#L109-L109) which validates the model catalog and blueprints before starting the main processing loop.
 
-For detailed setup and environment variable configuration (e.g., `MANA_SOURCE_USERNAME`), see [Getting Started (#1.1)](https://github.com/ernestovisiona-netizen/kik8/blob/43a92847/Getting%20Started%20\(#1.1\))
+For detailed setup and environment variable configuration (e.g., `MANA_SOURCE_USERNAME`), see [Getting Started (#1.1)](Getting%20Started%20\(#1.1\))
 
-**Sources:** [README.md31-40](https://github.com/ernestovisiona-netizen/kik8/blob/43a92847/README.md?plain=1#L31-L40) [src/main.rs55-63](https://github.com/ernestovisiona-netizen/kik8/blob/43a92847/src/main.rs#L55-L63)
+**Sources:** [README.md31-40](README.md?plain=1#L31-L40) [src/main.rs55-63](src/main.rs#L55-L63)
 
 ### Code Entity Mapping: Configuration & Setup
 
@@ -147,7 +147,7 @@ flowchart LR
     class LOAD_APP,LOAD_MODELS,LOAD_CONFIG setup
     class INFER,CASCADE runtime
 ```
-**Sources:** [src/main.rs59-61](https://github.com/ernestovisiona-netizen/kik8/blob/43a92847/src/main.rs#L59-L61) [src/main.rs126-140](https://github.com/ernestovisiona-netizen/kik8/blob/43a92847/src/main.rs#L126-L140) [src/main.rs65-72](https://github.com/ernestovisiona-netizen/kik8/blob/43a92847/src/main.rs#L65-L72)
+**Sources:** [src/main.rs59-61](src/main.rs#L59-L61) [src/main.rs126-140](src/main.rs#L126-L140) [src/main.rs65-72](src/main.rs#L65-L72)
 
 ## Child Pages
 

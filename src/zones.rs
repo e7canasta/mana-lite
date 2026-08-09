@@ -176,6 +176,7 @@ mod tests {
             hit_streak: if confirmed { 3 } else { 1 },
             misses: 0,
             age: 3,
+            time_since_update_ms: 0,
             is_confirmed: confirmed,
         }
     }

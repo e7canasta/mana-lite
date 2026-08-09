@@ -240,10 +240,10 @@ fn default_occupancy_multiple_exit_ms() -> u64 {
 pub struct TrackingConfig {
     #[serde(default = "default_tracking_min_hits")]
     pub min_hits: u32,
-    #[serde(default = "default_tracking_max_age")]
-    pub max_age: u32,
-    #[serde(default = "default_tracking_tentative_max_age")]
-    pub tentative_max_age: u32,
+    #[serde(default = "default_tracking_max_age_ms")]
+    pub max_age_ms: u64,
+    #[serde(default = "default_tracking_tentative_max_age_ms")]
+    pub tentative_max_age_ms: u64,
     #[serde(default = "default_tracking_iou")]
     pub iou_threshold: f32,
 }
@@ -252,8 +252,8 @@ impl Default for TrackingConfig {
     fn default() -> Self {
         Self {
             min_hits: default_tracking_min_hits(),
-            max_age: default_tracking_max_age(),
-            tentative_max_age: default_tracking_tentative_max_age(),
+            max_age_ms: default_tracking_max_age_ms(),
+            tentative_max_age_ms: default_tracking_tentative_max_age_ms(),
             iou_threshold: default_tracking_iou(),
         }
     }
@@ -263,12 +263,12 @@ fn default_tracking_min_hits() -> u32 {
     2
 }
 
-fn default_tracking_max_age() -> u32 {
-    20
+fn default_tracking_max_age_ms() -> u64 {
+    4_000
 }
 
-fn default_tracking_tentative_max_age() -> u32 {
-    3
+fn default_tracking_tentative_max_age_ms() -> u64 {
+    600
 }
 
 fn default_tracking_iou() -> f32 {
