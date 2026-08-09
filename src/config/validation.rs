@@ -28,6 +28,10 @@ pub fn validate_fsm(
         }
     }
 
+    // Un estado alcanzable sin transicion de salida congela la maquina.
+    // El wildcard no cuenta como salida: es camino de emergencia
+    // (data_stale), no de operacion normal — un estado del que solo se sale
+    // por emergencia es un sumidero de facto.
     let with_exit: HashSet<&str> = fsm
         .fsm
         .transitions

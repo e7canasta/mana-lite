@@ -526,6 +526,7 @@ impl App {
 
     async fn run(&mut self, config: &AppConfig) -> Result<()> {
         loop {
+            let cycle_now = Instant::now();
             self.metrics.tick_cycle();
 
             if let Some(kf) = self.ingest.poll_freshest_keyframe().await {
@@ -553,7 +554,7 @@ impl App {
             self.drain_ingest_counters();
             self.evaluate_fsm_wildcard(config);
             self.state
-                .evaluate_health(&mut self.health, &mut self.log, &mut self.metrics);
+                .evaluate_health(cycle_now, &mut self.health, &mut self.log, &mut self.metrics);
             self.log.flush();
 
             self.viz.tick();

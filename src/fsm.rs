@@ -561,15 +561,14 @@ mod tests {
             }],
         );
         let mut engine = FsmEngine::from_catalog(&catalog);
+        let start = Instant::now();
         let zones = ZoneEngine::from_catalog(&crate::config::ZoneCatalog {
             zones: HashMap::new(),
             face_dwell: None,
         });
 
-        let mut health = Health::new(100); // 100ms stale
-        health.touch();
-        std::thread::sleep(std::time::Duration::from_millis(200));
-        let _ = health.evaluate(); // trigger blind
+        let mut health = Health::new_at(100, start); // 100ms stale
+        let _ = health.evaluate_at(start + std::time::Duration::from_millis(200)); // trigger blind
 
         let result = engine.evaluate(&[], &zones, &health, &DepthRuleSnapshot::default());
         assert!(result.is_some());
@@ -615,8 +614,7 @@ mod tests {
             zones: HashMap::new(),
             face_dwell: None,
         });
-        let mut health = Health::new(100);
-        health.touch();
+        let mut health = Health::new_at(100, start);
 
         let face = FsmSceneContext {
             face_present: true,
@@ -636,8 +634,7 @@ mod tests {
         assert_eq!(entered.to, "detected");
         assert!(engine.face_was_inside, "latch set inside detected");
 
-        std::thread::sleep(std::time::Duration::from_millis(200));
-        let _ = health.evaluate();
+        let _ = health.evaluate_at(start + std::time::Duration::from_millis(200));
         let blind = engine
             .evaluate_with_context_at(
                 &[],
@@ -645,14 +642,15 @@ mod tests {
                 &health,
                 &DepthRuleSnapshot::default(),
                 &face,
-                Instant::now(),
+                start + std::time::Duration::from_millis(200),
             )
             .expect("stale signal forces blind");
         assert_eq!(blind.to, "blind");
         assert_eq!(engine.current_state, "blind");
         assert!(engine.current_models().is_empty(), "blind declares no models");
 
-        health.touch();
+        let recovered_from_blind = health.touch_at(start + std::time::Duration::from_millis(300));
+        assert!(recovered_from_blind, "touch reports the exit from blind");
         let result = engine
             .evaluate_with_context_at(
                 &[],
@@ -660,7 +658,7 @@ mod tests {
                 &health,
                 &DepthRuleSnapshot::default(),
                 &face,
-                Instant::now(),
+                start + std::time::Duration::from_millis(300),
             )
             .expect("fresh signal exits blind");
         assert_eq!(result.to, "idle");
@@ -842,27 +840,39 @@ mod tests {
                 dwell: None,
             }],
         );
-        let mut engine = FsmEngine::from_catalog(&catalog);
+        let start = Instant::now();
+        let mut engine = FsmEngine::from_catalog_at(&catalog, start);
         let zones = ZoneEngine::from_catalog(&crate::config::ZoneCatalog {
             zones: HashMap::new(),
             face_dwell: None,
         });
-        let mut health = Health::new(100);
-        health.touch();
-        std::thread::sleep(std::time::Duration::from_millis(200));
-        let _ = health.evaluate();
+        let mut health = Health::new_at(100, start);
+        let _ = health.evaluate_at(start + std::time::Duration::from_millis(200));
 
         assert!(
             engine
-                .evaluate(&[], &zones, &health, &DepthRuleSnapshot::default())
+                .evaluate_with_context_at(
+                    &[],
+                    Some(&zones),
+                    &health,
+                    &DepthRuleSnapshot::default(),
+                    &FsmSceneContext::default(),
+                    start + std::time::Duration::from_millis(200),
+                )
                 .is_none()
         );
         assert_eq!(engine.current_state, "idle");
 
-        std::thread::sleep(std::time::Duration::from_millis(400));
         assert!(
             engine
-                .evaluate(&[], &zones, &health, &DepthRuleSnapshot::default())
+                .evaluate_with_context_at(
+                    &[],
+                    Some(&zones),
+                    &health,
+                    &DepthRuleSnapshot::default(),
+                    &FsmSceneContext::default(),
+                    start + std::time::Duration::from_millis(600),
+                )
                 .is_some()
         );
         assert_eq!(engine.current_state, "next");
@@ -880,23 +890,37 @@ mod tests {
                 dwell: Some("100ms".into()),
             }],
         );
-        let mut engine = FsmEngine::from_catalog(&catalog);
+        let start = Instant::now();
+        let mut engine = FsmEngine::from_catalog_at(&catalog, start);
         let zones = ZoneEngine::from_catalog(&crate::config::ZoneCatalog {
             zones: HashMap::new(),
             face_dwell: None,
         });
-        let health = Health::new(10_000);
+        let health = Health::new_at(10_000, start);
 
         assert!(
             engine
-                .evaluate(&[], &zones, &health, &DepthRuleSnapshot::default())
+                .evaluate_with_context_at(
+                    &[],
+                    Some(&zones),
+                    &health,
+                    &DepthRuleSnapshot::default(),
+                    &FsmSceneContext::default(),
+                    start,
+                )
                 .is_none()
         );
 
-        std::thread::sleep(std::time::Duration::from_millis(200));
         assert!(
             engine
-                .evaluate(&[], &zones, &health, &DepthRuleSnapshot::default())
+                .evaluate_with_context_at(
+                    &[],
+                    Some(&zones),
+                    &health,
+                    &DepthRuleSnapshot::default(),
+                    &FsmSceneContext::default(),
+                    start + std::time::Duration::from_millis(200),
+                )
                 .is_some()
         );
         assert_eq!(engine.current_state, "blind");

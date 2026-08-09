@@ -44,7 +44,9 @@ impl PipelineState {
         let now = Instant::now();
         let dt_ms = now.duration_since(self.last_keyframe_at).as_millis() as u64;
         self.last_keyframe_at = now;
-        health.touch();
+        if health.touch_at(now) {
+            log.emit(Event::health_heartbeat(0, "ingest", 0));
+        }
         metrics.tick_keyframe();
         metrics.tick_decode(decode_us);
         if self.frame_count % 5 == 1 {
@@ -65,11 +67,12 @@ impl PipelineState {
 
     pub fn evaluate_health(
         &self,
+        now: Instant,
         health: &mut Health,
         log: &mut dyn LogSink,
         metrics: &mut MetricsEngine,
     ) {
-        match health.evaluate() {
+        match health.evaluate_at(now) {
             HealthTransition::Blind { ms_since_frame } => {
                 log.emit(Event::health_blind(ms_since_frame))
             }
