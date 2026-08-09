@@ -2,6 +2,7 @@ use super::fsm::{FsmCatalog, FsmGuard};
 use super::models::ModelCatalog;
 use super::zones::ZoneCatalog;
 use crate::depth::DepthRules;
+use std::collections::HashSet;
 
 pub fn validate_fsm(
     fsm: &FsmCatalog,
@@ -24,6 +25,19 @@ pub fn validate_fsm(
         }
         if !fsm.fsm.states.contains_key(&t.to) {
             errors.push(format!("transition to unknown state '{}'", t.to));
+        }
+    }
+
+    let with_exit: HashSet<&str> = fsm
+        .fsm
+        .transitions
+        .iter()
+        .filter(|t| t.from != "*")
+        .map(|t| t.from.as_str())
+        .collect();
+    for name in fsm.fsm.states.keys() {
+        if !with_exit.contains(name.as_str()) {
+            errors.push(format!("state '{name}' has no outgoing transition (sink)"));
         }
     }
 

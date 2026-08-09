@@ -65,7 +65,7 @@ interpretan desde la raíz de ejecución.
 | `config/models.toml` y `config/models/` | ONNX, confianza, NMS, filtros, crops, perfiles | `allow_classes`, areas y `iou` |
 | `config/blueprints/<name>/blueprint.toml` | Perfil activo, modelos, overlay y gates | Cambiar en 24/7 solo con validacion |
 | `config/blueprints/<name>/models.toml` | Tuning local sobre el catálogo padre | Mantener `extends` apuntando al catálogo correcto |
-| `[presence.poi]` en `config/mana.toml` | Histeresis de señal del POI | `on_ticks` y `off_ticks` |
+| `[presence.poi]` en `config/mana.toml` | Histeresis de señal del POI | `on_ms` y `off_ms` |
 | `[presence.occupancy]` en `config/mana.toml` | Timers TON/TOF de cardinalidad | `single_confirm_ms`, `empty_confirm_ms`, `multiple_confirm_ms`, `multiple_exit_ms` |
 | `config/cascade.toml` | Dependencias entre modelos | `requires` y clase padre |
 | `config/metrics.toml` | Resumen terminal y eventos JSONL | Desactivar eventos necesarios para diagnostico |

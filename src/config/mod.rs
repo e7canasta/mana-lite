@@ -195,7 +195,7 @@ mod tests {
         assert_eq!(config.source.transport, "tcp");
         assert!(config.source.keyframes_only);
         assert!(config.presence.enabled);
-        assert_eq!(config.presence.poi.off_ticks, 8);
+        assert_eq!(config.presence.poi.off_ms, 1600);
         assert_eq!(config.presence.occupancy.multiple_confirm_ms, 5_000);
         assert!(!config.presence.occupancy.require_confirmed_tracks);
         assert!(config.pipeline.track);

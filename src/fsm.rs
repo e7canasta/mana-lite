@@ -487,6 +487,7 @@ fn eval_guard(
             .any(|ev| matches!(ev, ZoneEvent::Vacated { zone: z, .. } if z == zone)),
         FsmGuard::AllZonesVacant { .. } => zone_engine.is_some_and(ZoneEngine::all_vacant),
         FsmGuard::DataStale => health.is_blind(),
+        FsmGuard::DataFresh => !health.is_blind(),
         FsmGuard::DepthRule { rule, triggered } => depth.is_triggered(rule) == Some(*triggered),
         FsmGuard::Cardinality { value } => context.cardinality.as_deref() == Some(value),
         FsmGuard::PersonPresent => context.person_present,
@@ -574,6 +575,97 @@ mod tests {
         assert!(result.is_some());
         assert_eq!(result.unwrap().to, "blind");
         assert_eq!(engine.current_state, "blind");
+    }
+
+    #[test]
+    fn fsm_recovers_from_blind_when_data_returns() {
+        let catalog = make_catalog(
+            "idle",
+            vec![
+                ("idle", vec!["detect-fast"]),
+                ("detected", vec!["detect-fast"]),
+                ("blind", vec![]),
+            ],
+            vec![
+                FsmTransition {
+                    from: "idle".into(),
+                    to: "detected".into(),
+                    guards: vec![FsmGuard::FaceDetected {
+                        min_confidence: 0.5,
+                    }],
+                    dwell: None,
+                },
+                FsmTransition {
+                    from: "*".into(),
+                    to: "blind".into(),
+                    guards: vec![FsmGuard::DataStale],
+                    dwell: None,
+                },
+                FsmTransition {
+                    from: "blind".into(),
+                    to: "idle".into(),
+                    guards: vec![FsmGuard::DataFresh],
+                    dwell: None,
+                },
+            ],
+        );
+        let start = Instant::now();
+        let mut engine = FsmEngine::from_catalog_at(&catalog, start);
+        let zones = ZoneEngine::from_catalog(&crate::config::ZoneCatalog {
+            zones: HashMap::new(),
+            face_dwell: None,
+        });
+        let mut health = Health::new(100);
+        health.touch();
+
+        let face = FsmSceneContext {
+            face_present: true,
+            face_confidence: Some(0.9),
+            ..Default::default()
+        };
+        let entered = engine
+            .evaluate_with_context_at(
+                &[],
+                Some(&zones),
+                &health,
+                &DepthRuleSnapshot::default(),
+                &face,
+                start,
+            )
+            .expect("face enters detected");
+        assert_eq!(entered.to, "detected");
+        assert!(engine.face_was_inside, "latch set inside detected");
+
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        let _ = health.evaluate();
+        let blind = engine
+            .evaluate_with_context_at(
+                &[],
+                Some(&zones),
+                &health,
+                &DepthRuleSnapshot::default(),
+                &face,
+                Instant::now(),
+            )
+            .expect("stale signal forces blind");
+        assert_eq!(blind.to, "blind");
+        assert_eq!(engine.current_state, "blind");
+        assert!(engine.current_models().is_empty(), "blind declares no models");
+
+        health.touch();
+        let result = engine
+            .evaluate_with_context_at(
+                &[],
+                Some(&zones),
+                &health,
+                &DepthRuleSnapshot::default(),
+                &face,
+                Instant::now(),
+            )
+            .expect("fresh signal exits blind");
+        assert_eq!(result.to, "idle");
+        assert!(!engine.face_was_inside, "el latch no sobrevive a la ceguera");
+        assert!(!engine.current_models().is_empty(), "la inferencia vuelve");
     }
 
     #[test]

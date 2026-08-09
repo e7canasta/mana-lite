@@ -84,3 +84,12 @@ guards = [
 from = "bed_alert"
 to = "blind"
 dwell = "5m"
+
+# ── blind → idle cuando vuelve la senal ──
+# A idle, no al estado anterior: tras la ceguera no sabes que paso en la
+# habitacion, asi que se reconstruye desde cero (y se limpia el latch).
+
+[[fsm.transitions]]
+from = "blind"
+to = "idle"
+guards = [{ type = "data_fresh" }]

@@ -33,7 +33,7 @@ fsm = false
 ```
 
 El child face usa el track confirmado. El filtro de presencia mantiene la
-ultima observacion durante `presence.poi.off_ticks` evaluaciones validas. La
+ultima observacion durante `presence.poi.off_ms` de tiempo real. La
 cardinalidad de room usa sus propios timers monotono y puede omitirse si hay
 mas de una persona.
 

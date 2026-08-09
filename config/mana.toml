@@ -39,10 +39,10 @@ enabled = true
 class = "person"
 
 [presence.poi]
-# PLC TON: valid one-person detections required before room becomes single.
-on_ticks = 1
+# PLC TON: real ms of valid one-person detection required before room becomes single.
+on_ms = 200
 # PLC TOF for the POI/tracker path; room exit uses occupancy.empty_confirm_ms.
-off_ticks = 8
+off_ms = 1600
 
 [presence.occupancy]
 # Room transitions use monotonic time, not keyframe/inference counts.

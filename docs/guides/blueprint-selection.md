@@ -19,7 +19,7 @@ Elegir este perfil cuando:
 - se quiere tolerar un dropout corto del detector.
 
 Usa tracking y presencia temporal: una persona aceptada activa la presencia y
-los vacios del POI se toleran durante `presence.poi.off_ticks` antes de
+los vacios del POI se toleran durante `presence.poi.off_ms` (ms reales) antes de
 declarar ausencia. La confirmacion de una segunda persona usa una politica
 separada en `presence.occupancy`.
 

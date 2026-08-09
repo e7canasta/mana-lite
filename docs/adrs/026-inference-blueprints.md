@@ -62,8 +62,8 @@ enabled = true
 class = "person"
 
 [presence.poi]
-on_ticks = 1
-off_ticks = 8
+on_ms = 200
+off_ms = 1600
 
 [presence.occupancy]
 single_confirm_ms = 3000

@@ -180,8 +180,8 @@ enabled = true
 class = "person"
 
 [presence.poi]
-on_ticks = 1
-off_ticks = 8
+on_ms = 200
+off_ms = 1600
 
 [presence.occupancy]
 single_confirm_ms = 3000
@@ -195,9 +195,9 @@ require_confirmed_tracks = false
 del frame y aplica cada politica en su propia capa:
 
 - `poi` es permisiva: adquiere rapido la persona de interes y sostiene su bbox
-  durante dropouts cortos antes del tracker. `on_ticks` es el TON de entrada:
-  la primera deteccion inicia el timer y la presencia solo se confirma tras
-  evaluaciones validas sostenidas.
+  durante dropouts cortos antes del tracker. `on_ms` es el TON de entrada
+  (tiempo real, no keyframes): la primera deteccion inicia el timer y la
+  presencia solo se confirma tras `on_ms` de senal valida sostenida.
 - `occupancy` es conservadora para confirmar una segunda persona: requiere
   `multiple_confirm_ms` de conteo `2+`. Puede exigir tracks confirmados con
   `require_confirmed_tracks = true`; el perfil raw de calibracion lo deja en
@@ -239,11 +239,11 @@ El sistema aplica estabilidad en capas:
 3. El cascade exige track confirmado y visible para children estables.
 4. `requires_exact_count = 1` bloquea la rama si hay cero o mas de una persona.
 5. El filtro de presencia sostiene vacios cortos y corta despues de
-   `off_ticks`.
-6. `max_age` conserva identidad para tracking y evita borrar de inmediato el
+   `off_ms` reales.
+6. `max_age_ms` conserva identidad para tracking y evita borrar de inmediato el
    track.
 
-No se debe usar `max_age` como permiso para ejecutar un modelo hijo sobre una
+No se debe usar `max_age_ms` como permiso para ejecutar un modelo hijo sobre una
 posicion vieja. La frescura de la evidencia y la elegibilidad del child son
 conceptos distintos.
 

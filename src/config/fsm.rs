@@ -64,6 +64,10 @@ pub enum FsmGuard {
     },
     #[serde(rename = "data_stale")]
     DataStale,
+    /// Complemento de `data_stale`: la senal volvio. Necesario para salir de
+    /// un estado de seguridad — en TOML no era expresable.
+    #[serde(rename = "data_fresh")]
+    DataFresh,
     /// Regla depth por nombre (spec depth-standard §9/§15). `triggered`
     /// invierte la condicion (por defecto exige regla disparada). Sin
     /// evidencia de la regla en el frame, el guard es falso.

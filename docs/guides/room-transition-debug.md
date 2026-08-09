@@ -32,15 +32,15 @@ Cada evento `presence` contiene la evidencia de las dos maquinas:
 - `poi_state`: presencia (`absent`, `present`, `ambiguous`).
 - `raw_count`: personas raw del detector primario.
 - `signal_valid`: si la inferencia primaria produjo salida valida.
-- `poi_positive_ticks`: progreso del filtro base de presencia.
-- `poi_empty_ticks`: progreso del filtro base de ausencia.
+- `poi_positive_ms`: milisegundos validos acumulados del filtro base de presencia.
+- `poi_empty_ms`: milisegundos reales acumulados del filtro base de ausencia.
 - `single_timer_ms`: tiempo del TON `empty -> single`.
 - `empty_timer_ms`: tiempo del TOF `single -> empty`.
 - `multiple_candidate_timer_ms`: tiempo del TON de `multiple`.
 - `multiple_exit_timer_ms`: tiempo del TOF de salida de `multiple`.
 - `held`: si el POI sostuvo una observacion durante un dropout.
 
-La secuencia esperada con `on_ticks = 1` es:
+La secuencia esperada con `on_ms = 200` es:
 
 ```text
 raw_count=0, signal_valid=true  -> state=empty

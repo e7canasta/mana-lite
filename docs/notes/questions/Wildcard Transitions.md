@@ -75,12 +75,12 @@ Sus funciones y mecanismos clave son:
 
 El filtro utiliza un sistema basado en "ticks" (cuadros de inferencia) para confirmar el estado de un objeto, generalmente una persona:
 
-- **Confirmación de entrada (On Ticks):** Define cuántos cuadros consecutivos debe detectarse a una persona antes de que el sistema la considere oficialmente "presente" (`PresenceState::Present`). Esto evita falsos positivos por parpadeos momentáneos del modelo de IA.
-- **Confirmación de ausencia (Off Ticks):** Define cuántos cuadros debe estar ausente la detección antes de cambiar el estado a "ausente" (`PresenceState::Absent`).
+- **Confirmación de entrada (On ms):** Define cuánto tiempo real acumulado de detección consecutiva se necesita antes de que el sistema considere a la persona oficialmente "presente" (`PresenceState::Present`). Esto evita falsos positivos por parpadeos momentáneos del modelo de IA.
+- **Confirmación de ausencia (Off ms):** Cuánto tiempo real acumulado de la ventana de retención de ausencia antes de cambiar el estado a "ausente" (`PresenceState::Absent`).
 
 ### 2. Retención de Señal (Signal Holding)
 
-Una de las funciones más críticas es "sostener" la última observación conocida durante fallas momentáneas de inferencia u oclusiones breves. Si el detector no encuentra a la persona en un cuadro específico, el filtro **mantiene la posición previa** durante el periodo definido por los `off_ticks`, evitando que el sistema pierda la continuidad o reinicie los contadores de la lógica de negocio innecesariamente.
+Una de las funciones más críticas es "sostener" la última observación conocida durante fallas momentáneas de inferencia u oclusiones breves. Si el detector no encuentra a la persona en un cuadro específico, el filtro **mantiene la posición previa** durante el periodo real definido por `off_ms` (independiente de la cadencia de keyframes), evitando que el sistema pierda la continuidad o reinicie los contadores de la lógica de negocio innecesariamente.
 
 ### 3. Ubicación en el Pipeline
 

@@ -450,8 +450,8 @@ pub fn write_event(event: &Event, ts: &str, buf: &mut Vec<u8>) {
             confirmed_count,
             signal_valid,
             held,
-            poi_positive_ticks,
-            poi_empty_ticks,
+            poi_positive_ms,
+            poi_empty_ms,
             single_timer_ms,
             empty_timer_ms,
             multiple_candidate_timer_ms,
@@ -481,10 +481,10 @@ pub fn write_event(event: &Event, ts: &str, buf: &mut Vec<u8>) {
             buf.extend_from_slice(if *signal_valid { b"true" } else { b"false" });
             buf.extend_from_slice(b",\"held\":");
             buf.extend_from_slice(if *held { b"true" } else { b"false" });
-            buf.extend_from_slice(b",\"poi_positive_ticks\":");
-            write_u64(*poi_positive_ticks as u64, buf);
-            buf.extend_from_slice(b",\"poi_empty_ticks\":");
-            write_u64(*poi_empty_ticks as u64, buf);
+            buf.extend_from_slice(b",\"poi_positive_ms\":");
+            write_u64(*poi_positive_ms, buf);
+            buf.extend_from_slice(b",\"poi_empty_ms\":");
+            write_u64(*poi_empty_ms, buf);
             buf.extend_from_slice(b",\"single_timer_ms\":");
             write_u64(*single_timer_ms, buf);
             buf.extend_from_slice(b",\"empty_timer_ms\":");

@@ -140,20 +140,21 @@ pub struct PresenceConfig {
     pub occupancy: OccupancyPolicy,
 }
 
-/// Policy for retaining the person-of-interest signal before tracking.
+/// Policy for retaining the person-of-interest signal before tracking
+/// (real elapsed time, not keyframe counts).
 #[derive(Debug, Clone, Deserialize)]
 pub struct PresencePoiPolicy {
-    #[serde(default = "default_presence_on_ticks")]
-    pub on_ticks: u32,
-    #[serde(default = "default_presence_off_ticks")]
-    pub off_ticks: u32,
+    #[serde(default = "default_presence_on_ms")]
+    pub on_ms: u64,
+    #[serde(default = "default_presence_off_ms")]
+    pub off_ms: u64,
 }
 
 impl Default for PresencePoiPolicy {
     fn default() -> Self {
         Self {
-            on_ticks: default_presence_on_ticks(),
-            off_ticks: default_presence_off_ticks(),
+            on_ms: default_presence_on_ms(),
+            off_ms: default_presence_off_ms(),
         }
     }
 }
@@ -199,8 +200,8 @@ impl Default for PresenceConfig {
 impl PresenceConfig {
     pub fn is_valid(&self) -> bool {
         !self.class.trim().is_empty()
-            && self.poi.on_ticks > 0
-            && self.poi.off_ticks > 0
+            && self.poi.on_ms > 0
+            && self.poi.off_ms > 0
             && self.occupancy.single_confirm_ms > 0
             && self.occupancy.empty_confirm_ms > 0
             && self.occupancy.multiple_confirm_ms > 0
@@ -212,12 +213,12 @@ fn default_presence_class() -> String {
     "person".into()
 }
 
-fn default_presence_on_ticks() -> u32 {
-    1
+fn default_presence_on_ms() -> u64 {
+    200
 }
 
-fn default_presence_off_ticks() -> u32 {
-    4
+fn default_presence_off_ms() -> u64 {
+    800
 }
 
 fn default_occupancy_single_confirm_ms() -> u64 {

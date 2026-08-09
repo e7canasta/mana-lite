@@ -213,8 +213,8 @@ bbox:
 {"type":"presence","frame_id":10,"keyframe_gap_ms":2500,"source_window_ms":2500,
  "keyframes_seen":10,"keyframes_dropped":1,"state":"single","poi_state":"present",
  "second_person":"candidate","raw_count":2,"confirmed_count":1,
- "signal_valid":true,"held":false,"poi_positive_ticks":3,
- "poi_empty_ticks":0,"single_timer_ms":0,"empty_timer_ms":0,
+ "signal_valid":true,"held":false,"poi_positive_ms":600,
+ "poi_empty_ms":0,"single_timer_ms":0,"empty_timer_ms":0,
  "multiple_candidate_timer_ms":500,"multiple_exit_timer_ms":0}
 ```
 

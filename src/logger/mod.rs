@@ -658,7 +658,7 @@ mod tests {
         assert!(out.contains("\"keyframe_gap_ms\":2500"));
         assert!(out.contains("\"state\":\"single\""));
         assert!(out.contains("\"poi_state\":\"present\""));
-        assert!(out.contains("\"poi_positive_ticks\":3"));
+        assert!(out.contains("\"poi_positive_ms\":3"));
         assert!(out.contains("\"single_timer_ms\":1000"));
         assert!(out.contains("\"second_person\":\"candidate\""));
         assert!(out.contains("\"raw_count\":2"));

@@ -661,7 +661,7 @@ impl App {
             .collect();
         let root_observations = self.detection_consolidator.consolidate(&root_outputs);
         let (effective_root_observations, presence_update) =
-            self.presence.update(&root_observations, primary_root_valid);
+            self.presence.update(&root_observations, primary_root_valid, keyframe_gap_ms);
         let raw_person_count = root_observations
             .iter()
             .filter(|observation| observation.class == config.presence.class)
@@ -674,8 +674,8 @@ impl App {
             };
         if presence_update.held {
             log::debug!(
-                "presence: holding last observation for {} empty tick(s)",
-                presence_update.empty_ticks
+                "presence: holding last observation for {} empty ms",
+                presence_update.empty_ms
             );
         }
         if config.pipeline.track {
@@ -702,7 +702,7 @@ impl App {
             } else {
                 // Raw calibration uses the POI entry timer, but a missing raw
                 // person starts the room exit timer immediately instead of
-                // being held by presence.poi.off_ticks.
+                // being held by presence.poi.off_ms.
                 raw_person_count == 1
                     && matches!(presence_update.state, presence::PresenceState::Present)
             }
@@ -748,8 +748,8 @@ impl App {
             confirmed_person_count,
             primary_root_valid,
             presence_update.held,
-            presence_update.positive_ticks,
-            presence_update.empty_ticks,
+            presence_update.positive_ms,
+            presence_update.empty_ms,
             occupancy_update.single_timer_ms,
             occupancy_update.empty_timer_ms,
             occupancy_update.multiple_candidate_timer_ms,
