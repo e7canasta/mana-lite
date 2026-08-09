@@ -79,4 +79,4 @@ zones = true
 fsm = true
 [viz]
 enabled = true
-rerun_addr = "192.168.1.15:9876"
+rerun_addr = "192.168.1.18:9876"
