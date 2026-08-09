@@ -568,10 +568,14 @@ impl App {
     fn process_keyframe(&mut self, kf: RawKeyframe, config: &AppConfig) {
         let frame_timestamp_ns = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
         let (frame_buf, decode_us) = self.decoder.decode_timed(&kf.h264);
+        if frame_buf.is_some() {
+            // Solo un frame decodificable es senal fresca: si el decode falla,
+            // Health queda sin touch y la ceguera sigue su curso.
+            self.state.mark_health_fresh(&mut self.health, &mut self.log);
+        }
         let dt_ms = self.state.on_keyframe(
             decode_us,
             &mut self.metrics,
-            &mut self.health,
             &mut self.log,
         );
         self.viz

@@ -612,7 +612,7 @@ mod tests {
         // En el ciclo real el keyframe que vuelve hace touch_at (limpia
         // blind/stale) antes de que evaluate_at corra: la rama Recovered de
         // evaluate jamas se cumple en vivo. La recuperacion la reporta
-        // touch_at, y el heartbeat se emite en on_keyframe.
+        // touch_at, y el heartbeat se emite en el touch del frame valido.
         let start = Instant::now();
         let mut health = Health::new_at(10_000, start);
         let at = |ms: u64| start + std::time::Duration::from_millis(ms);

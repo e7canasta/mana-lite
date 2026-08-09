@@ -37,16 +37,12 @@ impl PipelineState {
         &mut self,
         decode_us: u64,
         metrics: &mut MetricsEngine,
-        health: &mut Health,
         log: &mut dyn LogSink,
     ) -> u64 {
         self.frame_count += 1;
         let now = Instant::now();
         let dt_ms = now.duration_since(self.last_keyframe_at).as_millis() as u64;
         self.last_keyframe_at = now;
-        if health.touch_at(now) {
-            log.emit(Event::health_heartbeat(0, "ingest", 0));
-        }
         metrics.tick_keyframe();
         metrics.tick_decode(decode_us);
         if self.frame_count % 5 == 1 {
@@ -63,6 +59,17 @@ impl PipelineState {
             dt_ms,
         ));
         dt_ms
+    }
+
+    /// La senal es fresca solo si el keyframe produjo un frame decodificable:
+    /// un decode fallido no es informacion, y no debe sacar a Health de blind.
+    /// Devuelve el heartbeat si esto marca el retorno de una ceguera — es la
+    /// recuperacion real del superloop (evaluate_at ya encuentra las
+    /// banderas limpias y nunca emite Recovered).
+    pub fn mark_health_fresh(&mut self, health: &mut Health, log: &mut dyn LogSink) {
+        if health.touch_at(Instant::now()) {
+            log.emit(Event::health_heartbeat(0, "ingest", 0));
+        }
     }
 
     pub fn evaluate_health(
@@ -241,5 +248,68 @@ fn log_report(report: &MetricsReport, model_order: &[String], config: &MetricsTe
     }
     if config.infer_summary {
         log_infer_line(report, model_order, config);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[derive(Default)]
+    struct RecordingSink {
+        events: Vec<Event>,
+    }
+
+    impl LogSink for RecordingSink {
+        fn emit(&mut self, event: Event) {
+            self.events.push(event);
+        }
+        fn flush(&mut self) {}
+        fn shutdown(&mut self, _reason: &str) {}
+    }
+
+    #[test]
+    fn mark_health_fresh_emits_heartbeat_only_when_leaving_blind() {
+        let start = Instant::now();
+        let mut health = Health::new_at(10_000, start);
+        let mut state = PipelineState::new(MetricsTextConfig::default());
+        let mut log = RecordingSink::default();
+
+        state.mark_health_fresh(&mut health, &mut log);
+        assert!(log.events.is_empty(), "llegada sana no es evento");
+
+        let _ = health.evaluate_at(start + Duration::from_millis(20_000));
+        assert!(health.is_blind());
+        state.mark_health_fresh(&mut health, &mut log);
+        assert_eq!(log.events.len(), 1, "return de blind emite heartbeat");
+        assert!(
+            matches!(&log.events[0], Event::Health { event, .. } if event == "heartbeat"),
+            "esperaba evento heartbeat"
+        );
+        assert!(!health.is_blind());
+
+        state.mark_health_fresh(&mut health, &mut log);
+        assert_eq!(log.events.len(), 1, "la recuperacion dispara una sola vez");
+    }
+
+    #[test]
+    fn decode_failure_keeps_health_blind() {
+        // En process_keyframe el touch queda detras de `frame_buf.is_some()`:
+        // la secuencia de un decode roto es (a) no tocar Health y (b) dejar
+        // que el evaluador del ciclo siga su curso hasta blind.
+        let start = Instant::now();
+        let mut health = Health::new_at(10_000, start);
+        let mut state = PipelineState::new(MetricsTextConfig::default());
+        let mut log = RecordingSink::default();
+
+        state.mark_health_fresh(&mut health, &mut log);
+        let _ = health.evaluate_at(start + Duration::from_millis(20_000));
+        assert!(health.is_blind(), "sin frames validos se llega a blind");
+
+        // El keyframe roto no toca Health; la ceguera persiste.
+        let _ = health.evaluate_at(start + Duration::from_millis(30_000));
+        assert!(health.is_blind());
+        assert!(log.events.is_empty(), "ningun heartbeat falso");
     }
 }
