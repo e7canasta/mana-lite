@@ -1,0 +1,481 @@
+//! Golden contract for the `scan()` branches the single-actor cycle never takes.
+//!
+//! Regenerates with: `UPDATE_GOLDEN=1 cargo test multi_actor_cycle_matches_golden_jsonl`
+//!
+//! [`golden_synthetic_cycle`] pins one person, one zone, no face. That leaves
+//! four branches of `scan()` with no integration coverage at all, all of them
+//! load-bearing for Sprint 3's split into eight steps:
+//!
+//! - `PresenceState::Ambiguous` — the `tracking = &[][..]` short circuit that
+//!   suppresses tracker input entirely.
+//! - `RoomCardinality::Multiple` / `second_person`.
+//! - the face arms of `update_context` (`face_present`, `face_confidence`,
+//!   `face_in_dwell`, `at_edge`) — `update_context` is the one call Sprint 3
+//!   moves, so it must be observable.
+//! - two zones changing in the same tick, whose event order comes from the
+//!   `BTreeMap` in `ZoneEngine` and is otherwise unverified.
+//!
+//! The components behind these are unit-tested in `presence.rs` / `occupancy.rs`.
+//! What was missing is their *composition* through `scan()` — exactly what the
+//! refactor rewrites.
+
+use std::collections::HashMap;
+use std::time::Instant;
+
+use mana_control::FaceObservation;
+use mana_control::config::{
+    FsmCatalog, FsmRoles, FsmRoot, FsmState, FsmTransition, OccupancyPolicy, PresencePoiPolicy,
+    ZoneCatalog, ZoneSpec,
+};
+use mana_control::domain::LoopId;
+use mana_lite::fsm::{FsmEngine, FsmGuard, FsmProgram};
+use mana_lite::health::Health;
+use mana_lite::logger::{
+    Event, LogSink, RecordingSink, render_events_fixed_ts, scene_events_to_log,
+};
+use mana_lite::occupancy::OccupancyStateMachine;
+use mana_lite::presence::PresenceFilter;
+use mana_lite::scan::{
+    AgedEvidence, ControlPolicy, ControlState, ProcessImage, ScanInstant, ScanTimeline, SceneEvent,
+    SceneObservation, SceneSample, scan,
+};
+use mana_lite::track::{Tracker, TrackerConfig};
+use mana_lite::zones::{ZoneEngine, ZoneEvent};
+
+const PERIOD_MS: u64 = 200;
+const DATA_STALE_MS: u64 = 2_000;
+const FIXED_TS: &str = "1970-01-01T00:00:00.000Z";
+
+/// Nested zones: the bed sits inside the room, so a single track occupies both
+/// on the same tick. That is deliberate — trying to occupy two disjoint zones
+/// needs two tracks, and the tracker confirms them on different ticks, which
+/// staggers the events and hides the ordering this fixture exists to pin.
+///
+/// Names matter: `ZoneEngine` keys a `BTreeMap`, so "bed" must always be
+/// emitted before "room" within a tick.
+fn zone_catalog() -> ZoneCatalog {
+    let mut zones = HashMap::new();
+    zones.insert(
+        "bed".into(),
+        ZoneSpec {
+            x1: 100,
+            y1: 200,
+            x2: 500,
+            y2: 800,
+            label: Some("Bed A".into()),
+            hysteresis_ms: 0,
+        },
+    );
+    zones.insert(
+        "room".into(),
+        ZoneSpec {
+            x1: 0,
+            y1: 0,
+            x2: 1000,
+            y2: 900,
+            label: Some("Room 12".into()),
+            hysteresis_ms: 0,
+        },
+    );
+    ZoneCatalog {
+        zones,
+        // Required by the `face_in_dwell` guard below.
+        face_dwell: Some(ZoneSpec {
+            x1: 150,
+            y1: 250,
+            x2: 450,
+            y2: 500,
+            label: Some("Face dwell".into()),
+            hysteresis_ms: 0,
+        }),
+    }
+}
+
+fn catalog() -> FsmCatalog {
+    let mut states = HashMap::new();
+    for (name, label) in [
+        ("idle", "Room Empty"),
+        ("watching", "Person Present"),
+        ("engaged", "Face Engaged"),
+        ("crowded", "Multiple People"),
+        ("blind", "BLIND: No Camera Signal"),
+    ] {
+        states.insert(
+            name.into(),
+            FsmState {
+                label: Some(label.into()),
+                models: vec!["detect-fast".into()],
+                dwell_min_ms: None,
+                face_inside: false,
+                face_inside_maybe: false,
+            },
+        );
+    }
+    FsmCatalog {
+        fsm: FsmRoot {
+            initial: "idle".into(),
+            states,
+            roles: FsmRoles {
+                safe: "blind".into(),
+                reset: "idle".into(),
+            },
+            transitions: vec![
+                FsmTransition {
+                    from: "*".into(),
+                    to: "blind".into(),
+                    guards: vec![FsmGuard::DataStale],
+                    dwell: None,
+                },
+                FsmTransition {
+                    from: "blind".into(),
+                    to: "idle".into(),
+                    guards: vec![FsmGuard::DataFresh],
+                    dwell: None,
+                },
+                FsmTransition {
+                    from: "idle".into(),
+                    to: "watching".into(),
+                    guards: vec![FsmGuard::ZoneOccupied {
+                        zone: "bed".into(),
+                        min_confidence: 0.5,
+                        min_duration_ms: Some(0),
+                    }],
+                    dwell: None,
+                },
+                // Observes `face_in_dwell`, set by update_context.
+                FsmTransition {
+                    from: "watching".into(),
+                    to: "engaged".into(),
+                    guards: vec![FsmGuard::FaceInDwell],
+                    dwell: None,
+                },
+                FsmTransition {
+                    from: "engaged".into(),
+                    to: "watching".into(),
+                    guards: vec![FsmGuard::FaceAbsent],
+                    dwell: None,
+                },
+                // Observes RoomCardinality::Multiple. Reachable from both the
+                // empty and the single-occupant state: a crowd can form either
+                // way, and the fixture must not depend on which one we are in.
+                FsmTransition {
+                    from: "watching".into(),
+                    to: "crowded".into(),
+                    guards: vec![FsmGuard::Cardinality {
+                        value: "multiple".into(),
+                    }],
+                    dwell: None,
+                },
+                FsmTransition {
+                    from: "idle".into(),
+                    to: "crowded".into(),
+                    guards: vec![FsmGuard::Cardinality {
+                        value: "multiple".into(),
+                    }],
+                    dwell: None,
+                },
+                FsmTransition {
+                    from: "crowded".into(),
+                    to: "idle".into(),
+                    guards: vec![FsmGuard::Cardinality {
+                        value: "empty".into(),
+                    }],
+                    dwell: None,
+                },
+                FsmTransition {
+                    from: "watching".into(),
+                    to: "idle".into(),
+                    guards: vec![FsmGuard::ZoneVacated {
+                        zone: "bed".into(),
+                        min_confidence: None,
+                        min_duration_ms: Some(0),
+                    }],
+                    dwell: None,
+                },
+            ],
+        },
+    }
+}
+
+fn person(bbox: [f32; 4], face: Option<FaceObservation>) -> SceneObservation {
+    SceneObservation {
+        class: "person".into(),
+        bbox,
+        confidence: 0.9,
+        source_models: vec!["detect-fast".into()],
+        face,
+    }
+}
+
+fn sample(observations: Vec<SceneObservation>, frame: u64) -> SceneSample {
+    let raw_person_count = observations
+        .iter()
+        .filter(|o| o.class.as_str() == "person")
+        .count();
+    SceneSample {
+        face_model_ran: observations.iter().any(|o| o.face.is_some()),
+        observations,
+        signal_valid: true,
+        raw_person_count,
+        frame_number: frame,
+    }
+}
+
+fn control_state(start: Instant) -> ControlState {
+    let zones = zone_catalog();
+    let program = FsmProgram::compile_lenient(&catalog(), &zones).expect("compile");
+    ControlState {
+        loop_id: LoopId::default_loop(),
+        tracker: Some(Tracker::with_config(TrackerConfig {
+            min_hits: 1,
+            ..TrackerConfig::default()
+        })),
+        presence: PresenceFilter::new(
+            true,
+            "person",
+            PresencePoiPolicy {
+                on_ms: 0,
+                off_ms: 200,
+            },
+        ),
+        occupancy: OccupancyStateMachine::new(OccupancyPolicy {
+            single_confirm_ms: 0,
+            empty_confirm_ms: 200,
+            multiple_confirm_ms: 0,
+            multiple_exit_ms: 0,
+            require_confirmed_tracks: false,
+        }),
+        zone_engine: Some(ZoneEngine::from_catalog(&zones)),
+        fsm_engine: Some(FsmEngine::from_program_at(program, start)),
+        health: Health::new_at(DATA_STALE_MS, DATA_STALE_MS / 2, start),
+        fsm_context: Default::default(),
+        last_scan_at: start,
+        scan_seq: 0,
+        policy: ControlPolicy {
+            person_class: "person".into(),
+            presence_enabled: true,
+            data_stale_ms: DATA_STALE_MS,
+            scan_period_ms: PERIOD_MS,
+            // Both ROIs set, so face_in_dwell and at_edge evaluate to real
+            // values instead of the None/false they take in the single-actor
+            // golden.
+            face_dwell_roi: Some([150, 250, 450, 500]),
+            person_detection_roi: Some([0, 0, 1000, 900]),
+            face_edge_margin_px: 20,
+        },
+    }
+}
+
+fn refresh(image: &mut ProcessImage, s: SceneSample, at: Instant) {
+    image.observations = Some(AgedEvidence::new(s, at));
+    image.measurement_pending = true;
+}
+
+/// Drives one tick and returns the raw event batch alongside the log records,
+/// so the test can assert on ordering that the JSONL flattens away.
+fn tick(
+    state: &mut ControlState,
+    image: &mut ProcessImage,
+    timeline: &mut ScanTimeline,
+    sink: &mut RecordingSink,
+    observations: Vec<SceneObservation>,
+    frame: u64,
+    first: bool,
+) -> (Vec<SceneEvent>, ScanInstant) {
+    let now = if first {
+        timeline.now()
+    } else {
+        timeline.advance()
+    };
+    refresh(image, sample(observations, frame), now.as_instant());
+    let events = scan(state, image, timeline);
+    image.measurement_pending = false;
+    for event in scene_events_to_log(&events) {
+        sink.emit(event);
+    }
+    (events, now)
+}
+
+#[test]
+fn multi_actor_cycle_matches_golden_jsonl() {
+    let start = Instant::now();
+    let mut timeline = ScanTimeline::new(LoopId::default_loop(), start, PERIOD_MS);
+    let mut state = control_state(start);
+    let mut image = ProcessImage::empty();
+    let mut sink = RecordingSink::default();
+
+    sink.emit(Event::meta_startup("test", "multi-actor"));
+
+    let face = FaceObservation {
+        bbox: [200.0, 300.0, 280.0, 400.0],
+        confidence: 0.8,
+    };
+    let in_bed = [150.0, 250.0, 350.0, 600.0];
+
+    // Phase 1 — one person with a face inside the dwell ROI: exercises the face
+    // arms of update_context and drives idle → watching → engaged.
+    let mut zone_batches: Vec<Vec<String>> = Vec::new();
+    let mut transcript: Vec<String> = Vec::new();
+    for frame in 1..=3u64 {
+        let (events, _) = tick(
+            &mut state,
+            &mut image,
+            &mut timeline,
+            &mut sink,
+            vec![person(in_bed, Some(face))],
+            frame,
+            frame == 1,
+        );
+        zone_batches.push(zone_names(&events));
+        transcript.push(event_kinds(&events));
+    }
+
+    // Phase 2 — the room empties: bed and room vacate on the same tick.
+    for frame in 4..=6u64 {
+        let (events, _) = tick(
+            &mut state,
+            &mut image,
+            &mut timeline,
+            &mut sink,
+            Vec::new(),
+            frame,
+            false,
+        );
+        zone_batches.push(zone_names(&events));
+        transcript.push(event_kinds(&events));
+    }
+
+    // Phase 3 — two people: presence goes Ambiguous (tracker input suppressed)
+    // and occupancy reaches Multiple.
+    let mut saw_ambiguous = false;
+    let mut saw_multiple = false;
+    for frame in 7..=10u64 {
+        let (events, _) = tick(
+            &mut state,
+            &mut image,
+            &mut timeline,
+            &mut sink,
+            vec![
+                person(in_bed, None),
+                person([600.0, 250.0, 800.0, 600.0], None),
+            ],
+            frame,
+            false,
+        );
+        zone_batches.push(zone_names(&events));
+        transcript.push(event_kinds(&events));
+        for event in &events {
+            if let SceneEvent::Presence { presence, .. } = event
+                && presence.as_str() == "ambiguous"
+            {
+                saw_ambiguous = true;
+            }
+            if let SceneEvent::Occupancy { state: card, .. } = event
+                && card.as_str() == "multiple"
+            {
+                saw_multiple = true;
+            }
+        }
+    }
+
+    let actual = render_events_fixed_ts(&sink.events, FIXED_TS);
+    let golden_path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/golden/multi_actor_cycle.jsonl"
+    );
+    if std::env::var_os("UPDATE_GOLDEN").is_some() {
+        std::fs::write(golden_path, &actual).expect("write golden");
+    }
+    let expected = std::fs::read_to_string(golden_path).expect("read golden");
+    assert_eq!(actual, expected);
+
+    // The raw event sequence, including what the logger drops. This is the
+    // fixture that actually pins Sprint 3's stated invariant.
+    let actual_events = format!("{}\n", transcript.join("\n"));
+    let events_path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/golden/multi_actor_cycle.events.txt"
+    );
+    if std::env::var_os("UPDATE_GOLDEN").is_some() {
+        std::fs::write(events_path, &actual_events).expect("write event golden");
+    }
+    let expected_events = std::fs::read_to_string(events_path).expect("read event golden");
+    assert_eq!(
+        actual_events, expected_events,
+        "scan() must return the same SceneEvent vector, in the same order"
+    );
+
+    // Contract assertions — these are what make the golden worth diffing.
+    // Without them a regenerated fixture could silently stop covering a branch.
+    assert!(
+        saw_ambiguous,
+        "two people must drive presence to Ambiguous; without it the \
+         `tracking = &[][..]` short circuit stays unexercised"
+    );
+    assert!(saw_multiple, "two people must drive occupancy to Multiple");
+
+    let multi_zone_ticks: Vec<&Vec<String>> = zone_batches.iter().filter(|b| b.len() > 1).collect();
+    assert!(
+        !multi_zone_ticks.is_empty(),
+        "no tick emitted two zone events; multi-zone ordering is the whole \
+         point of this fixture"
+    );
+    for batch in multi_zone_ticks {
+        let mut sorted = batch.clone();
+        sorted.sort();
+        assert_eq!(
+            batch, &sorted,
+            "zone events must come out in zone-id order (ZoneEngine keys a \
+             BTreeMap); got {batch:?}"
+        );
+    }
+
+    let jsonl = actual.as_str();
+    assert!(
+        jsonl.contains(r#""state":"engaged""#) || jsonl.contains(r#""to":"engaged""#),
+        "face_in_dwell must reach the FSM"
+    );
+    assert!(
+        jsonl.contains(r#""to":"crowded""#),
+        "cardinality=multiple must reach the FSM"
+    );
+}
+
+/// Renders the raw `SceneEvent` sequence of one tick.
+///
+/// This exists because the JSONL golden **cannot** see the whole vector:
+/// `scene_events_to_log` drops `Occupancy` and `FsmState` entirely
+/// ([src/logger/event.rs](src/logger/event.rs)). Verified by experiment —
+/// moving the `Occupancy` push past `Presence` in `scan()` leaves both JSONL
+/// goldens green. So a fixture over the JSONL alone does not pin "same vector,
+/// same order"; it pins "same loggable subset". This transcript closes that gap.
+fn event_kinds(events: &[SceneEvent]) -> String {
+    let kinds: Vec<&str> = events
+        .iter()
+        .map(|event| match event {
+            SceneEvent::Track { .. } => "track",
+            SceneEvent::Presence { .. } => "presence",
+            SceneEvent::Occupancy { .. } => "occupancy",
+            SceneEvent::EntityBoxes(_) => "entity_boxes",
+            SceneEvent::Zone { .. } => "zone",
+            SceneEvent::FsmTransition(_) => "fsm_transition",
+            SceneEvent::FsmState(_) => "fsm_state",
+            SceneEvent::Health(_) => "health",
+        })
+        .collect();
+    kinds.join(",")
+}
+
+fn zone_names(events: &[SceneEvent]) -> Vec<String> {
+    events
+        .iter()
+        .filter_map(|event| match event {
+            SceneEvent::Zone { event, .. } => Some(match event {
+                ZoneEvent::Occupied { zone, .. } | ZoneEvent::Vacated { zone, .. } => {
+                    zone.as_str().to_owned()
+                }
+            }),
+            _ => None,
+        })
+        .collect()
+}
