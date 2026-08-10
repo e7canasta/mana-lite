@@ -6,6 +6,15 @@ use super::super::models::{ModelCatalog, ModelEntry, ModelTask};
 use super::patch::{ModelFile, ModelManifest, ModelPatch};
 use crate::error::{ConfigError, Result};
 
+/// Environment override for where the ONNX weights live.
+///
+/// The catalogs carry paths relative to the repo root
+/// (`tools/model-tools/artifacts/...`), which only resolve when the process runs
+/// from that root. The weights are gitignored and multi-GB, so a worktree, a CI
+/// job or a deployment can't rely on that layout. Setting this repoints every
+/// relative model path at a shared location; absolute paths are left alone.
+pub const MODELS_HOME_ENV: &str = "MANA_MODELS_HOME";
+
 pub fn load_model_catalog(path: &Path) -> Result<ModelCatalog> {
     let manifest: ModelManifest = load_config(path)?;
     if manifest.include.is_empty() {
@@ -17,9 +26,26 @@ pub fn load_model_catalog(path: &Path) -> Result<ModelCatalog> {
     }
 
     let (base, base_profiles, task_files) = load_manifest_includes(path, manifest.include)?;
-    let catalog = merge_task_files_into_catalog(base, base_profiles, task_files)?;
+    let mut catalog = merge_task_files_into_catalog(base, base_profiles, task_files)?;
+    rebase_model_paths(
+        &mut catalog,
+        std::env::var_os(MODELS_HOME_ENV).map(PathBuf::from),
+    );
     validate_catalog_nonempty(&catalog)?;
     Ok(catalog)
+}
+
+/// Rebases relative model paths onto `models_home`, if set.
+///
+/// Absolute paths are deployment-pinned and stay untouched. With no override the
+/// catalog is returned verbatim, so the default behaviour does not change.
+pub(super) fn rebase_model_paths(catalog: &mut ModelCatalog, models_home: Option<PathBuf>) {
+    let Some(home) = models_home else { return };
+    for entry in catalog.models.values_mut() {
+        if entry.path.is_relative() {
+            entry.path = home.join(&entry.path);
+        }
+    }
 }
 
 fn load_manifest_includes(

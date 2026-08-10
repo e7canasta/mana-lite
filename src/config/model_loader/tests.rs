@@ -1,5 +1,7 @@
+use super::super::models::{ModelCatalog, ModelEntry, ModelTask};
 use super::*;
 use std::fs;
+use std::path::PathBuf;
 
 #[test]
 fn nested_patches_override_only_their_fields() {
@@ -96,4 +98,58 @@ fn overlay_resolves_against_parent_and_merges_nested_fields() {
     assert_eq!(detector.postprocess.max_detections, Some(1));
 
     fs::remove_dir_all(root).expect("remove temporary catalog directory");
+}
+
+fn entry_with_path(path: &str) -> ModelEntry {
+    ModelPatch {
+        path: Some(PathBuf::from(path)),
+        ..Default::default()
+    }
+    .resolve("test", ModelTask::Detect)
+    .expect("a patch carrying a path resolves")
+}
+
+/// Los catálogos traen rutas relativas a la raíz del repo y los pesos están
+/// gitignoreados. Sin este override la suite solo corre desde un checkout que
+/// además tenga los ONNX bajados — no en un worktree, ni en un clone, ni en CI.
+#[test]
+fn models_home_rebases_only_relative_paths() {
+    let mut catalog = ModelCatalog::default();
+    catalog.models.insert(
+        "relativo".into(),
+        entry_with_path("tools/model-tools/artifacts/detect.onnx"),
+    );
+    catalog
+        .models
+        .insert("absoluto".into(), entry_with_path("/opt/mana/pinned.onnx"));
+
+    rebase_model_paths(&mut catalog, Some(PathBuf::from("/srv/mana")));
+
+    assert_eq!(
+        catalog.models["relativo"].path,
+        PathBuf::from("/srv/mana/tools/model-tools/artifacts/detect.onnx"),
+        "una ruta relativa se reancla en MANA_MODELS_HOME"
+    );
+    assert_eq!(
+        catalog.models["absoluto"].path,
+        PathBuf::from("/opt/mana/pinned.onnx"),
+        "una ruta absoluta la fija el despliegue: no se toca"
+    );
+}
+
+#[test]
+fn without_models_home_the_catalog_is_untouched() {
+    let mut catalog = ModelCatalog::default();
+    catalog.models.insert(
+        "relativo".into(),
+        entry_with_path("tools/model-tools/artifacts/detect.onnx"),
+    );
+
+    rebase_model_paths(&mut catalog, None);
+
+    assert_eq!(
+        catalog.models["relativo"].path,
+        PathBuf::from("tools/model-tools/artifacts/detect.onnx"),
+        "sin override, el comportamiento por defecto no cambia"
+    );
 }
