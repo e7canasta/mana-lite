@@ -5,6 +5,7 @@ use std::time::Instant;
 
 use crate::DepthRuleSnapshot;
 use crate::health::Health;
+use crate::signals::SceneSignalsSnapshot;
 use crate::zones::{ZoneEngine, ZoneEvent};
 
 use serde::Deserialize;
@@ -55,6 +56,12 @@ pub enum FsmGuard {
         #[serde(default = "default_guard_triggered")]
         triggered: bool,
     },
+    #[serde(rename = "signal")]
+    Signal {
+        tag: String,
+        op: String,
+        value: SignalLiteral,
+    },
     #[serde(rename = "cardinality")]
     Cardinality { value: String },
     #[serde(rename = "person_present")]
@@ -82,6 +89,19 @@ pub enum FsmGuard {
     FaceWasNotInside,
 }
 
+/// Untyped literal accepted by a generic signal guard before boot validation.
+///
+/// Keeping the literal untyped lets compilation accumulate useful diagnostics
+/// instead of making TOML deserialization fail on the first guard.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(untagged)]
+pub enum SignalLiteral {
+    Bool(bool),
+    Integer(i64),
+    Float(f64),
+    Text(String),
+}
+
 fn default_guard_triggered() -> bool {
     true
 }
@@ -99,6 +119,7 @@ pub struct GuardCtx<'a> {
     pub depth: &'a DepthRuleSnapshot,
     pub scene: &'a FsmSceneContext,
     pub face_was_inside: bool,
+    pub signals: &'a SceneSignalsSnapshot,
 }
 
 pub(super) fn state_label(program: &FsmProgram, state: &str) -> Option<String> {
@@ -249,6 +270,9 @@ pub(super) fn eval_guard(guard: &ProgramGuard, ctx: &GuardCtx<'_>) -> bool {
         ProgramGuard::DataFresh => !ctx.health.is_blind(),
         ProgramGuard::DepthRule { rule, triggered } => {
             ctx.depth.is_triggered(rule) == Some(*triggered)
+        }
+        ProgramGuard::Signal { tag, op, value } => {
+            ctx.signals.matches(tag, *op, value).unwrap_or(false)
         }
         ProgramGuard::Cardinality { value } => {
             ctx.scene.cardinality.as_deref() == Some(value.as_str())

@@ -348,23 +348,25 @@ fn evaluate_fsm(
     state.signal_snapshot = signals.snapshot(scene_signal_catalog());
     if let Some(f) = state.fsm_engine.as_mut() {
         let depth = image.depth_snapshot();
-        if let Some(x) = f.evaluate_with_context_at(
+        if let Some(x) = f.evaluate_with_signals_at(
             zones,
             state.zone_engine.as_ref(),
             &state.health,
             &depth,
             &state.fsm_context,
+            &state.signal_snapshot,
             now,
         ) {
             events.push(SceneEvent::FsmTransition(x))
         }
         events.push(SceneEvent::FsmState(f.snapshot_at(now).state));
-        if let Some(x) = f.evaluate_wildcard_with_context_at(
+        if let Some(x) = f.evaluate_wildcard_with_signals_at(
             &[],
             state.zone_engine.as_ref(),
             &state.health,
             &depth,
             &state.fsm_context,
+            &state.signal_snapshot,
             now,
         ) {
             events.push(SceneEvent::FsmTransition(x));

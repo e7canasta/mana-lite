@@ -11,7 +11,7 @@ mod observability;
 mod validation;
 mod zones;
 
-pub use crate::fsm::FsmGuard;
+pub use crate::fsm::{FsmGuard, SignalLiteral};
 pub use app::{
     AppConfig, DetectionConfig, HealthConfig, InferenceConfig, IngestConfig,
     MANA_TOML_SCHEMA_VERSION, OccupancyPolicy, OutputConfig, PipelineConfig, PresenceConfig,

@@ -1,4 +1,4 @@
-use crate::fsm::FsmGuard;
+pub use crate::fsm::{FsmGuard, SignalLiteral};
 use serde::Deserialize;
 use std::collections::HashMap;
 #[derive(Debug, Clone, Deserialize)]

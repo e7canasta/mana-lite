@@ -6,6 +6,7 @@ use crate::DepthRuleSnapshot;
 use crate::config::{
     FsmCatalog, FsmRoles, FsmRoot, FsmState, FsmTransition, ZoneCatalog, ZoneSpec,
 };
+use crate::signals::{SignalTable, SignalValue, scene_signal_catalog};
 
 pub(super) fn make_catalog(
     initial: &str,
@@ -187,6 +188,213 @@ fn unknown_state_model_fails_compilation() {
     assert!(
         FsmProgram::compile_with_references(&catalog, None, None, None).is_ok(),
         "model validation must stay opt-in when names are not supplied"
+    );
+}
+
+fn signal_errors(guard: FsmGuard, from: &str) -> Vec<String> {
+    let catalog = make_catalog(
+        "idle",
+        vec![("idle", vec![]), ("target", vec![])],
+        vec![FsmTransition {
+            from: from.into(),
+            to: "target".into(),
+            guards: vec![guard],
+            dwell: None,
+        }],
+    );
+    FsmProgram::compile_lenient(&catalog, &test_zones(&catalog))
+        .expect_err("invalid signal guard must be rejected")
+}
+
+#[test]
+fn signal_guard_compiles_and_reads_the_frozen_snapshot() {
+    let catalog = make_catalog(
+        "idle",
+        vec![("idle", vec![]), ("target", vec![])],
+        vec![FsmTransition {
+            from: "idle".into(),
+            to: "target".into(),
+            guards: vec![FsmGuard::Signal {
+                tag: "persona.presente".into(),
+                op: "==".into(),
+                value: SignalLiteral::Bool(true),
+            }],
+            dwell: None,
+        }],
+    );
+    let start = Instant::now(); // cfg(test)
+    let mut engine = engine_at(&catalog, start);
+    let mut table = SignalTable::new();
+    table
+        .insert(
+            scene_signal_catalog(),
+            crate::domain::SignalTag::new("persona.presente"),
+            SignalValue::Bool(true),
+        )
+        .unwrap();
+    let snapshot = table.snapshot(scene_signal_catalog());
+    let health = crate::health::Health::new_at(10_000, 5_000, start);
+
+    let result = engine.evaluate_with_signals_at(
+        &[],
+        None,
+        &health,
+        &DepthRuleSnapshot::default(),
+        &crate::fsm::FsmSceneContext::default(),
+        &snapshot,
+        start,
+    );
+
+    assert_eq!(result.expect("signal should match").to, "target");
+}
+
+#[test]
+fn signal_literals_deserialize_without_losing_numeric_shape() {
+    let catalog: FsmCatalog = toml::from_str(
+        r#"
+            [fsm]
+            initial = "idle"
+
+            [fsm.states.idle]
+            [fsm.states.target]
+
+            [fsm.roles]
+            safe = "idle"
+            reset = "idle"
+
+            [[fsm.transitions]]
+            from = "idle"
+            to = "target"
+            guards = [
+                { type = "signal", tag = "cara.confianza", op = ">=", value = 0.8 },
+                { type = "signal", tag = "persona.cantidad", op = ">", value = 1 },
+            ]
+        "#,
+    )
+    .expect("signal TOML should deserialize");
+
+    assert!(matches!(
+        &catalog.fsm.transitions[0].guards[0],
+        FsmGuard::Signal {
+            tag,
+            op,
+            value: SignalLiteral::Float(value),
+        } if tag == "cara.confianza" && op == ">=" && (*value - 0.8).abs() < f64::EPSILON
+    ));
+    assert!(matches!(
+        &catalog.fsm.transitions[0].guards[1],
+        FsmGuard::Signal {
+            tag,
+            op,
+            value: SignalLiteral::Integer(1),
+        } if tag == "persona.cantidad" && op == ">"
+    ));
+}
+
+#[test]
+fn unknown_signal_tag_reports_transition_guard_and_expectation() {
+    let errors = signal_errors(
+        FsmGuard::Signal {
+            tag: "unknown.tag".into(),
+            op: "==".into(),
+            value: SignalLiteral::Bool(true),
+        },
+        "idle",
+    );
+    assert!(
+        errors.iter().any(|error| {
+            error.contains("transition idle→target")
+                && error.contains("guard 0")
+                && error.contains("unknown.tag")
+                && error.contains("not declared")
+        }),
+        "unexpected errors: {errors:?}"
+    );
+}
+
+#[test]
+fn incompatible_signal_operator_reports_expected_kind() {
+    let ratio_errors = signal_errors(
+        FsmGuard::Signal {
+            tag: "cara.confianza".into(),
+            op: "==".into(),
+            value: SignalLiteral::Float(0.5),
+        },
+        "idle",
+    );
+    assert!(
+        ratio_errors.iter().any(|error| {
+            error.contains("cara.confianza") && error.contains("==") && error.contains("Ratio")
+        }),
+        "unexpected ratio errors: {ratio_errors:?}"
+    );
+
+    let bool_errors = signal_errors(
+        FsmGuard::Signal {
+            tag: "persona.presente".into(),
+            op: ">=".into(),
+            value: SignalLiteral::Bool(true),
+        },
+        "idle",
+    );
+    assert!(
+        bool_errors.iter().any(|error| {
+            error.contains("persona.presente") && error.contains(">=") && error.contains("Bool")
+        }),
+        "unexpected bool errors: {bool_errors:?}"
+    );
+}
+
+#[test]
+fn invalid_signal_values_report_type_and_label_expectations() {
+    let count_errors = signal_errors(
+        FsmGuard::Signal {
+            tag: "persona.cantidad".into(),
+            op: ">=".into(),
+            value: SignalLiteral::Integer(-1),
+        },
+        "idle",
+    );
+    assert!(
+        count_errors
+            .iter()
+            .any(|error| { error.contains("persona.cantidad") && error.contains("non-negative") }),
+        "unexpected count errors: {count_errors:?}"
+    );
+
+    let label_errors = signal_errors(
+        FsmGuard::Signal {
+            tag: "ocupacion.cardinalidad".into(),
+            op: "==".into(),
+            value: SignalLiteral::Text("full".into()),
+        },
+        "idle",
+    );
+    assert!(
+        label_errors.iter().any(|error| {
+            error.contains("ocupacion.cardinalidad")
+                && error.contains("full")
+                && error.contains("empty")
+        }),
+        "unexpected label errors: {label_errors:?}"
+    );
+}
+
+#[test]
+fn signal_guard_is_rejected_on_wildcard_transition() {
+    let errors = signal_errors(
+        FsmGuard::Signal {
+            tag: "persona.presente".into(),
+            op: "==".into(),
+            value: SignalLiteral::Bool(true),
+        },
+        "*",
+    );
+    assert!(
+        errors
+            .iter()
+            .any(|error| { error.contains("persona.presente") && error.contains("wildcard") }),
+        "unexpected wildcard errors: {errors:?}"
     );
 }
 

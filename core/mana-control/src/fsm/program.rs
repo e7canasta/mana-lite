@@ -3,9 +3,12 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::config::{FsmCatalog, FsmState, ZoneCatalog, ZoneSpec};
-use crate::domain::{StateId, ZoneId};
+use crate::domain::{SignalTag, StateId, ZoneId};
+use crate::signals::{
+    Ratio, SignalDescriptor, SignalKind, SignalOp, SignalValue, scene_signal_catalog,
+};
 
-use super::guard::{FsmGuard, parse_dwell};
+use super::guard::{FsmGuard, SignalLiteral, parse_dwell};
 
 fn synthesize_zones_from_guards(catalog: &FsmCatalog) -> ZoneCatalog {
     let mut zones = HashMap::new();
@@ -114,6 +117,11 @@ pub enum ProgramGuard {
         rule: String,
         triggered: bool,
     },
+    Signal {
+        tag: SignalTag,
+        op: SignalOp,
+        value: SignalValue,
+    },
     Cardinality {
         value: String,
     },
@@ -194,8 +202,16 @@ impl FsmProgram {
             let guards = transition
                 .guards
                 .iter()
-                .filter_map(|guard| {
-                    Self::resolve_guard(guard, zones, &transition.from, &transition.to, &mut errors)
+                .enumerate()
+                .filter_map(|(index, guard)| {
+                    Self::resolve_guard(
+                        guard,
+                        zones,
+                        &transition.from,
+                        &transition.to,
+                        index,
+                        &mut errors,
+                    )
                 })
                 .collect();
             if let (Some(from), Some(to)) = (from, to) {
@@ -356,6 +372,7 @@ impl FsmProgram {
         zones: &ZoneCatalog,
         from: &str,
         to: &str,
+        index: usize,
         errors: &mut Vec<String>,
     ) -> Option<ProgramGuard> {
         let resolve_zone = |zone: &str, errors: &mut Vec<String>| {
@@ -407,6 +424,9 @@ impl FsmProgram {
                 rule: rule.clone(),
                 triggered: *triggered,
             },
+            FsmGuard::Signal { tag, op, value } => {
+                return Self::resolve_signal_guard(tag, op, value, from, to, index, errors);
+            }
             FsmGuard::Cardinality { value } => ProgramGuard::Cardinality {
                 value: value.clone(),
             },
@@ -423,6 +443,135 @@ impl FsmProgram {
             FsmGuard::FaceWasInside => ProgramGuard::FaceWasInside,
             FsmGuard::FaceWasNotInside => ProgramGuard::FaceWasNotInside,
         })
+    }
+
+    fn resolve_signal_guard(
+        tag_name: &str,
+        op_name: &str,
+        literal: &SignalLiteral,
+        from: &str,
+        to: &str,
+        index: usize,
+        errors: &mut Vec<String>,
+    ) -> Option<ProgramGuard> {
+        let context = format!("transition {from}→{to}, guard {index}, signal tag '{tag_name}'");
+        if from == "*" {
+            errors.push(format!(
+                "{context}: Signal guards are not allowed on wildcard transitions; expected a state-specific transition"
+            ));
+            return None;
+        }
+        let tag = SignalTag::new(tag_name);
+        let catalog = scene_signal_catalog();
+        let Some(descriptor) = catalog.get(&tag) else {
+            errors.push(format!(
+                "{context}: tag is not declared by the signal catalog"
+            ));
+            return None;
+        };
+
+        let Some(op) = SignalOp::parse(op_name) else {
+            errors.push(format!(
+                "{context}: unknown operator '{op_name}', expected one of ==, !=, >=, <=, >, <"
+            ));
+            return None;
+        };
+        if let Err(error) = op.require_compatible(descriptor.kind()) {
+            errors.push(format!(
+                "{context}: operator '{}' is incompatible with {:?}; expected an operator valid for {:?}",
+                op.symbol(), error.kind, descriptor.kind()
+            ));
+            return None;
+        }
+
+        let value =
+            match Self::compile_signal_literal(literal, descriptor.kind(), descriptor, &context) {
+                Ok(value) => value,
+                Err(error) => {
+                    errors.push(error);
+                    return None;
+                }
+            };
+
+        Some(ProgramGuard::Signal { tag, op, value })
+    }
+
+    fn compile_signal_literal(
+        literal: &SignalLiteral,
+        kind: SignalKind,
+        descriptor: &SignalDescriptor,
+        context: &str,
+    ) -> Result<SignalValue, String> {
+        match (kind, literal) {
+            (SignalKind::Bool, SignalLiteral::Bool(value)) => Ok(SignalValue::Bool(*value)),
+            (SignalKind::Bool, other) => Err(format!(
+                "{context}: expected a Bool literal, got {}",
+                Self::literal_kind(other)
+            )),
+            (SignalKind::Count, SignalLiteral::Integer(value)) => {
+                let count = u64::try_from(*value).map_err(|_| {
+                    format!("{context}: expected a non-negative Count literal, got {value}")
+                })?;
+                Ok(SignalValue::Count(count))
+            }
+            (SignalKind::Count, other) => Err(format!(
+                "{context}: expected a non-negative integer Count literal, got {}",
+                Self::literal_kind(other)
+            )),
+            (SignalKind::Ratio, SignalLiteral::Integer(value)) => {
+                #[allow(clippy::cast_precision_loss)]
+                let value = *value as f64;
+                Self::compile_ratio_literal(value, context)
+            }
+            (SignalKind::Ratio, SignalLiteral::Float(value)) => {
+                Self::compile_ratio_literal(*value, context)
+            }
+            (SignalKind::Ratio, other) => Err(format!(
+                "{context}: expected a finite Ratio literal in [0, 1], got {}",
+                Self::literal_kind(other)
+            )),
+            (SignalKind::Label, SignalLiteral::Text(value)) => {
+                if descriptor.allows_label(value) {
+                    Ok(SignalValue::Label(value.clone()))
+                } else {
+                    let expected = descriptor
+                        .allowed_labels()
+                        .iter()
+                        .map(String::as_str)
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    Err(format!(
+                        "{context}: label '{value}' is not emitible; expected one of [{expected}]"
+                    ))
+                }
+            }
+            (SignalKind::Label, other) => Err(format!(
+                "{context}: expected a Label string literal, got {}",
+                Self::literal_kind(other)
+            )),
+        }
+    }
+
+    fn compile_ratio_literal(value: f64, context: &str) -> Result<SignalValue, String> {
+        if !value.is_finite() || !(0.0..=1.0).contains(&value) {
+            return Err(format!(
+                "{context}: expected a finite Ratio literal in [0, 1], got {value}"
+            ));
+        }
+        #[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
+        let value = value as f32;
+        Ratio::new(value).map(SignalValue::Ratio).map_err(|_| {
+            format!("{context}: expected a finite Ratio literal in [0, 1], got {value}")
+        })
+    }
+
+    fn literal_kind(literal: &SignalLiteral) -> &'static str {
+        match literal {
+            SignalLiteral::Bool(_) => "Bool",
+            SignalLiteral::Integer(_) => "Integer",
+            SignalLiteral::Float(_) => "Float",
+            SignalLiteral::Text(_) => "Text",
+        }
     }
 
     pub(super) fn initial(&self) -> &StateId {

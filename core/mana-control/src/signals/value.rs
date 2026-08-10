@@ -132,6 +132,33 @@ pub enum SignalOp {
 }
 
 impl SignalOp {
+    /// Parses the symbolic operator used by FSM TOML.
+    #[must_use]
+    pub fn parse(symbol: &str) -> Option<Self> {
+        match symbol {
+            "==" => Some(Self::Eq),
+            "!=" => Some(Self::Ne),
+            ">=" => Some(Self::Gte),
+            "<=" => Some(Self::Lte),
+            ">" => Some(Self::Gt),
+            "<" => Some(Self::Lt),
+            _ => None,
+        }
+    }
+
+    /// Symbol used by the configuration format and diagnostics.
+    #[must_use]
+    pub const fn symbol(self) -> &'static str {
+        match self {
+            Self::Eq => "==",
+            Self::Ne => "!=",
+            Self::Gte => ">=",
+            Self::Lte => "<=",
+            Self::Gt => ">",
+            Self::Lt => "<",
+        }
+    }
+
     /// Whether this operator may be applied to values of `kind`.
     #[must_use]
     pub const fn is_compatible(self, kind: SignalKind) -> bool {

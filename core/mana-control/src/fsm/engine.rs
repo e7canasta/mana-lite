@@ -4,6 +4,7 @@ use std::time::Instant;
 use crate::DepthRuleSnapshot;
 use crate::domain::StateId;
 use crate::health::Health;
+use crate::signals::SceneSignalsSnapshot;
 use crate::zones::{ZoneEngine, ZoneEvent};
 
 use super::FsmProgram;
@@ -124,6 +125,29 @@ impl FsmEngine {
         context: &FsmSceneContext,
         now: Instant,
     ) -> Option<FsmTransitionResult> {
+        self.evaluate_wildcard_with_signals_at(
+            zone_events,
+            zone_engine,
+            health,
+            depth,
+            context,
+            &SceneSignalsSnapshot::default(),
+            now,
+        )
+    }
+
+    /// Evaluate only global (`from = "*"`) transitions using one frozen signal
+    /// snapshot for the whole evaluation.
+    pub fn evaluate_wildcard_with_signals_at(
+        &mut self,
+        zone_events: &[ZoneEvent],
+        zone_engine: Option<&ZoneEngine>,
+        health: &Health,
+        depth: &DepthRuleSnapshot,
+        context: &FsmSceneContext,
+        signals: &SceneSignalsSnapshot,
+        now: Instant,
+    ) -> Option<FsmTransitionResult> {
         self.update_face_latch(context);
         if !self.state_dwell_satisfied(now) {
             return None;
@@ -136,6 +160,7 @@ impl FsmEngine {
             depth,
             scene: context,
             face_was_inside: self.face_was_inside,
+            signals,
         };
         for t in self.program.transitions() {
             if !t.from.is_wildcard() {
@@ -166,6 +191,28 @@ impl FsmEngine {
         context: &FsmSceneContext,
         now: Instant,
     ) -> Option<FsmTransitionResult> {
+        self.evaluate_with_signals_at(
+            zone_events,
+            zone_engine,
+            health,
+            depth,
+            context,
+            &SceneSignalsSnapshot::default(),
+            now,
+        )
+    }
+
+    /// Evaluate the FSM against one immutable signal snapshot for the cycle.
+    pub fn evaluate_with_signals_at(
+        &mut self,
+        zone_events: &[ZoneEvent],
+        zone_engine: Option<&ZoneEngine>,
+        health: &Health,
+        depth: &DepthRuleSnapshot,
+        context: &FsmSceneContext,
+        signals: &SceneSignalsSnapshot,
+        now: Instant,
+    ) -> Option<FsmTransitionResult> {
         self.update_face_latch(context);
         if !self.state_dwell_satisfied(now) {
             return None;
@@ -179,6 +226,7 @@ impl FsmEngine {
             depth,
             scene: context,
             face_was_inside: self.face_was_inside,
+            signals,
         };
 
         for t in transitions {

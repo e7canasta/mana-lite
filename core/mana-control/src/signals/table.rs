@@ -160,6 +160,21 @@ impl SceneSignalsSnapshot {
         self.entries.get(tag).and_then(|v| v.as_ref())
     }
 
+    /// Evaluates `(tag, op, expected)` against the frozen value for this cycle.
+    ///
+    /// An absent tag never matches, including against `Ne`.
+    pub fn matches(
+        &self,
+        tag: &SignalTag,
+        op: SignalOp,
+        expected: &SignalValue,
+    ) -> Result<bool, CompareError> {
+        let Some(actual) = self.get(tag) else {
+            return Ok(false);
+        };
+        actual.compare(op, expected)
+    }
+
     /// Whether the snapshot knows about `tag` (declared in the catalog used
     /// to build it), regardless of presence.
     #[must_use]
