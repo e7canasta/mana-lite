@@ -420,6 +420,50 @@ mod tests {
         );
     }
 
+    /// Integration goldens always wire tracker/zones/FSM. This catches a lost
+    /// `if let Some(...)` when those three Option engines are split out of `scan()`.
+    #[test]
+    fn scan_with_null_engines_emits_only_occupancy_and_presence() {
+        let start = Instant::now(); // cfg(test)
+        let timeline = ScanTimeline::new(LoopId::default_loop(), start, 200);
+        let mut state = control_state(start, 10_000);
+        assert!(state.tracker.is_none());
+        assert!(state.zone_engine.is_none());
+        assert!(state.fsm_engine.is_none());
+
+        let image = ProcessImage {
+            observations: Some(AgedEvidence::new(
+                SceneSample {
+                    observations: vec![person()],
+                    signal_valid: true,
+                    raw_person_count: 1,
+                    frame_number: 1,
+                    face_model_ran: false,
+                },
+                start,
+            )),
+            depth: None,
+            measurement_pending: true,
+        };
+
+        let events = scan(&mut state, &image, &timeline);
+        assert_eq!(
+            events.len(),
+            2,
+            "null engines must not emit Track/Zone/EntityBoxes/Fsm/Health: {events:?}"
+        );
+        assert!(
+            matches!(events[0], SceneEvent::Occupancy { .. }),
+            "first event must be Occupancy, got {:?}",
+            events[0]
+        );
+        assert!(
+            matches!(events[1], SceneEvent::Presence { .. }),
+            "second event must be Presence, got {:?}",
+            events[1]
+        );
+    }
+
     /// The clock of one control loop must never tick another loop's state.
     /// Cheap to check and impossible to hit at N=1, but this is the invariant a
     /// multi-stream host (mana-os) would otherwise violate silently.
