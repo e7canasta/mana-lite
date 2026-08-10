@@ -1,15 +1,14 @@
 [package]
-name = "mana-video"
+name = "mana-media"
 version = "0.1.0"
 edition = "2024"
-description = "Video decoding commons: FrameDecoder trait, BufferPool, pixel format utils"
+description = "Media commons: frame types, FrameDecoder, BufferPool, H.264 helpers"
 
 [features]
-default = ["ffmpeg"]
+default = []
 ffmpeg = ["dep:ffmpeg-next"]
 
 [dependencies]
-mana-types = { path = "../mana-types" }
 log = "0.4"
 anyhow = "1"
 ffmpeg-next = { version = "8", optional = true }

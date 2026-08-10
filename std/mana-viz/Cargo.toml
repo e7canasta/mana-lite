@@ -9,7 +9,7 @@ default = ["rerun"]
 rerun = ["dep:rerun"]
 
 [dependencies]
-mana-types = { path = "../mana-types" }
+mana-media = { path = "../mana-media", default-features = false }
 rerun = { version = "0.35", optional = true }
 anyhow = "1"
 tracing = "0.1"

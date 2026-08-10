@@ -3,9 +3,7 @@ members = [
     "core/mana-control",
     "core/mana-perception",
     "std/mana-id",
-    "std/mana-rtsp",
-    "std/mana-types",
-    "std/mana-video",
+    "std/mana-media",
     "std/mana-viz",
     "std/mana-geometry",
 ]
@@ -26,7 +24,7 @@ authors = ["Mana OS Contributors"]
 
 [features]
 default = ["ffmpeg", "rerun"]
-ffmpeg = ["dep:ffmpeg-next", "mana-video/ffmpeg"]
+ffmpeg = ["dep:ffmpeg-next", "mana-media/ffmpeg"]
 rerun = ["dep:rerun", "dep:mana-viz", "mana-viz/rerun"]
 
 [[bin]]
@@ -39,10 +37,8 @@ path = "src/bin/depth-image-probe.rs"
 required-features = ["rerun"]
 
 [dependencies]
-mana-rtsp = { path = "std/mana-rtsp" }
-mana-video = { path = "std/mana-video", default-features = false }
+mana-media = { path = "std/mana-media", default-features = false }
 mana-viz = { path = "std/mana-viz", optional = true, default-features = false }
-mana-types = { path = "std/mana-types" }
 mana-geometry = { path = "std/mana-geometry", features = ["polygonize"] }
 mana-id = { path = "std/mana-id" }
 mana-control = { path = "core/mana-control" }

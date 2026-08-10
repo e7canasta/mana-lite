@@ -1,7 +1,7 @@
-//! mana-video/src/format.rs — Pixel format conversion utilities
+//! mana-media/src/format.rs — Pixel format conversion utilities
 //! ===============================================================
 //! Canonical implementation of `parse_pixel_format` and `pack_frame_into`.
-//! Single source of truth — imported by `mana-rtsp` and `mana-ingest`.
+//! Single source of truth for ffmpeg-backed decode paths.
 
 use anyhow::Result;
 

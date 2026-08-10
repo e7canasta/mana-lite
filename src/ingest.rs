@@ -300,7 +300,7 @@ impl FrameReader for RetinaReader {
                 Ok(Some(Ok(retina::codec::CodecItem::VideoFrame(vf)))) => {
                     self.rtp_window.record(false);
                     let h264 = vf.into_data();
-                    let is_keyframe = mana_rtsp::h264::contains_idr(&h264);
+                    let is_keyframe = mana_media::h264::contains_idr(&h264);
                     return Some(Frame { h264, is_keyframe });
                 }
                 Ok(Some(Err(e))) => {

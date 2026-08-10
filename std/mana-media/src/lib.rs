@@ -1,48 +1,25 @@
-//! mana-video — Video decoding commons
-//! ====================================
-//! Foundation crate for video decoding in the Mana OS. Provides the
-//! [`FrameDecoder`] trait contract, reusable buffer management, and
-//! pixel format utilities. Shared by production decoders (`mana-ingest`),
-//! replay (`mana-bag`), and RTSP infrastructure (`mana-rtsp`).
+//! mana-media — Media commons
+//! ==========================
+//! Frame transport types, video decoding contract, buffer pooling, and
+//! H.264 Annex-B helpers. Absorbs former `mana-video`, `mana-rtsp`, and
+//! the live frame types from `mana-types`.
 //!
-//! # Public API
-//!
-//! | Module | Purpose | Key types |
-//! |--------|---------|-----------|
-//! | [`FrameDecoder`] trait | Async video frame source contract | `next_frame()` → `DecodedFrame` |
-//! | [`buffer_pool`] | Zero-alloc `Vec<u8>` recycling | `BufferPool::acquire()` / `release()` |
-//! | [`format`] | Pixel format mapping + stride stripping | `parse_pixel_format()`, `pack_frame_into()` |
-//!
-//! # Quick example
-//!
-//! ```ignore
-//! use mana_video::FrameDecoder;
-//!
-//! let mut source = /* any FrameDecoder impl */;
-//! let frame = source.next_frame().await?;
-//! println!("{}x{} frame: {} bytes",
-//!     frame.header.width, frame.header.height, frame.pixels.len());
-//! ```
-//!
-//! See the [`pack_stride`](https://github.com/../examples/pack_stride.rs) example
-//! for a runnable demo.
-//!
-//! # Dependencies
-//!
-//! `mana-types` (uapi) → `ffmpeg-next` → `tracing` → `tokio`.
-//! Zero deps on `mana-bus`, `mana-pulse`, or `mana-component`.
+//! Tier T1/T0: no dependency on `mana-control`, `mana-perception`, or
+//! `mana-viz`.
 
 #![forbid(unsafe_code)]
 
 pub mod buffer_pool;
+pub mod frame;
+pub mod h264;
+
 #[cfg(feature = "ffmpeg")]
 pub mod decoder;
 #[cfg(feature = "ffmpeg")]
 pub mod format;
 
-pub use mana_types::PixelFormat;
+pub use frame::{PixelFormat, RawFrameV1};
 
-use mana_types::RawFrameV1;
 use std::fmt;
 use std::io;
 

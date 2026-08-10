@@ -1,8 +1,0 @@
-[package]
-name = "mana-types"
-version = "0.1.0"
-edition = "2024"
-description = "Shared types for mana-lite: PixelFormat, FrameHeader"
-
-[lints]
-workspace = true

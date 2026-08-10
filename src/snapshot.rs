@@ -6,9 +6,9 @@ use ffmpeg_next::util::frame::Video;
 use image::ExtendedColorType;
 use image::ImageEncoder;
 use image::codecs::png::{CompressionType, FilterType, PngEncoder};
-use mana_video::PixelFormat;
-use mana_video::decoder::SoftwareDecoder;
-use mana_video::format::pack_frame_into;
+use mana_media::PixelFormat;
+use mana_media::decoder::SoftwareDecoder;
+use mana_media::format::pack_frame_into;
 
 // ── Frame buffer ─────────────────────────────────────────────────
 

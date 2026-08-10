@@ -1,4 +1,4 @@
-//! mana-video/src/buffer_pool.rs — Reusable Vec<u8> pool
+//! mana-media/src/buffer_pool.rs — Reusable Vec<u8> pool
 //! ==============================================================
 //! Bounded pool that eliminates per-frame `malloc(6MB)+free(6MB)` churn.
 //! The RTSP background thread acquires a buffer, fills it with decoded

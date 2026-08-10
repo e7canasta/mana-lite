@@ -1,8 +1,4 @@
 //! Media frame wire types shared by the binary and `mana-viz`.
-//!
-//! Iceoryx scene/detection V1 types were removed in Sprint 4; they live in
-//! Full Mana OS. Only frame transport types remain here until `mana-media`
-//! absorbs them.
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
 #[repr(u32)]

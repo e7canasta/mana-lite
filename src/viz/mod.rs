@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 
-use mana_types::RawFrameV1;
+use mana_media::RawFrameV1;
 use mana_viz::boxes::boxes2d_from_xyxy;
 use mana_viz::logging;
 

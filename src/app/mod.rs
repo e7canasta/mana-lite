@@ -25,7 +25,7 @@ use crate::scan::{ControlStamp, ControlState, ScanTimeline, SceneEvent};
 use crate::snapshot::{FrameBuffer, FrameDecoder, SnapshotSaver};
 use mana_perception::domain::{ClassName, ModelId};
 #[cfg(feature = "rerun")]
-use mana_types::RawFrameV1;
+use mana_media::RawFrameV1;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::time::Instant;
 use tokio::signal::unix::{SignalKind, signal};

@@ -1,5 +1,5 @@
 use anyhow::Result;
-use mana_types::RawFrameV1;
+use mana_media::RawFrameV1;
 
 use super::util::log_at;
 
