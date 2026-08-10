@@ -1,7 +1,17 @@
 # ADR-031: Scene Signal Table
 
-**Status:** Proposed
+**Status:** Superseded por [ADR-032](032-scene-signals-as-contract.md)
 **Date:** 2026-08-09
+
+> Este ADR justificó la tabla de señales por **costo interno de desarrollo** (6
+> ediciones por regla) y la condicionó a umbrales de crecimiento. Ese encuadre
+> era incorrecto y por eso quedó dos meses sin implementar: las 6 ediciones son
+> veinte minutos de una tarea de días, y esperar al umbral no aplica a una
+> interfaz. ADR-032 la reencuadra como **contrato publicado** y agrega las
+> reglas que este documento no tenía: vocabulario declarado, semántica de
+> valores, regla de evolución y observabilidad del gemelo completo.
+>
+> El análisis técnico de abajo sigue siendo válido y es la base de ADR-032.
 
 ## Context
 

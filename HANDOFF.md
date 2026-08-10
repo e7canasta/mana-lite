@@ -1,235 +1,156 @@
-# MANA-LITE — Handoff / Onboarding
+# MANA-LITE — Handoff
 
-> Documento para que una sesión nueva pueda retomar el trabajo **sin leer nada más**.
-> Lengua del proyecto: español (comentarios de código y mensajes en español).
+> Para que una sesión nueva retome el trabajo **sin leer nada más**.
+> Lengua del proyecto: español, también en comentarios de código y commits.
 
-## 1. El proyecto en una cápsula
+*Actualizado: 2026-08-10, al cerrar el refactor por tiers.*
 
-`mana-lite` es un binario Rust que corre un pipeline de visión RTSP en tiempo real:
-recibe keyframes H264 por RTSP (`rtp::Ingest`), los decodifica (`decoder`), los
-procesa con un modelo de detección, mantiene una máquina de estados de detección
-(`fsm`) y publica todo en un log JSONL. Es la base de la tesis de PLC: el log debe
-ser **forense** — reconstruible corrida a corrida, con todos los eventos que
-importan y las métricas que explican el comportamiento.
+## 1. Qué es esto
 
-Estructura (módulos declarados en `src/main.rs`):
+`mana-lite` es un **PLC cuyo dispositivo de campo es una cámara**. No es una app
+de visión con lógica adentro: es un controlador de cadencia fija que resulta
+tener un sensor óptico.
 
-- `src/main.rs` — superloop, `struct App`, bootstrap, `frame_timestamp_ns`.
-- `src/ingest.rs` — RTSP + dedup por bytes (`last_h264`), `ErrorWindow` importado.
-- `src/pipeline.rs` — `PipelineState`: health (decoder/resize/frames/blind),
-  watchdog de panics, `log_cycle_line`, `mark_health_fresh`, `on_keyframe`.
-- `src/fsm.rs` — `FsmEngine` (idle/detected/blind), dwell timers, `force_safe_state`.
-- `src/metrics.rs` — `MetricsEngine` (infer/cycle metrics, p95), reportes.
-- `src/window.rs` — `ErrorWindow` (ventana deslizante compartida).
-- `src/config/` — `AppConfig` (app.rs, fsm.rs, observability.rs, metrics.rs...).
-- `src/logger/` — `LogManager` (trait `LogSink`), `JsonlHandler`, `event.rs`,
-  `serialize.rs` (write_event → JSONL).
-- `src/viz.rs` — display de estado en vivo.
+Corre a dos tasas. El campo (RTSP → decode → ONNX) va a la velocidad que puede,
+con latencia variable y fallando seguido. El programa (tracker → presencia →
+ocupación → zonas → FSM → health) corre a cadencia fija y **tiene que emitir
+salida en cada tick aunque el campo esté muerto**. Entre los dos hay un solo
+objeto: la imagen de proceso (`ProcessImage`), congelada y fechada.
 
-## 2. Estado actual (crítico: el working tree NO está commiteado)
+El caso clínico que corre hoy es prevención de caídas de cama:
+`idle → watching → bed_approaching → bed_alert`.
 
-Se está implementando una mini-spec de 5 ítems + bonus, de a un ítem con revisión
-del usuario entre cada uno. **Todo lo hecho hasta ahora está en el working tree,
-sin commit.** Antes de tocar nada: `git status` y `git diff --stat` para verlo.
+**La pregunta que ubica cualquier cosa:** *si la entrada nunca vuelve a llegar,
+¿esto tiene que seguir produciendo salida correcta en cada tick?* Sí → T2
+programa. No → T1 campo.
 
-| ítem | Estado |
+## 2. Dónde estamos
+
+**Terminado y archivado:** el refactor por tiers, seis sprints. Ver
+[`docs/archive/2026-08-refactor-por-tiers/`](docs/archive/2026-08-refactor-por-tiers/README.md).
+
+Estado medido: 6 paquetes, **366 tests**, `scan()` en ocho pasos nombrados,
+cero funciones de producción sobre 80 líneas, cero archivos de `src/` sobre 600,
+reloj sellado por tipo, CI corriendo la compuerta.
+
+**Abierto:** [`docs/scene-signals/`](docs/scene-signals/README.md) — la tabla de
+señales. Sin empezar. El plan son cuatro etapas en
+[2-sprints.md](docs/scene-signals/2-sprints.md).
+
+## 3. Cómo se trabaja
+
+**Ernesto implementa con Cursor, Claude revisa etapa por etapa.** Cinco fases
+por etapa: congelar, ejecutar, verificar, revisar, cerrar.
+
+Para que la revisión sirva, cada entrega trae:
+
+1. El **diff completo** de la etapa, no el estado final del árbol.
+2. La **salida literal** de cada comando de la compuerta.
+3. Las **decisiones que se desviaron del plan**, con su razón.
+
+Orden de revisión: (1) no se rompió una frontera de tier, (2) los goldens son
+idénticos o la diferencia está justificada, (3) lo puede leer alguien que no lo
+escribió, (4) reuso y simplificación. En ese orden.
+
+## 4. Arrancar
+
+```sh
+export PATH="$HOME/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin:$PATH"
+export LD_LIBRARY_PATH="$HOME/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib"
+export CARGO_TARGET_DIR=$HOME/.cache/mana-lite-target
+export MANA_MODELS_HOME=/ruta/al/checkout-con-artifacts
+```
+
+**El repo no es autocontenido.** Depende por path de `../inference`, que es otro
+repo (`e7canasta/mana-inference`). Tienen que estar hermanos:
+
+```
+mana-lite-workspace/
+├── mana-lite/
+└── inference/
+```
+
+**Sin pesos ONNX** (están gitignoreados) corre todo menos un test:
+
+```sh
+cargo test --workspace --no-default-features --features ffmpeg \
+  -- --skip bootstrap_with_reader_wires_real_catalogs      # 352 tests, 264 crates
+```
+
+Con `MANA_MODELS_HOME` apuntado, la suite completa: 366 debug / 365 release.
+
+`--no-default-features` apaga `rerun` y baja el build de 510 a 264 crates. Para
+iterar sobre el lazo de control, es la forma rápida.
+
+## 5. La red de seguridad
+
+Tres fixtures, y cuál sirve para qué **importa**:
+
+| Fixture | Qué fija |
 |---|---|
-| Bonus + ítem 4 (reloj monotónico + una lectura por scan) | ✅ hecho |
-| ítem 1 (watchdog de panics por densidad + FSM a blind) | ✅ hecho |
-| ítem 3 (presupuesto de ciclo / cycle_overruns / p95) | ✅ hecho (verificado, sin commitear) |
-| ítem 2 (apagado ordenado por señal) | ❌ **PENDIENTE — es el objetivo** |
-| ítem 5 (dedup por hash) | ❌ pendiente |
+| `tests/golden/synthetic_cycle.jsonl` | ciclo de un actor → salida de log |
+| `tests/golden/multi_actor_cycle.jsonl` | dos personas, cara, dos zonas → salida de log |
+| `tests/golden/multi_actor_cycle.events.txt` | **la secuencia cruda de `SceneEvent` por tick** |
 
-Tests: 226 verdes (17 lib + 209 bin). Verificación: `cargo test` y protocolo
-clippy (ver §7).
+El tercero existe porque los JSONL **no alcanzan**: `scene_events_to_log`
+descarta `SceneEvent::Occupancy` y `SceneEvent::FsmState`, así que reordenarlos
+los deja verdes. Si tocás `scan()`, tu detector es `events.txt`.
 
-### Resumen de lo hecho (para no repetirlo)
+Regenerar: `UPDATE_GOLDEN=1 cargo test <nombre>`. **Y después mirá el diff** —
+un golden regenerado sin leerlo no es una red, es un sello de goma.
 
-- **Reloj (bonus + ítem 4):** `App` tiene `boot_wall: DateTime<Utc>` y
-  `boot_instant: Instant` anclados juntos en bootstrap (una sola fuente de
-  verdad). `frame_timestamp_ns(boot_wall, boot_instant, now)` produce el
-  timestamp monotónico del frame. `cycle_now = Instant::now()` se lee UNA vez
-  por iteración del loop y viaja a `process_keyframe` → `mark_health_fresh` /
-  `on_keyframe`. NO re-anclar en rotación horaria (decisión tomada).
-- **Watchdog (ítem 1):** `src/window.rs::ErrorWindow` compartido entre
-  `ingest.rs` y `pipeline.rs`. Config: `panic_window_cycles` (20) +
-  `max_panics_in_window` (3) — la ventana cuenta panics, el 4º dispara
-  (`count > threshold`). En el catch del loop: `fsm.force_safe_state(cycle_now)`
-  y si `on_panic()` → log + `break`. `force_safe_state` (fsm.rs ~línea 337)
-  va a `blind` directo y purga `dwell_timers` + `state_entered_at`.
-- **Presupuesto de ciclo (ítem 3):** `tick_cycle_at(now, processed)` mide el
-  periodo real del scan contra `cycle_budget_ms` (default 50 = el
-  `poll_timeout_ms`, "techo ~20 Hz"). Overrun SOLO en ciclos con trabajo real
-  (`processed=true`); el ocio nunca overrunea. El tick va **después** del bloque
-  de trabajo en el loop. p95 en aritmética entera (`div_ceil`, sin f64).
-  `MetricsReport` + `cycle_min/max/p95_ms`, `cycle_overruns`, `cycle_budget_ms`.
-  Línea `cycle:` en el texto (flag `cycle_line`, default true, observability.rs)
-  y 5 campos nuevos en el evento metrics del JSONL (serialize.rs ~línea 560).
+## 6. Estructura
 
-## 3. El ítem 2 (OBJETIVO): apagado ordenado por señal
+| Tier | Qué | Dónde |
+|---|---|---|
+| T0 · álgebra | sin tasa, sin estado, sin reloj | `mana-id`, `mana-geometry` |
+| T1 · campo | sensado y E/S; fallar es normal | `mana-media`, `mana-perception` |
+| T2 · programa | cadencia fija, determinista, reloj inyectado | `mana-control` |
+| T3 · reporte | JSONL, métricas, Rerun; nunca bloquea el tick | el binario (`src/`) |
 
-**Mini-spec (textual del usuario):**
-> Superloop se convierte en un `select!` entre el poll de RTSP y
-> `tokio::signal::ctrld::terminate()`; cuando termina, en vez del
-> `shutdown("loop_exit")` inalcanzable, `log.shutdown("signal")`; `LogManager`
-> implementa `Drop` con flush.
+**T2 no depende de T1** porque tiene que seguir corriendo cuando T1 murió. Lo
+hace cumplir `core/mana-control/Cargo.toml`: tres dependencias, `mana-id`,
+`mana-geometry`, `serde`. Agregar `mana-perception` ahí no rompe una convención,
+rompe la compilación.
 
-**Aceptación (manual):** `kill -TERM` sobre el proceso corriendo produce un
-JSONL (o stdout) cuya **última línea** es el evento shutdown — no truncada.
+## 7. Las cuatro reglas que costaron caro
 
-### Contexto del código actual
+**1. Verificá que la compuerta falle cuando debe fallar.** Dos pasaron en vacío
+durante sprints enteros: `git diff tests/golden/` sobre un fixture sin trackear,
+y el golden JSONL como detector de orden.
 
-- **Cargo.toml:29** — `tokio = { version = "1", features = ["macros", "rt", "net", "time"] }`
-  ⚠️ **FALTA la feature `"signal"`** → hay que agregarla. (Linux, así que
-  `tokio::signal::unix::signal(SignalKind::terminate())` es válido.)
-- **main.rs:548-603** — `async fn run(&mut self, config)`:
-  ```rust
-  async fn run(&mut self, config: &AppConfig) -> Result<()> {
-      loop {
-          let cycle_now = Instant::now();
-          let mut processed = false;
-          if let Some(kf) = self.ingest.poll_freshest_keyframe().await {
-              processed = true;
-              let result = catch_unwind(AssertUnwindSafe(|| {
-                  self.process_keyframe(kf, config, cycle_now);
-              }));
-              match result {
-                  Ok(()) => { let _ = self.state.on_ok(); }
-                  Err(e) => {
-                      // downcast msg → log → fsm.force_safe_state(cycle_now)
-                      // si self.state.on_panic() → log + break   (watchdog densidad)
-                  }
-              }
-          }
-          self.drain_ingest_counters();
-          self.evaluate_fsm_wildcard(config);
-          self.state.evaluate_health(cycle_now, ...);
-          self.log.flush();
-          self.viz.tick();
-      }
-      #[allow(unreachable_code)]
-      self.log.shutdown("loop_exit");   // ← se reemplaza por shutdown("signal")
-      Ok(())
-  }
-  ```
-- **main.rs:328-334** — `let mut log: Box<dyn LogSink> = Box::new(log);` (el
-  `LogManager` concreto vive dentro del trait object; al dropearse el Box al
-  final de `main()` se ejecuta el `drop` concreto — base para el `Drop`).
-- **logger/mod.rs:16-20** — trait `LogSink { emit; flush; shutdown(reason) }`.
-- **logger/mod.rs:32-121** — `LogManager` con `shutdown(reason)` (emite evento
-  `Event::Meta { event: "shutdown", detail: reason, attrs: [uptime] }` + flush).
-- **logger/mod.rs:176-195** — `JsonlHandler::handle_event` (buffer: `Vec<Event>`)
-  y `flush_buffer` (drain → `write_event` → `write_buf`). El flush normal pasa
-  por `BufWriter`; un `kill -9` dejaría líneas truncadas — eso es justo lo que
-  el shutdown evita.
-- El `break` por densidad de panics ya existe en el loop (parte del ítem 1);
-  no romperlo.
+**2. La config no debe declarar lo que el código no honra.** Pasó cuatro veces:
+un parámetro de validación que no validaba, un `min_confidence` inevaluable, un
+feature `rerun` que no apagaba nada, y `dwell = "-5s"` aceptado como 0. Un knob
+que se acepta y se ignora miente en la revisión.
 
-### Plan de implementación sugerido
+**3. Medí la condición, no un síntoma.** Se concluyó que faltaba un `cfg`
+mirando warnings que aparecen igual con el feature encendido.
 
-1. `Cargo.toml:29` → features `["macros", "rt", "net", "time", "signal"]`.
-2. En `run()`, antes del `loop` (una sola vez, fuera del loop para no reinstalar
-   el handler cada iteración):
-   ```rust
-   let mut term = tokio::signal::unix::signal(SignalKind::terminate())?;
-   ```
-   (con `use tokio::signal::unix::{SignalKind, signal}`).
-3. Convertir el poll en un `select!`:
-   ```rust
-   tokio::select! {
-       kf = self.ingest.poll_freshest_keyframe() => {
-           if let Some(kf) = kf {
-               // ...todo el cuerpo actual del if (processed, catch_unwind, ...)
-           }
-       }
-       _ = term.recv() => break,
-   }
-   ```
-4. Reemplazar `#[allow(unreachable_code)] self.log.shutdown("loop_exit")` por
-   `self.log.shutdown("signal")`.
-5. `impl Drop for LogManager { fn drop(&mut self) { self.flush(); } }` — red de
-   seguridad para caminos que no pasan por `run()` (bootstrap que falla, etc.).
-6. Tests (ver §6) y verificación clippy (§7).
+**4. Antes de diseñar una partición, mirá cuánto es test.** `logger/mod.rs` e
+`infer/mod.rs` parecían god files; eran archivos normales con una montaña de
+tests adentro.
 
-### Trampas conocidas (NO pisarlas)
+## 8. Deuda registrada
 
-- ⚠️ **En `select!` el branch del poll debe ser `kf = ... => { if let Some(kf) = kf {...} }`,
-  NUNCA `Some(kf) = ... => {...}`.** El poll resuelve `None` cuando expira el
-  timeout del ingest (ocio normal); si el patrón no matchea, `select!` descarta
-  el resultado y queda esperando solo el otro branch → el loop se cuelga en ocio
-  (los ciclos de 50 ms desaparecen).
-- `term.recv()` devuelve `Option<()>`; el branch `_ = term.recv() => break`
-  espera a que llegue la señal; si el handler se cierra devuelve `None` (no
-  ocurre acá, es un-only signal). No anidar `select!`s ni reinstalar el handler.
-- El cuerpo del branch conserva `processed`/`cycle_now`/`catch_unwind`/watchdog
-  tal cual; el ítem 3 depende de que `tick_cycle_at` siga después del bloque.
-- El `shutdown` ya emite el evento con uptime; no duplicar flush manual después.
-- La variable `log` es `Box<dyn LogSink>` — el `Drop` del `LogManager` corre vía
-  drop-glue del trait object, sin cambios en la estructura.
+| Deuda | Tamaño |
+|---|---|
+| Casts numéricos sin auditar en `mana-geometry` | ~202 avisos |
+| Comparación exacta de floats | 26 avisos |
+| `SceneEvent::FsmState(String)` | debería ser `StateId` |
+| `ProgramState.models: Vec<String>` | debería ser `Vec<ModelId>` |
+| `current_models() -> Vec<String>` | aloca un `Vec` por scan |
 
-## 4. Decisiones de diseño pendientes (preguntar al usuario si aplica)
+Los casts de `mana-control` ya se saldaron. El conteo de clippy es compuerta de
+**no-regresión**, no de cero.
 
-- ¿Distinguir razones de salida? (`shutdown("signal")` vs `shutdown("panic")` en
-  el break del watchdog — hoy solo existe `"loop_exit"` inalcanzable). La
-  mini-spec pide `"signal"`; lo mínimo es solo eso.
-- ¿Añadir también SIGINT (`tokio::signal::ctrl_c()`) al select? La spec pide
-  solo `terminate()`; lo mínimo es solo eso.
-- **Commitear el estado actual ANTES de empezar** (todo el trabajo previo está
-  sin commitear — proponérselo al usuario, no commitear por cuenta propia).
+## 9. Primer paso de la próxima sesión
 
-## 5. Reglas de la casa
+Leer [`docs/scene-signals/README.md`](docs/scene-signals/README.md) y arrancar
+la **Etapa A**: el vocabulario, sin conectar nada. Es la única etapa sin riesgo
+—nada la consume todavía— y define el contrato que las otras tres asumen.
 
-- Comentarios y docs en español; sin comentarios triviales.
-- No agregar dependencias nuevas sin preguntar.
-- Nada de `unsafe`, `unwrap` en rutas no-test, ni `anyhow` en errores nuevos
-  (usar errores propios/`io::Result` como el resto).
-- Seguir los patrones existentes: `new`/`new_at(now)` para tests, `MetricsReport`
-  con campos agrupados, flags en `MetricsTextConfig` con default true.
-- No tocar clippy preexistente (ver §7).
-
-## 6. Verificación
-
-- **Tests:** `cargo test` — deben quedar 226+ (17 lib + 209 bin + los nuevos).
-- **Tests nuevos sugeridos** (infraestructura ya existente en
-  `logger/mod.rs::mod tests`):
-  - `LogManager` con un handler de prueba: `shutdown("signal")` → el último
-    evento emitido es `Event::Meta` con `event=="shutdown"`, `detail=="signal"`,
-    y el buffer quedó drenado (flushed).
-  - `drop(manager)` → se llama `flush` (handler de prueba que registra flush).
-  - Si se quiere: test del `select!` es difícil en unit; la aceptación es
-    manual. No romper los tests de logger existentes
-    (p. ej. `health_blind_has_message`, ~línea 705).
-- **Aceptación manual:** correr el binario (puede ser sin `save_dir`, a stdout,
-  o con config de rotación) y `kill -TERM <pid>`; la última línea debe ser
-  `{"type":"meta","event":"shutdown","detail":"signal",...}` con newline final,
-  no truncada. Con `save_dir`: el archivo JSONL termina en esa línea.
-- **Clippy (protocolo):**
-  ```bash
-  cargo clippy --all-targets --bin mana-lite
-  ```
-  El repo tiene ~580 warnings preexistentes ("deuda de casa"). Método:
-  `git stash` → guardar warnings de HEAD → `git stash pop` → comparar por
-  módulo/archivo. Clases aceptadas (preexistentes, no ampliar): `const fn` en
-  defaults de serde, `more than 3 bools` (MetricsTextConfig), `too many lines`
-  (serialize.rs). NO introducir warning de clases nuevas ni en código nuevo.
-
-## 7. Lo que NO tocar (acuerdos cerrados)
-
-- `min_hits`, `update_single_person`, `ignore_persons` — no-goals sancionados
-  de la tesis.
-- No re-anclar el reloj en rotación horaria (decisión del ítem 4).
-- No cambiar semántica del watchdog (ventana por ciclos, `count > threshold`).
-- No tocar `ErrorWindow` ni `force_safe_state` (ítem 1 cerrado).
-- **ítem 5 (dedup por hash: `last_h264: Option<Vec<u8>>` →
-  `last_digest: Option<u64>` en ingest.rs:100-106)** NO se hace en esta sesión.
-- No refactors fuera del alcance; cada ítem termina con resumen de semántica
-  para que el usuario lo revise ANTES de seguir.
-
-## 8. Contexto externo que puede servir
-
-- Base de HEAD: sesión previa que cerró el gate de salud de decodificación
-  (`mark_health_fresh` solo cuando el frame decodifica bien, `on_keyframe` con
-  health, tests). Todo lo de la mini-spec está encima, sin commitear.
-- El usuario revisa cada ítem ("Andá de a uno y te los reviso igual que los
-  anteriores") — al terminar el ítem 2, presentar resumen de semántica y
-  esperar OK antes del ítem 5.
+Lo que hay que resolver ahí y no después: que `Ratio` fuera de `[0,1]` sea un
+error de construcción, y que no exista forma de comparar dos `Ratio` por
+igualdad. Si esas dos reglas no están en el tipo desde el principio, se cuelan
+comparaciones exactas de flotante en el lazo clínico.
