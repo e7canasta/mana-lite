@@ -122,8 +122,6 @@ pub enum ProgramGuard {
         op: SignalOp,
         value: SignalValue,
     },
-    FaceWasInside,
-    FaceWasNotInside,
 }
 
 /// Validated runtime representation of an FSM catalog.
@@ -396,8 +394,6 @@ impl FsmProgram {
             FsmGuard::Signal { tag, op, value } => {
                 return Self::resolve_signal_guard(tag, op, value, from, to, index, errors);
             }
-            FsmGuard::FaceWasInside => ProgramGuard::FaceWasInside,
-            FsmGuard::FaceWasNotInside => ProgramGuard::FaceWasNotInside,
         })
     }
 

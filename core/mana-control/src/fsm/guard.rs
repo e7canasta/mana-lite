@@ -62,10 +62,6 @@ pub enum FsmGuard {
         op: String,
         value: SignalLiteral,
     },
-    #[serde(rename = "face_was_inside")]
-    FaceWasInside,
-    #[serde(rename = "face_was_not_inside")]
-    FaceWasNotInside,
 }
 
 /// Untyped literal accepted by a generic signal guard before boot validation.
@@ -253,7 +249,5 @@ pub(super) fn eval_guard(guard: &ProgramGuard, ctx: &GuardCtx<'_>) -> bool {
         ProgramGuard::Signal { tag, op, value } => {
             ctx.signals.matches(tag, *op, value).unwrap_or(false)
         }
-        ProgramGuard::FaceWasInside => ctx.face_was_inside,
-        ProgramGuard::FaceWasNotInside => !ctx.face_was_inside,
     }
 }

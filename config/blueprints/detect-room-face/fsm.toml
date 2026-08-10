@@ -149,7 +149,7 @@ to = "exiting"
 dwell = "1500ms"
 guards = [
     { type = "signal", tag = "persona.presente", op = "==", value = false },
-    { type = "face_was_inside" },
+    { type = "signal", tag = "cara.estuvo_dentro", op = "==", value = true },
 ]
 
 [[fsm.transitions]]
@@ -189,7 +189,7 @@ to = "exiting"
 dwell = "1500ms"
 guards = [
     { type = "signal", tag = "persona.presente", op = "==", value = false },
-    { type = "face_was_inside" },
+    { type = "signal", tag = "cara.estuvo_dentro", op = "==", value = true },
 ]
 
 [[fsm.transitions]]
@@ -230,7 +230,7 @@ to = "exiting"
 dwell = "1500ms"
 guards = [
     { type = "signal", tag = "persona.presente", op = "==", value = false },
-    { type = "face_was_inside" },
+    { type = "signal", tag = "cara.estuvo_dentro", op = "==", value = true },
 ]
 
 [[fsm.transitions]]
@@ -272,7 +272,7 @@ to = "exiting"
 dwell = "1500ms"
 guards = [
     { type = "signal", tag = "persona.presente", op = "==", value = false },
-    { type = "face_was_inside" },
+    { type = "signal", tag = "cara.estuvo_dentro", op = "==", value = true },
 ]
 
 [[fsm.transitions]]
@@ -281,7 +281,7 @@ to = "idle"
 dwell = "1500ms"
 guards = [
     { type = "signal", tag = "persona.presente", op = "==", value = false },
-    { type = "face_was_not_inside" },
+    { type = "signal", tag = "cara.estuvo_dentro", op = "==", value = false },
 ]
 
 [[fsm.transitions]]

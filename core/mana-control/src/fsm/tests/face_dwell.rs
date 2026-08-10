@@ -275,7 +275,11 @@ fn face_dwell_and_inside_latch_drive_exiting() {
                         op: "==".into(),
                         value: SignalLiteral::Bool(false),
                     },
-                    FsmGuard::FaceWasInside,
+                    FsmGuard::Signal {
+                        tag: "cara.estuvo_dentro".into(),
+                        op: "==".into(),
+                        value: SignalLiteral::Bool(true),
+                    },
                 ],
                 dwell: Some("1s".into()),
             },
@@ -352,7 +356,10 @@ fn face_dwell_and_inside_latch_drive_exiting() {
         at_edge: false,
         face_model_ran: true,
     };
-    let absent_signals = snapshot_with_signals(&[("persona.presente", SignalValue::Bool(false))]);
+    let absent_signals = snapshot_with_signals(&[
+        ("persona.presente", SignalValue::Bool(false)),
+        ("cara.estuvo_dentro", SignalValue::Bool(true)),
+    ]);
     assert!(
         engine
             .evaluate_with_signals_at(
@@ -424,7 +431,11 @@ fn face_without_inside_history_cannot_enter_exiting() {
                         op: "==".into(),
                         value: SignalLiteral::Bool(false),
                     },
-                    FsmGuard::FaceWasInside,
+                    FsmGuard::Signal {
+                        tag: "cara.estuvo_dentro".into(),
+                        op: "==".into(),
+                        value: SignalLiteral::Bool(true),
+                    },
                 ],
                 dwell: None,
             },
@@ -437,7 +448,11 @@ fn face_without_inside_history_cannot_enter_exiting() {
                         op: "==".into(),
                         value: SignalLiteral::Bool(false),
                     },
-                    FsmGuard::FaceWasNotInside,
+                    FsmGuard::Signal {
+                        tag: "cara.estuvo_dentro".into(),
+                        op: "==".into(),
+                        value: SignalLiteral::Bool(false),
+                    },
                 ],
                 dwell: None,
             },
@@ -451,7 +466,10 @@ fn face_without_inside_history_cannot_enter_exiting() {
         person_present: false,
         ..Default::default()
     };
-    let absent_signals = snapshot_with_signals(&[("persona.presente", SignalValue::Bool(false))]);
+    let absent_signals = snapshot_with_signals(&[
+        ("persona.presente", SignalValue::Bool(false)),
+        ("cara.estuvo_dentro", SignalValue::Bool(false)),
+    ]);
     let result = engine.evaluate_with_signals_at(
         &[],
         None,
