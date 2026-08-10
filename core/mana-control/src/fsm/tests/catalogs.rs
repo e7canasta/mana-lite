@@ -352,6 +352,23 @@ fn incompatible_signal_operator_reports_expected_kind() {
         }),
         "unexpected bool errors: {bool_errors:?}"
     );
+
+    let unknown_operator_errors = signal_errors(
+        FsmGuard::Signal {
+            tag: "persona.presente".into(),
+            op: "contains".into(),
+            value: SignalLiteral::Bool(true),
+        },
+        "idle",
+    );
+    assert!(
+        unknown_operator_errors.iter().any(|error| {
+            error.contains("persona.presente")
+                && error.contains("contains")
+                && error.contains("expected one of")
+        }),
+        "unexpected operator errors: {unknown_operator_errors:?}"
+    );
 }
 
 #[test]
@@ -386,6 +403,38 @@ fn invalid_signal_values_report_type_and_label_expectations() {
                 && error.contains("empty")
         }),
         "unexpected label errors: {label_errors:?}"
+    );
+
+    let ratio_errors = signal_errors(
+        FsmGuard::Signal {
+            tag: "cara.confianza".into(),
+            op: ">=".into(),
+            value: SignalLiteral::Float(1.5),
+        },
+        "idle",
+    );
+    assert!(
+        ratio_errors.iter().any(|error| {
+            error.contains("cara.confianza")
+                && error.contains("finite Ratio")
+                && error.contains("[0, 1]")
+        }),
+        "unexpected ratio errors: {ratio_errors:?}"
+    );
+
+    let non_finite_errors = signal_errors(
+        FsmGuard::Signal {
+            tag: "cara.confianza".into(),
+            op: ">=".into(),
+            value: SignalLiteral::Float(f64::NAN),
+        },
+        "idle",
+    );
+    assert!(
+        non_finite_errors
+            .iter()
+            .any(|error| { error.contains("cara.confianza") && error.contains("finite Ratio") }),
+        "unexpected non-finite ratio errors: {non_finite_errors:?}"
     );
 }
 
