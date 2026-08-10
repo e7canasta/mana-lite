@@ -2,7 +2,7 @@
 use std::time::{Duration, Instant};
 
 pub use crate::SceneSample as ClinicalSample;
-use crate::domain::{ClassName, LoopId};
+use crate::domain::{ClassName, LoopId, SignalTag};
 use crate::fsm::{FsmEngine, FsmSceneContext, FsmTransitionResult};
 use crate::health::{Health, HealthTransition};
 use crate::occupancy::{
@@ -10,6 +10,7 @@ use crate::occupancy::{
     SignalValidity,
 };
 use crate::presence::{PresenceFilter, PresenceState, PresenceUpdate};
+use crate::signals::{Ratio, SceneSignalsSnapshot, SignalTable, SignalValue, scene_signal_catalog};
 use crate::track::{Track, TrackEvent, Tracker};
 use crate::zones::{ZoneEngine, ZoneEvent};
 pub use crate::{AgedEvidence, ProcessImage, SceneObservation, SceneSample};
@@ -68,6 +69,8 @@ pub struct ControlState {
     pub fsm_engine: Option<FsmEngine>,
     pub health: Health,
     pub fsm_context: FsmSceneContext,
+    /// Signals produced by the most recent control cycle.
+    pub signal_snapshot: SceneSignalsSnapshot,
     pub last_scan_at: Instant,
     pub scan_seq: u64,
     pub policy: ControlPolicy,
@@ -132,6 +135,7 @@ pub fn scan(
     let confirmed = update_tracking(state, image, &input, &presence, dt, &mut events);
     let occupancy = update_occupancy(state, &input, &presence, confirmed, now, &mut events);
     let zones = update_zones(state, input.stamp, now, &mut events);
+    let mut signals = SignalTable::new();
     evaluate_fsm(
         state,
         image,
@@ -139,6 +143,7 @@ pub fn scan(
         occupancy.state,
         &zones,
         now,
+        &mut signals,
         &mut events,
     );
     evaluate_health(state, now, &mut events);
@@ -318,6 +323,7 @@ fn evaluate_fsm(
     cardinality: RoomCardinality,
     zones: &[ZoneEvent],
     now: Instant,
+    signals: &mut SignalTable,
     events: &mut Vec<SceneEvent>,
 ) {
     // Context refresh moved here from between occupancy and zones: nothing between
@@ -329,7 +335,17 @@ fn evaluate_fsm(
         input.sample.raw_person_count,
         input.sample.face_model_ran,
         &input.sample.observations,
+        signals,
     );
+    if let Some(f) = state.fsm_engine.as_mut() {
+        f.update_face_latch(&state.fsm_context);
+        insert_signal(
+            signals,
+            "cara.estuvo_dentro",
+            SignalValue::Bool(f.face_was_inside()),
+        );
+    }
+    state.signal_snapshot = signals.snapshot(scene_signal_catalog());
     if let Some(f) = state.fsm_engine.as_mut() {
         let depth = image.depth_snapshot();
         if let Some(x) = f.evaluate_with_context_at(
@@ -371,6 +387,7 @@ fn update_context(
     raw: usize,
     face_model_ran: bool,
     obs: &[SceneObservation],
+    signals: &mut SignalTable,
 ) {
     let person = obs
         .iter()
@@ -391,7 +408,44 @@ fn update_context(
             policy.face_edge_margin_px,
         )
     });
-    ctx.face_model_ran = face_model_ran
+    ctx.face_model_ran = face_model_ran;
+
+    insert_signal(
+        signals,
+        "persona.presente",
+        SignalValue::Bool(ctx.person_present),
+    );
+    insert_signal(signals, "persona.cantidad", SignalValue::Count(raw as u64));
+    insert_signal(
+        signals,
+        "cara.presente",
+        SignalValue::Bool(ctx.face_present),
+    );
+    if let Some(confidence) = ctx.face_confidence {
+        let ratio = Ratio::new(confidence)
+            .unwrap_or_else(|error| panic!("invalid face confidence for scene signal: {error:?}"));
+        insert_signal(signals, "cara.confianza", SignalValue::Ratio(ratio));
+    }
+    if let Some(in_dwell) = ctx.face_in_dwell {
+        insert_signal(signals, "cara.en_dwell", SignalValue::Bool(in_dwell));
+    }
+    insert_signal(signals, "cara.en_borde", SignalValue::Bool(ctx.at_edge));
+    insert_signal(
+        signals,
+        "cara.modelo_corrio",
+        SignalValue::Bool(ctx.face_model_ran),
+    );
+    insert_signal(
+        signals,
+        "ocupacion.cardinalidad",
+        SignalValue::Label(cardinality.as_str().into()),
+    );
+}
+
+fn insert_signal(table: &mut SignalTable, tag: &str, value: SignalValue) {
+    table
+        .insert(scene_signal_catalog(), SignalTag::new(tag), value)
+        .unwrap_or_else(|error| panic!("scene signal producer/catalog mismatch: {error:?}"));
 }
 fn intersects(b: [f32; 4], r: [u32; 4]) -> bool {
     b[0] < r[2] as f32 && b[2] > r[0] as f32 && b[1] < r[3] as f32 && b[3] > r[1] as f32
@@ -438,7 +492,9 @@ impl ScanTimeline {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{OccupancyPolicy, PresencePoiPolicy};
+    use crate::config::{
+        FsmCatalog, FsmRoles, FsmRoot, FsmState, OccupancyPolicy, PresencePoiPolicy, ZoneCatalog,
+    };
 
     fn person() -> SceneObservation {
         SceneObservation {
@@ -448,6 +504,26 @@ mod tests {
             source_models: vec!["synthetic".into()],
             face: None,
         }
+    }
+
+    fn person_with_face() -> SceneObservation {
+        SceneObservation {
+            face: Some(crate::FaceObservation {
+                bbox: [10.0, 10.0, 20.0, 20.0],
+                confidence: 0.8,
+            }),
+            ..person()
+        }
+    }
+
+    fn signal<'a>(snapshot: &'a SceneSignalsSnapshot, name: &str) -> &'a SignalValue {
+        snapshot
+            .get(&SignalTag::new(name))
+            .unwrap_or_else(|| panic!("expected signal {name}"))
+    }
+
+    fn assert_bool(snapshot: &SceneSignalsSnapshot, name: &str, expected: bool) {
+        assert!(matches!(signal(snapshot, name), SignalValue::Bool(value) if *value == expected));
     }
 
     fn control_state(start: Instant, data_stale_ms: u64) -> ControlState {
@@ -473,6 +549,7 @@ mod tests {
             fsm_engine: None,
             health: Health::new_at(10_000, 5_000, start),
             fsm_context: Default::default(),
+            signal_snapshot: Default::default(),
             last_scan_at: start,
             scan_seq: 0,
             policy: ControlPolicy {
@@ -520,6 +597,123 @@ mod tests {
                 .any(|e| matches!(e, SceneEvent::Occupancy { .. })),
             "expected Occupancy event"
         );
+    }
+
+    #[test]
+    fn scan_produces_base_signals_and_rebuilds_them_each_cycle() {
+        let start = Instant::now(); // cfg(test)
+        let mut timeline = ScanTimeline::new(LoopId::default_loop(), start, 200);
+        let mut state = control_state(start, 10_000);
+        state.policy.face_dwell_roi = Some([0, 0, 50, 50]);
+        state.policy.person_detection_roi = Some([0, 0, 100, 100]);
+
+        let mut image = ProcessImage {
+            observations: Some(AgedEvidence::new(
+                SceneSample {
+                    observations: vec![person_with_face()],
+                    signal_valid: true,
+                    raw_person_count: 1,
+                    frame_number: 1,
+                    face_model_ran: true,
+                },
+                start,
+            )),
+            depth: None,
+            measurement_pending: true,
+        };
+
+        scan(&mut state, &image, &timeline);
+        let first = state.signal_snapshot.clone();
+        assert_eq!(first.catalog_version(), 1);
+        assert_eq!(
+            first.iter().filter(|(_, value)| value.is_some()).count(),
+            8,
+            "the first cycle must publish the eight base signals"
+        );
+        assert_bool(&first, "persona.presente", true);
+        assert!(matches!(
+            signal(&first, "persona.cantidad"),
+            SignalValue::Count(1)
+        ));
+        assert_bool(&first, "cara.presente", true);
+        let SignalValue::Ratio(confidence) = signal(&first, "cara.confianza") else {
+            panic!("face confidence must be a ratio");
+        };
+        assert!((confidence.get() - 0.8).abs() < f32::EPSILON);
+        assert_bool(&first, "cara.en_dwell", true);
+        assert_bool(&first, "cara.en_borde", true);
+        assert_bool(&first, "cara.modelo_corrio", true);
+        assert!(matches!(
+            signal(&first, "ocupacion.cardinalidad"),
+            SignalValue::Label(value) if value == "single"
+        ));
+        assert!(first.is_absent(&SignalTag::new("cara.estuvo_dentro")));
+
+        timeline.advance();
+        image.observations = Some(AgedEvidence::new(
+            SceneSample {
+                observations: Vec::new(),
+                signal_valid: true,
+                raw_person_count: 0,
+                frame_number: 2,
+                face_model_ran: false,
+            },
+            start + Duration::from_millis(200),
+        ));
+        scan(&mut state, &image, &timeline);
+        let second = &state.signal_snapshot;
+        assert_bool(second, "persona.presente", false);
+        assert!(matches!(
+            signal(second, "persona.cantidad"),
+            SignalValue::Count(0)
+        ));
+        assert_bool(second, "cara.presente", false);
+        assert!(second.is_absent(&SignalTag::new("cara.confianza")));
+        assert_bool(second, "cara.en_dwell", false);
+        assert_bool(second, "cara.modelo_corrio", false);
+    }
+
+    #[test]
+    fn scan_publishes_latch_after_fsm_applies_its_rules() {
+        let start = Instant::now(); // cfg(test)
+        let catalog = FsmCatalog {
+            fsm: FsmRoot {
+                initial: "inside".into(),
+                states: [(
+                    "inside".into(),
+                    FsmState {
+                        label: None,
+                        models: Vec::new(),
+                        dwell_min_ms: None,
+                        face_inside: true,
+                        face_inside_maybe: false,
+                    },
+                )]
+                .into_iter()
+                .collect(),
+                roles: FsmRoles {
+                    safe: "inside".into(),
+                    reset: "inside".into(),
+                },
+                transitions: Vec::new(),
+            },
+        };
+        let program = crate::fsm::FsmProgram::compile_lenient(&catalog, &ZoneCatalog::default())
+            .expect("compile latch fixture");
+        let mut state = control_state(start, 10_000);
+        state.fsm_engine = Some(FsmEngine::from_program_at(program, start));
+        let timeline = ScanTimeline::new(LoopId::default_loop(), start, 200);
+        let image = ProcessImage::empty();
+
+        scan(&mut state, &image, &timeline);
+
+        assert!(
+            state
+                .fsm_engine
+                .as_ref()
+                .is_some_and(FsmEngine::face_was_inside)
+        );
+        assert_bool(&state.signal_snapshot, "cara.estuvo_dentro", true);
     }
 
     /// Integration goldens always wire tracker/zones/FSM. This catches a lost

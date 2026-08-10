@@ -217,7 +217,11 @@ impl FsmEngine {
         None
     }
 
-    fn update_face_latch(&mut self, context: &FsmSceneContext) {
+    /// Applies the existing face-history rules before a cycle is evaluated.
+    ///
+    /// Stage B publishes the resulting value as a derived scene signal without
+    /// moving the latch rules into the scan orchestrator.
+    pub fn update_face_latch(&mut self, context: &FsmSceneContext) {
         if self.state_sets_face_latch(&self.current_state)
             || (self.state_maybe_sets_face_latch(&self.current_state) && context.face_present)
         {

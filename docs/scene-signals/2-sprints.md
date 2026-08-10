@@ -1,6 +1,6 @@
 # Plan de ejecución — Tabla de señales
 
-*Contrato: [1-spec.md](1-spec.md) · Decisión: [ADR-032](../adrs/032-scene-signals-as-contract.md)*
+*Contrato: [1-spec.md](1-spec.md) · Diseño técnico: [design.md](design.md) · Decisión: [ADR-032](../adrs/032-scene-signals-as-contract.md)*
 
 Cuatro etapas. El orden no es negociable por la misma razón que en el proyecto
 anterior: **primero la red, después el cambio.** Cada etapa tiene compuerta
@@ -15,12 +15,12 @@ Si un golden se mueve, no se regenera: se arregla el código. La única excepci�
 es la Etapa D, que **agrega** un evento nuevo — y ahí el golden viejo tiene que
 seguir siendo un prefijo del nuevo.
 
-| Etapa | Qué | Riesgo |
-|---|---|---|
-| **A** | Vocabulario y tipos, sin conectar nada | ninguno |
-| **B** | Producir señales en paralelo al contexto actual | bajo |
-| **C** | El guard genérico, migrando los 11 | **alto** |
-| **D** | Volcado del gemelo y limpieza | medio |
+| Etapa | Estado | Qué | Riesgo |
+|---|---|---|---|
+| **A** | **Cerrada** | Vocabulario y tipos, sin conectar nada | ninguno |
+| **B** | **Cerrada** | Producir señales en paralelo al contexto actual | bajo |
+| **C** | Pendiente | El guard genérico, migrando los 11 | **alto** |
+| **D** | Pendiente | Volcado del gemelo y limpieza | medio |
 
 ---
 
@@ -29,7 +29,8 @@ seguir siendo un prefijo del nuevo.
 Define el contrato sin tocar el lazo. Nada lo consume todavía, así que no puede
 romper nada.
 
-1. `SignalTag` vía `domain_id!` en `mana-id`, declarado por el crate productor
+1. `SignalTag` vía `domain_id!` en `mana-control`; el macro vive en
+   `mana-id`, pero el vocabulario pertenece al crate productor
    ([ADR-030](../adrs/030-shared-mechanism-owned-vocabulary.md)).
 2. `SignalValue` con `Bool`, `Count`, `Ratio`, `Label` y su semántica
    (sección 4.2 de la spec).
@@ -45,13 +46,17 @@ clínico.
 
 ```sh
 cargo test -p mana-control
-cargo clippy --workspace 2>&1 | grep -c 'too many lines'   # → 0
+cargo clippy --workspace -- -D warnings
 git diff tests/golden/                                      # → vacío
 ```
 
-- [ ] `SignalValue` rechaza `Ratio` fuera de rango en construcción
-- [ ] No existe forma de comparar dos `Ratio` por igualdad
-- [ ] Cero consumidores todavía: `grep -rn SignalTable core/mana-control/src` solo encuentra su propio módulo y sus tests
+- [x] `SignalValue` rechaza `Ratio` fuera de rango en construcción
+- [x] No existe forma pública de comparar dos `Ratio` por igualdad
+- [x] Cero consumidores todavía: `grep -rn SignalTable core/mana-control/src` solo encuentra su propio módulo y sus tests
+
+La orden estricta de Clippy queda registrada como deuda de línea base: falla por
+warnings preexistentes fuera de `signals/`. Las suites debug y release, el diff
+de goldens y la revisión de alcance están verdes.
 
 ---
 
@@ -63,7 +68,8 @@ git diff tests/golden/                                      # → vacío
 Suena redundante y es a propósito: permite verificar que la tabla dice lo mismo
 que el contexto **antes** de que algo dependa de ella.
 
-Los 11 tags iniciales salen de los 7 campos actuales:
+El catálogo v1 tiene nueve tags: ocho señales base y un latch derivado del
+engine. Las once son los guards simples que se migran en C.
 
 | Campo hoy | Tag | Tipo |
 |---|---|---|
@@ -75,11 +81,16 @@ Los 11 tags iniciales salen de los 7 campos actuales:
 | `at_edge` | `cara.en_borde` | `Bool` |
 | `face_model_ran` | `cara.modelo_corrio` | `Bool` |
 | `cardinality` | `ocupacion.cardinalidad` | `Label` |
+| `face_was_inside` del engine | `cara.estuvo_dentro` | `Bool` |
 
 `face_in_dwell` es `Option<bool>` hoy: ausente cuando no hay ROI configurado.
 Un tag ausente y un tag en `false` **no son lo mismo** y el contrato tiene que
 distinguirlos — si no, un despliegue sin ROI de dwell se comporta como uno con
 la cara afuera.
+
+`cara.estuvo_dentro` se inserta después de aplicar la lógica actual del latch y
+antes de la evaluación normal de guards. No sale de `update_context`, porque
+representa historial de FSM y no una observación cruda.
 
 ### Compuerta
 
@@ -88,9 +99,9 @@ cargo test --workspace && cargo test --workspace --release
 git diff tests/golden/                                      # → vacío
 ```
 
-- [ ] Test de paridad: para el escenario de `multi_actor_cycle`, cada tag
+- [x] Test de paridad: para el escenario de `multi_actor_cycle`, cada tag
       coincide con el campo equivalente en cada tick
-- [ ] Nada lee la tabla todavía
+- [x] Nada lee la tabla todavía
 
 ---
 
@@ -151,7 +162,8 @@ que se coló un cambio de comportamiento.
 cargo test --workspace && cargo test --workspace --release
 ```
 
-- [ ] El volcado incluye los 11 tags en cada tick
+- [ ] El volcado incluye los 9 tags declarados en cada tick, incluidos los
+      ausentes
 - [ ] El diff del golden es **sólo** líneas agregadas
 - [ ] Un incidente se puede reconstruir del log: qué señales había cuando el
       FSM decidió (o no decidió) alertar

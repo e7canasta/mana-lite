@@ -121,6 +121,7 @@ fn depth_evidence_in_process_image_fires_fsm_guard() {
         fsm_engine: Some(FsmEngine::from_program_at(program, start)),
         health: Health::new_at(10_000, 5_000, start),
         fsm_context: Default::default(),
+        signal_snapshot: Default::default(),
         last_scan_at: start,
         scan_seq: 0,
         policy: ControlPolicy {
@@ -194,6 +195,7 @@ fn empty_depth_snapshot_does_not_fire_depth_guard() {
         fsm_engine: Some(FsmEngine::from_program_at(program, start)),
         health: Health::new_at(10_000, 5_000, start),
         fsm_context: Default::default(),
+        signal_snapshot: Default::default(),
         last_scan_at: start,
         scan_seq: 0,
         policy: ControlPolicy {

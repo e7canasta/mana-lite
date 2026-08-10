@@ -27,7 +27,8 @@ use mana_control::config::{
     FsmCatalog, FsmRoles, FsmRoot, FsmState, FsmTransition, OccupancyPolicy, PresencePoiPolicy,
     ZoneCatalog, ZoneSpec,
 };
-use mana_control::domain::LoopId;
+use mana_control::domain::{LoopId, SignalTag};
+use mana_control::signals::{Ratio, SceneSignalsSnapshot, SignalOp, SignalValue};
 use mana_lite::fsm::{FsmEngine, FsmGuard, FsmProgram};
 use mana_lite::health::Health;
 use mana_lite::logger::{
@@ -249,6 +250,7 @@ fn control_state(start: Instant) -> ControlState {
         fsm_engine: Some(FsmEngine::from_program_at(program, start)),
         health: Health::new_at(DATA_STALE_MS, DATA_STALE_MS / 2, start),
         fsm_context: Default::default(),
+        signal_snapshot: Default::default(),
         last_scan_at: start,
         scan_seq: 0,
         policy: ControlPolicy {
@@ -287,13 +289,63 @@ fn tick(
     } else {
         timeline.advance()
     };
-    refresh(image, sample(observations, frame), now.as_instant());
+    let sample = sample(observations, frame);
+    refresh(image, sample.clone(), now.as_instant());
     let events = scan(state, image, timeline);
+    assert_base_signal_parity(state, &sample);
     image.measurement_pending = false;
     for event in scene_events_to_log(&events) {
         sink.emit(event);
     }
     (events, now)
+}
+
+fn signal<'a>(snapshot: &'a SceneSignalsSnapshot, name: &str) -> &'a SignalValue {
+    snapshot
+        .get(&SignalTag::new(name))
+        .unwrap_or_else(|| panic!("expected signal {name}"))
+}
+
+fn assert_bool_signal(snapshot: &SceneSignalsSnapshot, name: &str, expected: bool) {
+    assert!(matches!(signal(snapshot, name), SignalValue::Bool(value) if *value == expected));
+}
+
+fn assert_ratio_signal(snapshot: &SceneSignalsSnapshot, name: &str, expected: f32) {
+    let expected = SignalValue::Ratio(Ratio::new(expected).expect("fixture ratio"));
+    let actual = signal(snapshot, name);
+    assert!(actual.compare(SignalOp::Gte, &expected).unwrap());
+    assert!(expected.compare(SignalOp::Gte, actual).unwrap());
+}
+
+fn assert_base_signal_parity(state: &ControlState, sample: &SceneSample) {
+    let snapshot = &state.signal_snapshot;
+    let context = &state.fsm_context;
+    assert_eq!(snapshot.len(), 9);
+    assert_bool_signal(snapshot, "persona.presente", context.person_present);
+    assert!(matches!(
+        signal(snapshot, "persona.cantidad"),
+        SignalValue::Count(value) if *value == sample.raw_person_count as u64
+    ));
+    assert_bool_signal(snapshot, "cara.presente", context.face_present);
+
+    match context.face_confidence {
+        Some(confidence) => assert_ratio_signal(snapshot, "cara.confianza", confidence),
+        None => assert!(snapshot.is_absent(&SignalTag::new("cara.confianza"))),
+    }
+    match context.face_in_dwell {
+        Some(in_dwell) => assert_bool_signal(snapshot, "cara.en_dwell", in_dwell),
+        None => assert!(snapshot.is_absent(&SignalTag::new("cara.en_dwell"))),
+    }
+    assert_bool_signal(snapshot, "cara.en_borde", context.at_edge);
+    assert_bool_signal(snapshot, "cara.modelo_corrio", context.face_model_ran);
+    assert!(matches!(
+        signal(snapshot, "ocupacion.cardinalidad"),
+        SignalValue::Label(value) if context.cardinality.as_deref() == Some(value.as_str())
+    ));
+    assert!(matches!(
+        signal(snapshot, "cara.estuvo_dentro"),
+        SignalValue::Bool(_)
+    ));
 }
 
 #[test]

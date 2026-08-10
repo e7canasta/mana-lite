@@ -9,6 +9,7 @@ pub mod kalman;
 pub mod occupancy;
 pub mod presence;
 pub mod scan;
+pub mod signals;
 pub mod timing;
 pub mod track;
 pub mod window;

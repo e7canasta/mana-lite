@@ -1,7 +1,7 @@
 //! Control-owned vocabulary built on `mana-id` (ADR-030).
 //!
 //! Shared mechanism lives in `mana-id`. This crate owns `StateId`, `ZoneId`,
-//! `ClassName`, `ModelId` (process-image port), and `LoopId`.
+//! `ClassName`, `ModelId` (process-image port), `LoopId`, and `SignalTag`.
 
 pub use mana_id::DomStr;
 pub use mana_id::domain_id;
@@ -13,6 +13,10 @@ domain_id!(ModelId, "Model catalog key on the control port.");
 domain_id!(
     LoopId,
     "Control-loop identity for multi-stream portability."
+);
+domain_id!(
+    SignalTag,
+    "Scene signal tag from the declared signal catalog."
 );
 
 impl StateId {

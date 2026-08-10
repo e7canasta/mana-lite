@@ -69,6 +69,7 @@ pub(super) fn build_control_state(
             },
         ),
         fsm_context: FsmSceneContext::default(),
+        signal_snapshot: Default::default(),
         last_scan_at: boot_instant,
         scan_seq: 0,
         policy: ControlPolicy {

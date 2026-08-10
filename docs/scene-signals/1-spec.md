@@ -1,6 +1,6 @@
 # Spec — Tabla de señales de escena
 
-**Estado:** Diseño aprobado, sin implementar
+**Estado:** Diseño aprobado; Etapas A y B implementadas; Etapa C abierta
 **Version:** 0.1
 **Fecha:** 2026-08-10
 **Decisión de base:** [ADR-032](../adrs/032-scene-signals-as-contract.md)
@@ -8,11 +8,14 @@
 
 ## 1. Objetivo de negocio
 
-Que **cambiar una regla clínica deje de ser un release**.
+Que **expresar una condición clínica nueva sobre evidencia ya producida deje de
+ser un release**.
 
-Hoy, si un servicio pide que la alerta de salida de cama espere 5 segundos en
-vez de 3, hay que editar Rust, recompilar y desplegar un binario nuevo en el
-equipo del cuarto. Después de esto, es editar un archivo de configuración.
+El dwell de salida de cama ya se declara en el blueprint. Pero si un servicio
+necesita componer una condición nueva sobre confianza facial, presencia o
+cardinalidad, hoy hay que agregar un campo o una variante de guard en Rust,
+recompilar y desplegar un binario nuevo en el equipo del cuarto. Después de
+esto, la condición se expresa contra el vocabulario declarado en configuración.
 
 Y que el sistema pueda **responder qué vio**. Hoy, ante un incidente, la
 pregunta "¿el sistema detectó a la persona antes de la caída?" no tiene
@@ -33,11 +36,11 @@ de cama**:
 | `blind` | Sin señal de cámara: estado seguro |
 
 La transición que importa: `watching → bed_alert` cuando la zona `bed` queda
-vacía por más de 3 segundos. Ese "3 segundos" y ese "zona bed" son decisiones
-clínicas, y hoy están compiladas dentro del binario.
+vacía por más de 3 segundos. Ese "3 segundos" y esa zona son decisiones
+clínicas ya declaradas en la configuración del blueprint.
 
-Todo lo que sigue existe para que ese número, y los que vengan, vivan en
-configuración auditable.
+Todo lo que sigue existe para que la evidencia simple adicional que compone
+esas decisiones tenga un contrato configurable y auditable.
 
 ## 3. Alcance y no alcance
 
@@ -127,8 +130,9 @@ Los cambios incompatibles requieren tag nuevo y período de convivencia.
 Se pierde el chequeo exhaustivo del compilador de Rust sobre los predicados
 genéricos. **Eso se compensa o la decisión no se sostiene.**
 
-`FsmProgram::compile(catalog, zones) -> Result<Self, Vec<String>>` ya existe,
-ya acumula errores y ya corre en boot. Tiene que rechazar:
+`FsmProgram::compile_with_references(...)` ya existe, acumula errores y corre
+en boot. Obtendrá el catálogo estático de señales en el crate productor y tiene
+que rechazar:
 
 1. Un tag que ningún productor declara.
 2. Un operador que no aplica al tipo del tag (`>=` sobre un `Bool`).
@@ -187,7 +191,7 @@ con una necesidad distinta es un blueprint nuevo, no una versión nueva.
 
 ## 9. Invariante
 
-> El comportamiento clínico observable no cambia. Los tres goldens quedan
-> byte-idénticos.
+> El comportamiento clínico observable no cambia. En A-C los tres goldens
+> quedan byte-idénticos; en D el golden anterior es prefijo del nuevo.
 
 Este trabajo mueve dónde vive una decisión, no cuál es la decisión.

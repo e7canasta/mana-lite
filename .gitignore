@@ -25,3 +25,8 @@
 # macOS
 .DS_Store
 snapshots/
+
+# Local agent state and worktrees
+/.kiro/
+/.claude/settings.local.json
+/.claude/worktrees/*/

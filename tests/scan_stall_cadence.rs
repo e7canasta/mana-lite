@@ -110,6 +110,7 @@ fn stall_emits_consecutive_scan_seq_and_blind_on_stale() {
         )),
         health: Health::new_at(DATA_STALE_MS, DATA_STALE_MS / 2, start),
         fsm_context: Default::default(),
+        signal_snapshot: Default::default(),
         last_scan_at: start,
         scan_seq: 0,
         policy: ControlPolicy {

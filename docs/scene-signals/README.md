@@ -5,18 +5,19 @@ archivado en [`docs/archive/2026-08-refactor-por-tiers/`](../archive/2026-08-ref
 
 ## El problema, en una frase
 
-**Cambiar cuándo suena una alerta clínica es un release.**
+**Expresar una condición clínica nueva sobre evidencia existente es un release.**
 
-Si un servicio pide que la alerta de salida de cama espere 5 segundos en vez de
-3, hoy hay que editar Rust, recompilar y desplegar un binario nuevo en el equipo
-del cuarto. El número está compilado adentro.
+El dwell de salida de cama ya está declarado en `config/fsm.toml`. Lo que hoy
+requiere tocar Rust es expresar un predicado simple nuevo sobre la evidencia de
+escena, porque esa evidencia está acoplada a campos y variantes internas del
+FSM.
 
 ## Qué cambia
 
 | Hoy | Después |
 |---|---|
-| Un umbral clínico nuevo es un release | Es editar un TOML |
-| Todos los servicios comparten la misma respuesta | UTI y sala general pueden tener distinto dwell |
+| Una condición simple nueva es un release | Se expresa sobre señales existentes en TOML |
+| La evidencia está acoplada a structs de Rust | El blueprint usa un vocabulario tipado y validado |
 | Ante un incidente, no se puede reconstruir qué vio el sistema | El gemelo digital completo queda en el log |
 | Integrarse exige leer nuestro código Rust | Se consume un vocabulario de tags y valores |
 
@@ -44,8 +45,17 @@ construida después de que existen los consumidores obliga a migrarlos.
 
 | | Qué |
 |---|---|
+| [4-big-picture.md](4-big-picture.md) | **La vista general.** Problema, fronteras, evolución y resultado para cada audiencia |
 | [1-spec.md](1-spec.md) | **El contrato.** Tipos, tags, semántica, regla de evolución, qué no se convierte |
 | [2-sprints.md](2-sprints.md) | **El plan.** Cuatro etapas con compuertas mecánicas |
+| [3-sprint-1.md](3-sprint-1.md) | **El primer sprint.** Alcance, decisiones previas, entregables y compuerta de cierre |
+| [6-sprint-1-cierre.md](6-sprint-1-cierre.md) | **La evidencia.** Resultados de la compuerta y excepción de línea base |
+| [7-sprint-2-handoff.md](7-sprint-2-handoff.md) | **El onboarding.** Entrada operativa para producir señales en paralelo |
+| [8-sprint-2-cierre.md](8-sprint-2-cierre.md) | **La evidencia.** Cierre de Etapa B y compuerta de señales en paralelo |
+| [5-engine-funcional.md](5-engine-funcional.md) | **El engine.** Arranque, tick, evaluación, fallas y observabilidad objetivo |
+| [design.md](design.md) | **El diseño técnico.** Decisiones de implementación, catálogo, guard y evento de auditoría |
+| [requirements.md](requirements.md) | **Los requisitos.** Resultados de producto, criterios de aceptación y trazabilidad |
+| [tasks.md](tasks.md) | **El backlog activo.** Etapa B cerrada; Etapa C pendiente |
 | [ADR-032](../adrs/032-scene-signals-as-contract.md) | **La decisión** y su costo |
 
 ## El caso que ancla todo
@@ -54,11 +64,13 @@ El programa que corre hoy es prevención de caídas de cama:
 `idle → watching → bed_approaching → bed_alert`. La transición que importa es
 `watching → bed_alert` cuando la zona `bed` queda vacía más de 3 segundos.
 
-Ese "3 segundos" y ese "zona bed" son decisiones clínicas. Hoy están dentro del
-binario. Todo este trabajo existe para que vivan en configuración auditable.
+Ese "3 segundos" y esa zona son decisiones clínicas que ya viven en la
+configuración del blueprint. Este trabajo hace auditable y configurable la
+evidencia simple adicional con la que una FSM puede componer decisiones.
 
 ## Invariante
 
-> El comportamiento clínico no cambia. Los tres goldens quedan byte-idénticos.
+> El comportamiento clínico no cambia. En A-C los tres goldens quedan
+> byte-idénticos; en D el golden anterior es prefijo del nuevo.
 
 Esto mueve **dónde vive** una decisión, no **cuál es** la decisión.
