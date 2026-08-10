@@ -19,7 +19,7 @@ seguir siendo un prefijo del nuevo.
 |---|---|---|---|
 | **A** | **Cerrada** | Vocabulario y tipos, sin conectar nada | ninguno |
 | **B** | **Cerrada** | Producir señales en paralelo al contexto actual | bajo |
-| **C** | Pendiente | El guard genérico, migrando los 11 | **alto** |
+| **C** | **Cerrada** | El guard genérico, migrando los 11 | **alto** |
 | **D** | Pendiente | Volcado del gemelo y limpieza | medio |
 
 ---
@@ -132,15 +132,16 @@ cargo test --workspace --no-default-features --features ffmpeg
 git diff tests/golden/                                      # → vacío
 ```
 
-- [ ] `FsmGuard` bajó de 18 a 8 variantes
-- [ ] Un catálogo con un tag inexistente **falla en boot** con mensaje útil
-- [ ] Un catálogo con `==` sobre un `Ratio` **falla en boot**
-- [ ] Un catálogo con `>=` sobre un `Bool` **falla en boot**
-- [ ] Los tres goldens byte-idénticos
+- [x] `FsmGuard` bajó de 18 a 8 variantes
+- [x] Un catálogo con un tag inexistente **falla en boot** con mensaje útil
+- [x] Un catálogo con `==` sobre un `Ratio` **falla en boot**
+- [x] Un catálogo con `>=` sobre un `Bool` **falla en boot**
+- [x] Los tres goldens byte-idénticos
 
 **Antes de confiar en esta compuerta:** escribir los tres catálogos inválidos
-de arriba y verificar que fallan. Una validación que nunca se probó contra
-entrada inválida no es una validación. Ya nos pasó dos veces.
+de arriba y verificar que fallan. La Etapa C se cerró después de ejecutar esos
+casos y cubrir también operador desconocido, count negativo, ratio no
+finito/fuera de rango y label no emitible.
 
 ---
 

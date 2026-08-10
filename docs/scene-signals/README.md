@@ -52,10 +52,11 @@ construida después de que existen los consumidores obliga a migrarlos.
 | [6-sprint-1-cierre.md](6-sprint-1-cierre.md) | **La evidencia.** Resultados de la compuerta y excepción de línea base |
 | [7-sprint-2-handoff.md](7-sprint-2-handoff.md) | **El onboarding.** Entrada operativa para producir señales en paralelo |
 | [8-sprint-2-cierre.md](8-sprint-2-cierre.md) | **La evidencia.** Cierre de Etapa B y compuerta de señales en paralelo |
+| [9-sprint-3-cierre.md](9-sprint-3-cierre.md) | **La evidencia.** Cierre de Etapa C y migración de guards simples |
 | [5-engine-funcional.md](5-engine-funcional.md) | **El engine.** Arranque, tick, evaluación, fallas y observabilidad objetivo |
 | [design.md](design.md) | **El diseño técnico.** Decisiones de implementación, catálogo, guard y evento de auditoría |
 | [requirements.md](requirements.md) | **Los requisitos.** Resultados de producto, criterios de aceptación y trazabilidad |
-| [tasks.md](tasks.md) | **El backlog activo.** Etapa B cerrada; Etapa C pendiente |
+| [tasks.md](tasks.md) | **El backlog activo.** Etapas B y C cerradas; Etapa D pendiente |
 | [ADR-032](../adrs/032-scene-signals-as-contract.md) | **La decisión** y su costo |
 
 ## El caso que ancla todo

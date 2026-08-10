@@ -1,7 +1,7 @@
 # Backlog operativo — Señales de escena
 
-**Estado:** Sprint 2 / Etapa B cerrada; Etapa C pendiente
-**Próximo hito:** C — guard genérico
+**Estado:** Sprint 3 / Etapa C cerrada; Etapa D pendiente
+**Próximo hito:** D — gemelo visible
 **Fuente de verdad:** [1-spec.md](1-spec.md), [requirements.md](requirements.md),
 [design.md](design.md), [2-sprints.md](2-sprints.md), [3-sprint-1.md](3-sprint-1.md)
 y [7-sprint-2-handoff.md](7-sprint-2-handoff.md)
@@ -12,8 +12,8 @@ los archivos que toca cada tarea y la evidencia necesaria para cerrarla.
 
 ## 1. Regla de operación
 
-- La Etapa B está cerrada con código, pruebas y compuerta verificadas. C y D
-  siguen siendo hitos posteriores, no trabajo adelantado.
+- Las Etapas B y C están cerradas con código, pruebas y compuerta verificadas. D
+  sigue siendo el hito posterior, no trabajo adelantado.
 - Una casilla se marca al completar código, pruebas y la verificación indicada.
 - Un fallo de compuerta detiene el avance de la etapa; no se regenera un golden
   para hacerlo pasar.
@@ -28,7 +28,7 @@ los archivos que toca cada tarea y la evidencia necesaria para cerrarla.
 |---|---|---|---|
 | A | **Cerrada** | Catálogo, valores, operadores y tabla sin consumidores productivos. | [6-sprint-1-cierre.md](6-sprint-1-cierre.md) |
 | B | **Cerrada** | Doble producción, paridad y latch derivado. | [8-sprint-2-cierre.md](8-sprint-2-cierre.md) |
-| C | Pendiente | Guard `Signal`, compilación de boot y once migraciones. | [2-sprints.md](2-sprints.md#etapa-c--el-guard-genérico) |
+| C | **Cerrada** | Guard `Signal`, compilación de boot y once migraciones. | [9-sprint-3-cierre.md](9-sprint-3-cierre.md) |
 | D | Pendiente | Snapshot observable, logger y retiro del contexto plano. | [2-sprints.md](2-sprints.md#etapa-d--el-gemelo-visible) |
 
 ## 3. Sprint 1 — definición de terminado
@@ -315,5 +315,20 @@ autoridad de guards hasta que la paridad esté demostrada.
 
 La guía operativa de entrada está en
 [7-sprint-2-handoff.md](7-sprint-2-handoff.md). La evidencia de cierre está en
-[8-sprint-2-cierre.md](8-sprint-2-cierre.md). El detalle contractual de B-C-D
+[8-sprint-2-cierre.md](8-sprint-2-cierre.md). La evidencia de C está en
+[9-sprint-3-cierre.md](9-sprint-3-cierre.md). El detalle contractual de B-C-D
 permanece en [2-sprints.md](2-sprints.md).
+
+## 8. Sprint 3 — guard genérico
+
+La Etapa C cambia la fuente de evidencia de los predicados simples, no la
+política de la FSM. Los siete guards especializados de zonas, Health y
+profundidad permanecen con sus motores propios.
+
+- [x] S3-01: agregar `FsmGuard::Signal`, `SignalLiteral` y `ProgramGuard::Signal`.
+- [x] S3-02: validar tags, operadores, tipos, rangos, labels y wildcards en boot.
+- [x] S3-03: evaluar todos los guards genéricos contra un snapshot congelado.
+- [x] S3-04: migrar los once guards simples, un guard por commit.
+- [x] S3-05: verificar debug, release, `ffmpeg` y goldens sin cambios.
+
+La evidencia de cierre está en [9-sprint-3-cierre.md](9-sprint-3-cierre.md).
