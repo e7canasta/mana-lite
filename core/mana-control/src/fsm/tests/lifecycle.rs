@@ -5,10 +5,10 @@ use std::time::Instant;
 use super::catalogs::*;
 use crate::DepthRuleSnapshot;
 use crate::config::{
-    FsmCatalog, FsmRoles, FsmRoot, FsmState, FsmTransition, ZoneCatalog, ZoneSpec,
+    FsmCatalog, FsmRoles, FsmTransition,
 };
 use crate::health::Health;
-use crate::zones::{ZoneEngine, ZoneEvent};
+use crate::zones::ZoneEngine;
 
 #[test]
 fn force_safe_state_uses_roles_in_real_catalogs() {
