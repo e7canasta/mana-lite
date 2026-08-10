@@ -6,9 +6,10 @@ use crate::domain::{ClassName, LoopId};
 use crate::fsm::{FsmEngine, FsmSceneContext, FsmTransitionResult};
 use crate::health::{Health, HealthTransition};
 use crate::occupancy::{
-    self, OccupancyStateMachine, RoomCardinality, SecondPersonState, SignalValidity,
+    self, OccupancyStateMachine, OccupancyUpdate, RoomCardinality, SecondPersonState,
+    SignalValidity,
 };
-use crate::presence::{PresenceFilter, PresenceState};
+use crate::presence::{PresenceFilter, PresenceState, PresenceUpdate};
 use crate::track::{Track, TrackEvent, Tracker};
 use crate::zones::{ZoneEngine, ZoneEvent};
 pub use crate::{AgedEvidence, ProcessImage, SceneObservation, SceneSample};
@@ -124,6 +125,39 @@ pub fn scan(
         "ScanTimeline belongs to a different control loop than ControlState"
     );
     let now = timeline.now().as_instant();
+    let mut events = Vec::new();
+    let dt = predict(state, now);
+    let input = age_input(state, image, now);
+    let presence = update_presence(state, &input, now);
+    let confirmed = update_tracking(state, image, &input, &presence, dt, &mut events);
+    let occupancy = update_occupancy(state, &input, &presence, confirmed, now, &mut events);
+    let zones = update_zones(state, input.stamp, now, &mut events);
+    evaluate_fsm(
+        state,
+        image,
+        &input,
+        occupancy.state,
+        &zones,
+        now,
+        &mut events,
+    );
+    evaluate_health(state, now, &mut events);
+    events
+}
+
+struct ScanInput {
+    sample: SceneSample,
+    stamp: ControlStamp,
+    valid: bool,
+}
+
+struct PresenceOutcome {
+    observations: Vec<SceneObservation>,
+    update: PresenceUpdate,
+}
+
+/// Advance cadence clocks and predict tracks to `now`.
+fn predict(state: &mut ControlState, now: Instant) -> u64 {
     let dt = now
         .saturating_duration_since(state.last_scan_at)
         .as_millis() as u64;
@@ -133,6 +167,10 @@ pub fn scan(
     if let Some(t) = state.tracker.as_mut() {
         t.predict_at(dt)
     }
+    dt
+}
+
+fn age_input(state: &ControlState, image: &ProcessImage, now: Instant) -> ScanInput {
     let age = image.observations_age_ms(now);
     let sample = image
         .observations
@@ -146,73 +184,111 @@ pub fn scan(
         depth_age_ms: image.depth_age_ms(now),
     };
     let valid = sample.signal_valid && age <= state.policy.data_stale_ms;
-    let (observations, presence) = state.presence.update_at(&sample.observations, valid, now);
-    let tracking = if presence.state == PresenceState::Ambiguous {
+    ScanInput {
+        sample,
+        stamp,
+        valid,
+    }
+}
+
+fn update_presence(state: &mut ControlState, input: &ScanInput, now: Instant) -> PresenceOutcome {
+    let (observations, update) =
+        state
+            .presence
+            .update_at(&input.sample.observations, input.valid, now);
+    PresenceOutcome {
+        observations,
+        update,
+    }
+}
+
+fn update_tracking(
+    state: &mut ControlState,
+    image: &ProcessImage,
+    input: &ScanInput,
+    presence: &PresenceOutcome,
+    dt: u64,
+    events: &mut Vec<SceneEvent>,
+) -> usize {
+    let tracking = if presence.update.state == PresenceState::Ambiguous {
         &[][..]
     } else {
-        &observations
+        &presence.observations
     };
-    let mut events = Vec::new();
     if let Some(t) = state.tracker.as_mut() {
-        let allow = sample.raw_person_count == 1
+        let allow = input.sample.raw_person_count == 1
             && tracking.len() == 1
             && tracking[0].class == state.policy.person_class;
-        let input = if image.measurement_pending {
+        let input_obs = if image.measurement_pending {
             tracking
         } else {
             &[]
         };
-        for event in t.associate_observations(input, allow && image.measurement_pending, dt) {
-            events.push(SceneEvent::Track { event, stamp })
+        for event in t.associate_observations(input_obs, allow && image.measurement_pending, dt) {
+            events.push(SceneEvent::Track {
+                event,
+                stamp: input.stamp,
+            })
         }
     }
-    let confirmed = state.tracker.as_ref().map_or(0, |t| {
+    state.tracker.as_ref().map_or(0, |t| {
         t.current_tracks()
             .into_iter()
             .filter(|x| x.class == state.policy.person_class)
             .count()
-    });
+    })
+}
+
+fn update_occupancy(
+    state: &mut ControlState,
+    input: &ScanInput,
+    presence: &PresenceOutcome,
+    confirmed: usize,
+    now: Instant,
+    events: &mut Vec<SceneEvent>,
+) -> OccupancyUpdate {
     let update = state.occupancy.update_at(
         occupancy::build_evidence(occupancy::OccupancyEvidenceInputs {
             tracking_enabled: state.tracker.is_some(),
             presence_enabled: state.policy.presence_enabled,
-            signal_valid: valid,
-            raw_person_count: sample.raw_person_count,
+            signal_valid: input.valid,
+            raw_person_count: input.sample.raw_person_count,
             confirmed_person_count: confirmed,
-            presence_is_present: presence.state == PresenceState::Present,
-            presence_held: presence.held,
+            presence_is_present: presence.update.state == PresenceState::Present,
+            presence_held: presence.update.held,
         }),
         now,
     );
     events.push(SceneEvent::Occupancy {
         state: update.state,
         second_person: update.second_person,
-        signal: SignalValidity::from_bool(valid),
+        signal: SignalValidity::from_bool(input.valid),
     });
     events.push(SceneEvent::Presence {
-        stamp,
+        stamp: input.stamp,
         state: update.state,
-        presence: presence.state,
+        presence: presence.update.state,
         second_person: update.second_person,
-        signal: SignalValidity::from_bool(valid),
-        raw_person_count: sample.raw_person_count,
+        signal: SignalValidity::from_bool(input.valid),
+        raw_person_count: input.sample.raw_person_count,
         confirmed_person_count: confirmed,
-        held: presence.held,
-        positive_ms: presence.positive_ms,
-        empty_ms: presence.empty_ms,
+        held: presence.update.held,
+        positive_ms: presence.update.positive_ms,
+        empty_ms: presence.update.empty_ms,
         single_timer_ms: update.single_timer_ms,
         empty_timer_ms: update.empty_timer_ms,
         multiple_candidate_timer_ms: update.multiple_candidate_timer_ms,
         multiple_exit_timer_ms: update.multiple_exit_timer_ms,
     });
-    update_context(
-        &mut state.fsm_context,
-        &state.policy,
-        update.state,
-        sample.raw_person_count,
-        sample.face_model_ran,
-        &sample.observations,
-    );
+    update
+}
+
+fn update_zones(
+    state: &mut ControlState,
+    stamp: ControlStamp,
+    now: Instant,
+    events: &mut Vec<SceneEvent>,
+) -> Vec<ZoneEvent> {
     let zones = if let Some(z) = state.zone_engine.as_mut() {
         let tracks = state
             .tracker
@@ -234,10 +310,32 @@ pub fn scan(
             t.current_tracks().into_iter().cloned().collect(),
         ))
     }
+    zones
+}
+
+fn evaluate_fsm(
+    state: &mut ControlState,
+    image: &ProcessImage,
+    input: &ScanInput,
+    cardinality: RoomCardinality,
+    zones: &[ZoneEvent],
+    now: Instant,
+    events: &mut Vec<SceneEvent>,
+) {
+    // Context refresh moved here from between occupancy and zones: nothing between
+    // those steps reads fsm_context, and App only reads it after the full scan batch.
+    update_context(
+        &mut state.fsm_context,
+        &state.policy,
+        cardinality,
+        input.sample.raw_person_count,
+        input.sample.face_model_ran,
+        &input.sample.observations,
+    );
     if let Some(f) = state.fsm_engine.as_mut() {
         let depth = image.depth_snapshot();
         if let Some(x) = f.evaluate_with_context_at(
-            &zones,
+            zones,
             state.zone_engine.as_ref(),
             &state.health,
             &depth,
@@ -259,12 +357,15 @@ pub fn scan(
             events.push(SceneEvent::FsmState(f.snapshot_at(now).state))
         }
     }
+}
+
+fn evaluate_health(state: &mut ControlState, now: Instant, events: &mut Vec<SceneEvent>) {
     let h = state.health.evaluate_at(now);
     if !matches!(h, HealthTransition::None) {
         events.push(SceneEvent::Health(h))
     }
-    events
 }
+
 fn update_context(
     ctx: &mut FsmSceneContext,
     policy: &ControlPolicy,
