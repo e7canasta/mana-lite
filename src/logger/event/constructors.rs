@@ -1,4 +1,4 @@
-use super::{Event, FaceDwellTimerRecord, DEPTH_EVENT_VERSION, JSONL_SCHEMA_VERSION};
+use super::{DEPTH_EVENT_VERSION, Event, FaceDwellTimerRecord, JSONL_SCHEMA_VERSION};
 use crate::metrics::{MetricsReport, PerClassFrameStats};
 use crate::scan::ControlStamp;
 

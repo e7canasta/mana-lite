@@ -1,7 +1,5 @@
 //! Crop / ROI helpers for cascaded inference.
 
-use image::RgbImage;
-
 use super::CropFrameInfo;
 use crate::detection::{CropRect, Detection};
 

@@ -54,6 +54,21 @@ impl CascadeConfig {
     /// Validate cascade rules against a name→enabled map (no ModelCatalog).
     pub fn validate(&self, models: &HashMap<String, bool>, primary_model: &str) -> Vec<String> {
         let mut errors = Vec::new();
+        self.validate_primary(models, primary_model, &mut errors);
+        for rule in &self.rules {
+            self.validate_rule_refs(rule, models, primary_model, &mut errors);
+            self.validate_rule_thresholds(rule, &mut errors);
+        }
+        self.validate_regions(&mut errors);
+        errors
+    }
+
+    fn validate_primary(
+        &self,
+        _models: &HashMap<String, bool>,
+        primary_model: &str,
+        errors: &mut Vec<String>,
+    ) {
         let primary_rule = self.rules.iter().find(|rule| rule.model == primary_model);
         if primary_rule.is_none() {
             errors.push(format!(
@@ -66,69 +81,81 @@ impl CascadeConfig {
                 primary_model
             ));
         }
+    }
 
-        for rule in &self.rules {
-            if !models.contains_key(&rule.model) {
-                errors.push(format!("rule references unknown model '{}'", rule.model));
-            }
-            if let Some(parent) = &rule.requires {
-                if !models.contains_key(parent) {
-                    errors.push(format!(
-                        "model '{}' requires unknown parent '{}'",
-                        rule.model, parent
-                    ));
-                }
-                let disabled_branch = models.get(parent).is_some_and(|enabled| !*enabled)
-                    && models.get(&rule.model).is_some_and(|enabled| !*enabled);
-                if parent != primary_model && !disabled_branch {
-                    errors.push(format!(
-                        "model '{}' requires '{}', but only primary model '{}' can gate children",
-                        rule.model, parent, primary_model,
-                    ));
-                }
-            }
-            if rule.requires_exact_count == Some(0) {
+    fn validate_rule_refs(
+        &self,
+        rule: &CascadeRule,
+        models: &HashMap<String, bool>,
+        primary_model: &str,
+        errors: &mut Vec<String>,
+    ) {
+        if !models.contains_key(&rule.model) {
+            errors.push(format!("rule references unknown model '{}'", rule.model));
+        }
+        if let Some(parent) = &rule.requires {
+            if !models.contains_key(parent) {
                 errors.push(format!(
-                    "model '{}' has invalid requires_exact_count",
-                    rule.model
+                    "model '{}' requires unknown parent '{}'",
+                    rule.model, parent
                 ));
             }
-            if let Some(region) = &rule.requires_region {
-                if !self.regions.contains_key(region) {
-                    errors.push(format!(
-                        "model '{}' references unknown region '{}'",
-                        rule.model, region
-                    ));
-                }
-            }
-            if rule
-                .requires_min_confidence
-                .is_some_and(|v| !(0.0..=1.0).contains(&v))
-            {
+            let disabled_branch = models.get(parent).is_some_and(|enabled| !*enabled)
+                && models.get(&rule.model).is_some_and(|enabled| !*enabled);
+            if parent != primary_model && !disabled_branch {
                 errors.push(format!(
-                    "model '{}' has invalid requires_min_confidence",
-                    rule.model
-                ));
-            }
-            if rule
-                .requires_min_area_ratio
-                .is_some_and(|v| !(0.0..=1.0).contains(&v))
-            {
-                errors.push(format!(
-                    "model '{}' has invalid requires_min_area_ratio",
-                    rule.model
-                ));
-            }
-            if rule
-                .requires_region_coverage
-                .is_some_and(|v| !(0.0..=1.0).contains(&v))
-            {
-                errors.push(format!(
-                    "model '{}' has invalid requires_region_coverage",
-                    rule.model
+                    "model '{}' requires '{}', but only primary model '{}' can gate children",
+                    rule.model, parent, primary_model,
                 ));
             }
         }
+        if let Some(region) = &rule.requires_region {
+            if !self.regions.contains_key(region) {
+                errors.push(format!(
+                    "model '{}' references unknown region '{}'",
+                    rule.model, region
+                ));
+            }
+        }
+    }
+
+    fn validate_rule_thresholds(&self, rule: &CascadeRule, errors: &mut Vec<String>) {
+        if rule.requires_exact_count == Some(0) {
+            errors.push(format!(
+                "model '{}' has invalid requires_exact_count",
+                rule.model
+            ));
+        }
+        if rule
+            .requires_min_confidence
+            .is_some_and(|v| !(0.0..=1.0).contains(&v))
+        {
+            errors.push(format!(
+                "model '{}' has invalid requires_min_confidence",
+                rule.model
+            ));
+        }
+        if rule
+            .requires_min_area_ratio
+            .is_some_and(|v| !(0.0..=1.0).contains(&v))
+        {
+            errors.push(format!(
+                "model '{}' has invalid requires_min_area_ratio",
+                rule.model
+            ));
+        }
+        if rule
+            .requires_region_coverage
+            .is_some_and(|v| !(0.0..=1.0).contains(&v))
+        {
+            errors.push(format!(
+                "model '{}' has invalid requires_region_coverage",
+                rule.model
+            ));
+        }
+    }
+
+    fn validate_regions(&self, errors: &mut Vec<String>) {
         for (name, region) in &self.regions {
             let [x1, y1, x2, y2] = region.rect;
             if !(x1.is_finite() && y1.is_finite() && x2.is_finite() && y2.is_finite())
@@ -138,7 +165,6 @@ impl CascadeConfig {
                 errors.push(format!("region '{}' has invalid rect", name));
             }
         }
-        errors
     }
 }
 

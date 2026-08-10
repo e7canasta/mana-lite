@@ -4,9 +4,7 @@ use std::time::Instant;
 
 use super::catalogs::*;
 use crate::DepthRuleSnapshot;
-use crate::config::{
-    FsmTransition, ZoneCatalog, ZoneSpec,
-};
+use crate::config::{FsmTransition, ZoneCatalog, ZoneSpec};
 use crate::health::Health;
 use crate::zones::{ZoneEngine, ZoneEvent};
 

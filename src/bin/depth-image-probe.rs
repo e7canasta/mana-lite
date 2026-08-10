@@ -33,6 +33,47 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let image = image::open(image_path)?;
     let (width, height) = image.dimensions();
+    let (mut model, load_ms) = load_probe_model(model_path, roi, &opts)?;
+    let (latencies_ms, results) = run_timed_predictions(&mut model, &image, image_path, &opts)?;
+    let result = results.first().ok_or("inference returned no results")?;
+    let depth = result
+        .depth
+        .as_ref()
+        .ok_or("inference returned no depth map")?;
+    let (expected_width, expected_height, colorized, annotated) =
+        render_probe_outputs(&image, depth, result, roi, width, height, &output_path)?;
+    print_probe_report(ProbeReport {
+        model_path,
+        image_path,
+        output_path: &output_path,
+        width,
+        height,
+        depth,
+        result_roi: result.roi,
+        opts: &opts,
+        load_ms,
+        latencies_ms: &latencies_ms,
+    });
+    print_region_stats(depth, result.roi, &opts)?;
+
+    if let Some(addr) = rerun_addr {
+        log_rerun(addr, &image, &colorized, &annotated, depth, result.roi)?;
+        println!("rerun=connected addr={addr}");
+    }
+    if let Some(path) = rrd_path {
+        log_rrd(path, &image, &colorized, &annotated, depth, result.roi)?;
+        println!("rrd=saved path={path}");
+    }
+
+    let _ = (expected_width, expected_height);
+    Ok(())
+}
+
+fn load_probe_model(
+    model_path: &str,
+    roi: Option<[u32; 4]>,
+    opts: &ProbeOpts,
+) -> Result<(YOLOModel, f64), Box<dyn Error>> {
     let mut config = InferenceConfig::default();
     if let Some([x1, y1, x2, y2]) = roi {
         config = config.with_roi(x1, y1, x2, y2);
@@ -47,28 +88,39 @@ fn main() -> Result<(), Box<dyn Error>> {
         config = config.with_threads(opts.threads);
     }
     config = config.with_save(false);
-
     let load_start = Instant::now();
-    let mut model = YOLOModel::load_with_config(model_path, config)?;
-    let load_ms = load_start.elapsed().as_secs_f64() * 1000.0;
+    let model = YOLOModel::load_with_config(model_path, config)?;
+    Ok((model, load_start.elapsed().as_secs_f64() * 1000.0))
+}
 
+fn run_timed_predictions(
+    model: &mut YOLOModel,
+    image: &DynamicImage,
+    image_path: &str,
+    opts: &ProbeOpts,
+) -> Result<(Vec<f64>, Vec<ultralytics_inference::Results>), Box<dyn Error>> {
     let mut latencies_ms: Vec<f64> = Vec::new();
     for _ in 0..opts.warmup {
-        model.predict_image(&image, image_path.clone())?;
+        model.predict_image(image, image_path.to_string())?;
     }
     for _ in 0..opts.repeats {
         let call_start = Instant::now();
-        model.predict_image(&image, image_path.clone())?;
+        model.predict_image(image, image_path.to_string())?;
         latencies_ms.push(call_start.elapsed().as_secs_f64() * 1000.0);
     }
+    let results = model.predict_image(image, image_path.to_string())?;
+    Ok((latencies_ms, results))
+}
 
-    let results = model.predict_image(&image, image_path.clone())?;
-    let result = results.first().ok_or("inference returned no results")?;
-    let depth = result
-        .depth
-        .as_ref()
-        .ok_or("inference returned no depth map")?;
-
+fn render_probe_outputs(
+    image: &DynamicImage,
+    depth: &ultralytics_inference::DepthMap,
+    result: &ultralytics_inference::Results,
+    roi: Option<[u32; 4]>,
+    width: u32,
+    height: u32,
+    output_path: &Path,
+) -> Result<(u32, u32, RgbImage, RgbImage), Box<dyn Error>> {
     let shape = depth.data.shape();
     let (expected_width, expected_height) = roi
         .map(|[x1, y1, x2, y2]| (x2 - x1, y2 - y1))
@@ -80,91 +132,113 @@ fn main() -> Result<(), Box<dyn Error>> {
         )
         .into());
     }
-
     let colors = depth.colorize(Colormap::default(), DepthViz::default());
-    let depth_source = depth_source_image(&image, roi)?;
+    let depth_source = depth_source_image(image, roi)?;
     let colorized = rgb_image_from_pixels(&colors, expected_width, expected_height)?;
     let mut annotated = blend_depth(&depth_source, &colors, 0.6)?;
     if roi.is_none() {
         draw_roi_overlay(&mut annotated, result.roi);
     }
-    annotated.save(&output_path)?;
+    annotated.save(output_path)?;
+    colorized.save(depth_output_path(output_path))?;
+    Ok((expected_width, expected_height, colorized, annotated))
+}
 
-    let depth_output = depth_output_path(&output_path);
-    colorized.save(&depth_output)?;
+struct ProbeReport<'a> {
+    model_path: &'a str,
+    image_path: &'a str,
+    output_path: &'a Path,
+    width: u32,
+    height: u32,
+    depth: &'a ultralytics_inference::DepthMap,
+    result_roi: Option<(u32, u32, u32, u32)>,
+    opts: &'a ProbeOpts,
+    load_ms: f64,
+    latencies_ms: &'a [f64],
+}
 
-    let valid_pixels = depth
+fn print_probe_report(report: ProbeReport<'_>) {
+    let valid_pixels = report
+        .depth
         .data
         .iter()
         .filter(|&&value| value.is_finite() && value > 0.0)
         .count();
-
-    let latency_summary = match latencies_ms.len() {
+    let latency_summary = match report.latencies_ms.len() {
         0 => "no_repeats".to_string(),
         count => {
-            let sum: f64 = latencies_ms.iter().sum();
+            let sum: f64 = report.latencies_ms.iter().sum();
             let mean = sum / count as f64;
-            let min = latencies_ms.iter().copied().reduce(f64::min).unwrap_or(0.0);
-            let max = latencies_ms.iter().copied().reduce(f64::max).unwrap_or(0.0);
+            let min = report
+                .latencies_ms
+                .iter()
+                .copied()
+                .reduce(f64::min)
+                .unwrap_or(0.0);
+            let max = report
+                .latencies_ms
+                .iter()
+                .copied()
+                .reduce(f64::max)
+                .unwrap_or(0.0);
             format!("mean={mean:.1}ms min={min:.1}ms max={max:.1}ms n={count}")
         }
     };
+    let depth_output = depth_output_path(report.output_path);
+    let load_ms = report.load_ms;
     println!(
         "model={} image={} output={} depth_output={} image={}x{} map={:?} valid_pixels={} min_depth_m={:?} max_depth_m={:?} roi={:?} imgsz={:?} half={} threads={} load={load_ms:.0}ms latency={latency_summary}",
-        model_path,
-        image_path,
-        output_path.display(),
+        report.model_path,
+        report.image_path,
+        report.output_path.display(),
         depth_output.display(),
-        width,
-        height,
-        shape,
+        report.width,
+        report.height,
+        report.depth.data.shape(),
         valid_pixels,
-        finite_min(depth),
-        finite_max(depth),
-        result.roi,
-        opts.imgsz,
-        opts.half,
-        opts.threads,
+        finite_min(report.depth),
+        finite_max(report.depth),
+        report.result_roi,
+        report.opts.imgsz,
+        report.opts.half,
+        report.opts.threads,
     );
+}
 
-    if let Some(region) = opts.region {
-        let roi_array = result.roi.map(|(x1, y1, x2, y2)| [x1, y1, x2, y2]);
-        if let Some(roi_array) = roi_array {
-            let depth_frame = mana_lite::depth_map::DepthFrame::from_ultralytics(depth.clone());
-            match mana_lite::region_stats(&depth_frame, roi_array, region) {
-                Some(stats) => {
-                    let (map_width, map_height) = depth_frame.dims();
-                    println!(
-                        "region_stats=roi={:?} region={:?} map={}x{} valid_pixels={} valid_ratio={:?} min_depth_m={:?} median_depth_m={:?} p10_depth_m={:?} p90_depth_m={:?} max_depth_m={:?}",
-                        stats.roi,
-                        stats.region,
-                        map_width,
-                        map_height,
-                        stats.valid_pixels,
-                        stats.valid_ratio,
-                        stats.min_depth_m,
-                        stats.median_depth_m,
-                        stats.p10_depth_m,
-                        stats.p90_depth_m,
-                        stats.max_depth_m,
-                    );
-                }
-                None => println!("region_stats=no_intersection_or_no_valid region={region:?}"),
-            }
-        } else {
-            println!("region_stats=no_roi_in_result region={region:?}");
+fn print_region_stats(
+    depth: &ultralytics_inference::DepthMap,
+    result_roi: Option<(u32, u32, u32, u32)>,
+    opts: &ProbeOpts,
+) -> Result<(), Box<dyn Error>> {
+    let Some(region) = opts.region else {
+        return Ok(());
+    };
+    let Some(roi_tuple) = result_roi else {
+        println!("region_stats=no_roi_in_result region={region:?}");
+        return Ok(());
+    };
+    let roi_array = [roi_tuple.0, roi_tuple.1, roi_tuple.2, roi_tuple.3];
+    let depth_frame = mana_lite::depth_map::DepthFrame::from_ultralytics(depth.clone());
+    match mana_lite::region_stats(&depth_frame, roi_array, region) {
+        Some(stats) => {
+            let (map_width, map_height) = depth_frame.dims();
+            println!(
+                "region_stats=roi={:?} region={:?} map={}x{} valid_pixels={} valid_ratio={:?} min_depth_m={:?} median_depth_m={:?} p10_depth_m={:?} p90_depth_m={:?} max_depth_m={:?}",
+                stats.roi,
+                stats.region,
+                map_width,
+                map_height,
+                stats.valid_pixels,
+                stats.valid_ratio,
+                stats.min_depth_m,
+                stats.median_depth_m,
+                stats.p10_depth_m,
+                stats.p90_depth_m,
+                stats.max_depth_m,
+            );
         }
+        None => println!("region_stats=no_intersection_or_no_valid region={region:?}"),
     }
-
-    if let Some(addr) = rerun_addr {
-        log_rerun(addr, &image, &colorized, &annotated, depth, result.roi)?;
-        println!("rerun=connected addr={addr}");
-    }
-    if let Some(path) = rrd_path {
-        log_rrd(path, &image, &colorized, &annotated, depth, result.roi)?;
-        println!("rrd=saved path={path}");
-    }
-
     Ok(())
 }
 
@@ -197,32 +271,10 @@ fn parse_options(
                 );
             }
             "--roi" => {
-                if index + 4 >= options.len() {
-                    return Err("--roi requires x1 y1 x2 y2".into());
-                }
-                let mut values = [0u32; 4];
-                for (offset, value) in values.iter_mut().enumerate() {
-                    *value = options[index + offset + 1].parse()?;
-                }
-                if values[2] <= values[0] || values[3] <= values[1] {
-                    return Err("--roi must have positive width and height".into());
-                }
-                roi = Some(values);
-                index += 4;
+                roi = Some(parse_rect_option(options, &mut index, "--roi")?);
             }
             "--region" => {
-                if index + 4 >= options.len() {
-                    return Err("--region requires x1 y1 x2 y2".into());
-                }
-                let mut values = [0u32; 4];
-                for (offset, value) in values.iter_mut().enumerate() {
-                    *value = options[index + offset + 1].parse()?;
-                }
-                if values[2] <= values[0] || values[3] <= values[1] {
-                    return Err("--region must have positive width and height".into());
-                }
-                opts.region = Some(values);
-                index += 4;
+                opts.region = Some(parse_rect_option(options, &mut index, "--region")?);
             }
             "--imgsz" => {
                 index += 1;
@@ -262,6 +314,25 @@ fn parse_options(
         index += 1;
     }
     Ok((rerun_addr, rrd_path, roi, opts))
+}
+
+fn parse_rect_option(
+    options: &[String],
+    index: &mut usize,
+    flag: &str,
+) -> Result<[u32; 4], Box<dyn Error>> {
+    if *index + 4 >= options.len() {
+        return Err(format!("{flag} requires x1 y1 x2 y2").into());
+    }
+    let mut values = [0u32; 4];
+    for (offset, value) in values.iter_mut().enumerate() {
+        *value = options[*index + offset + 1].parse()?;
+    }
+    if values[2] <= values[0] || values[3] <= values[1] {
+        return Err(format!("{flag} must have positive width and height").into());
+    }
+    *index += 4;
+    Ok(values)
 }
 
 fn rgb_image_from_pixels(
