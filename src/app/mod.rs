@@ -2,44 +2,34 @@
 
 mod bootstrap;
 mod cycle;
+mod inference;
 mod observer;
+mod record;
 
 pub use cycle::{CycleContext, FrameSize};
 pub use observer::{FanoutObserver, NullObserver, PipelineObserver};
 
-use crate::cascade::{CascadeScheduler, CascadeTarget, GateObservation};
-use crate::config::{AppConfig, CropType};
+use crate::cascade::CascadeScheduler;
+use crate::config::AppConfig;
 use crate::detection::CropRect;
-use crate::detection::{
-    ConsolidatedObservation, DetectionConsolidator, DetectionRole, ModelDetections,
-};
+use crate::detection::DetectionConsolidator;
 use crate::domain::ModelRegistry;
 use crate::error::Result;
 use crate::face_dwell::FaceDwellLogStrategy;
-use crate::infer::{InferEngine, InferenceResult, compute_bbox_roi, compute_upper_square_roi};
+use crate::infer::InferEngine;
 use crate::ingest::{FrameReader, IngestEngine, RawKeyframe, RetinaReader};
-use crate::logger::{DetRecord, Event, scene_events_to_log};
-use crate::metrics::{MetricsEngine, PerClassFrameStats};
+use crate::logger::scene_events_to_log;
+use crate::metrics::MetricsEngine;
 use crate::pipeline::PipelineState;
 use crate::scan::{ControlStamp, ControlState, ScanTimeline, SceneEvent};
 use crate::snapshot::{FrameBuffer, FrameDecoder, SnapshotSaver};
 #[cfg(feature = "rerun")]
 use mana_media::RawFrameV1;
-use mana_perception::domain::{ClassName, ModelId};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::time::Instant;
 use tokio::signal::unix::{SignalKind, signal};
 
 pub(crate) static VERSION: &str = env!("CARGO_PKG_VERSION");
-
-#[derive(Debug, Clone)]
-struct ClinicalSample {
-    observations: Vec<ConsolidatedObservation>,
-    signal_valid: bool,
-    raw_person_count: usize,
-    frame_number: u64,
-    face_model_ran: bool,
-}
 
 pub struct App<R: FrameReader = RetinaReader> {
     pub(crate) infer: InferEngine,
@@ -69,13 +59,6 @@ pub struct App<R: FrameReader = RetinaReader> {
 pub(crate) struct CropFrameQueue {
     pub(crate) model: String,
     pub(crate) crop_frame: Option<crate::infer::CropFrameInfo>,
-}
-
-struct PendingModelOutput {
-    model_key: String,
-    output: InferenceResult,
-    crop_frame: Option<crate::infer::CropFrameInfo>,
-    crop_rect: Option<CropRect>,
 }
 
 impl<R: FrameReader> App<R> {
@@ -290,416 +273,6 @@ impl<R: FrameReader> App<R> {
         }
     }
 
-    fn run_inference(&mut self, cycle: CycleContext<'_>, config: &AppConfig) {
-        let fb = cycle.frame;
-        #[cfg(feature = "rerun")]
-        self.observer.viz.clear_depth_context_boxes();
-        let requested = self.resolve_models(config);
-        let ordered = self.cascade.ordered(&requested);
-        let mut pending: Vec<PendingModelOutput> = Vec::new();
-
-        let roots: Vec<String> = ordered
-            .iter()
-            .filter(|model| self.cascade.parent_of(model).is_none())
-            .map(|model| (*model).to_owned())
-            .collect();
-        let mut primary_root_valid = false;
-        for model_key in roots {
-            let valid = self.run_scheduled_model(&model_key, None, fb, &mut pending);
-            if model_key == self.primary_model {
-                primary_root_valid = valid;
-            }
-        }
-
-        let children: Vec<String> = ordered
-            .iter()
-            .filter(|model| self.cascade.parent_of(model).is_some())
-            .map(|model| (*model).to_owned())
-            .collect();
-        for model_key in children {
-            if self.control.tracker.as_ref().map_or(0, |tracker| {
-                tracker
-                    .current_tracks()
-                    .into_iter()
-                    .filter(|track| track.class.as_str() == config.presence.class)
-                    .count()
-            }) != 1
-            {
-                self.metrics.tick_infer_skip(&model_key);
-                continue;
-            }
-            let target = if self.cascade.same_frame(&model_key) {
-                self.cascade
-                    .parent_of(&model_key)
-                    .and_then(|parent| {
-                        pending
-                            .iter()
-                            .find(|item| item.model_key == parent)
-                            .map(|item| item.output.detections.as_slice())
-                    })
-                    .and_then(|detections| {
-                        self.cascade
-                            .target_for_detections(&model_key, detections, fb.w, fb.h)
-                    })
-            } else {
-                let current_tracks = self
-                    .control
-                    .tracker
-                    .as_ref()
-                    .map_or_else(Vec::new, |tracker| tracker.current_tracks());
-                let observations = gate_observations(&current_tracks);
-                self.cascade
-                    .target_for(&model_key, &observations, fb.w, fb.h)
-            };
-            if target.is_none() {
-                self.metrics.tick_infer_skip(&model_key);
-                continue;
-            }
-            self.run_scheduled_model(&model_key, target, fb, &mut pending);
-        }
-
-        let mut model_outputs: Vec<ModelDetections> = Vec::new();
-        model_outputs.extend(
-            pending
-                .iter()
-                .filter(|item| !self.models.is_depth(&item.model_key))
-                .map(|item| ModelDetections {
-                    model: item.model_key.as_str(),
-                    role: if item.model_key == self.primary_model {
-                        DetectionRole::Primary
-                    } else {
-                        DetectionRole::Secondary
-                    },
-                    detections: &item.output.detections,
-                }),
-        );
-        let observations = self.detection_consolidator.consolidate(&model_outputs);
-        let face_model_ran = pending
-            .iter()
-            .any(|item| self.models.is_face_model(&item.model_key));
-        for observation in &observations {
-            let mut sources: Vec<String> = observation
-                .evidence
-                .iter()
-                .chain(observation.components.iter())
-                .map(|e| e.model.clone())
-                .collect();
-            sources.sort();
-            sources.dedup();
-            self.observer.emit(Event::consolidated_detection(
-                self.state.frame_number(),
-                &observation.class,
-                observation.confidence,
-                observation.bbox,
-                &observation.primary_model,
-                sources,
-            ));
-        }
-        let frame = FrameSize::new(fb.w, fb.h);
-        #[cfg(feature = "rerun")]
-        self.observer
-            .viz
-            .log_consolidated_observations(&observations, frame);
-        for item in pending {
-            self.record_model_result(
-                &item.model_key,
-                &item.output,
-                item.crop_frame,
-                item.crop_rect,
-                frame,
-                cycle.now,
-            );
-        }
-        let raw_person_count = observations
-            .iter()
-            .filter(|observation| observation.class == config.presence.class)
-            .count();
-        let sample = ClinicalSample {
-            observations,
-            signal_valid: primary_root_valid,
-            raw_person_count,
-            frame_number: cycle.frame_number,
-            face_model_ran,
-        };
-        self.control_image.observations = Some(mana_control::AgedEvidence::new(
-            project_scene_sample(&sample),
-            cycle.now,
-        ));
-        self.control_image.measurement_pending = true;
-    }
-
-    fn run_scheduled_model(
-        &mut self,
-        model_key: &str,
-        target: Option<CascadeTarget>,
-        fb: &FrameBuffer,
-        pending: &mut Vec<PendingModelOutput>,
-    ) -> bool {
-        let is_static = self
-            .infer
-            .crop_info(model_key)
-            .is_some_and(|c| c.crop_type == CropType::Static);
-        let crop_rect = self.resolve_crop_rect(model_key, target, fb);
-        let manual_crop = if is_static { None } else { crop_rect };
-        let Some(mut output) = self.infer.run(model_key, &fb.rgb, fb.w, fb.h, manual_crop) else {
-            return false;
-        };
-        let crop_frame = output.crop_frame.take();
-        pending.push(PendingModelOutput {
-            model_key: model_key.to_owned(),
-            output,
-            crop_frame,
-            crop_rect,
-        });
-        true
-    }
-
-    fn resolve_crop_rect(
-        &self,
-        model_key: &str,
-        target: Option<CascadeTarget>,
-        fb: &FrameBuffer,
-    ) -> Option<crate::detection::CropRect> {
-        let crop_cfg = self.infer.crop_info(model_key)?;
-
-        if crop_cfg.crop_type == CropType::Static {
-            return crop_cfg.region.map(CropRect::from_array);
-        }
-
-        let target = target?;
-        if let Some(square_size) = crop_cfg.square_size {
-            return compute_upper_square_roi(
-                target.bbox,
-                square_size,
-                crop_cfg.upper_fraction.unwrap_or(0.5),
-                fb.w,
-                fb.h,
-            );
-        }
-        compute_bbox_roi(
-            target.bbox,
-            crop_cfg.margin,
-            fb.w,
-            fb.h,
-            crop_cfg.min_region,
-            crop_cfg.max_region,
-        )
-    }
-
-    fn is_model_enabled(&self, config: &AppConfig, name: &str) -> bool {
-        self.models.enabled(name)
-            && self
-                .models
-                .task_of(name)
-                .map(|task| {
-                    !config
-                        .inference
-                        .disabled_tasks
-                        .iter()
-                        .any(|disabled| disabled == task.as_str())
-                })
-                .unwrap_or(true)
-    }
-
-    fn resolve_models(&self, config: &AppConfig) -> Vec<String> {
-        let models = self.control.fsm_engine.as_ref().map_or_else(
-            || self.cascade.all_models().to_vec(),
-            |fsm| fsm.current_models(),
-        );
-        models
-            .into_iter()
-            .filter(|name| self.is_model_enabled(config, name))
-            .collect()
-    }
-
-    fn record_model_result(
-        &mut self,
-        model_key: &str,
-        output: &InferenceResult,
-        crop_frame: Option<crate::infer::CropFrameInfo>,
-        crop_rect: Option<CropRect>,
-        frame: FrameSize,
-        now: Instant,
-    ) {
-        if self.models.is_depth(model_key) {
-            self.record_depth_result(model_key, output, crop_rect, frame.w, frame.h, now);
-            return;
-        }
-        if output.postprocess_rejected > 0 || output.post_nms_suppressed > 0 {
-            log::info!(
-                "model {model_key}: postprocess rejected={} nms_suppressed={}",
-                output.postprocess_rejected,
-                output.post_nms_suppressed,
-            );
-        }
-        let per_class = PerClassFrameStats::from_detections(&output.detections);
-        self.metrics.tick_inference_model(
-            model_key,
-            output.pipeline_us,
-            &output.detections,
-            crop_rect.map(|r| r.to_array()),
-        );
-        #[cfg(feature = "rerun")]
-        {
-            self.observer.viz.log_infer_latency(
-                model_key,
-                output.infer_ms * 1000,
-                output.pipeline_us,
-            );
-            if let Some(rect) = crop_rect {
-                self.observer.viz.log_roi_boxes(model_key, rect);
-            }
-            self.observer
-                .viz
-                .log_per_frame_class_stats(model_key, &per_class);
-            self.observer
-                .viz
-                .log_model_detections(model_key, &output.detections, crop_rect, frame);
-            self.observer
-                .viz
-                .log_model_pose(model_key, &output.detections);
-            self.observer.viz.log_depth_context_boxes(
-                model_key,
-                &output.detections,
-                self.depth_context_roi,
-            );
-            self.observer.viz.log_depth_context_polygons(
-                model_key,
-                &output.detections,
-                self.depth_context_roi,
-                frame,
-            );
-            if output.detections.iter().any(|d| d.mask.is_some()) {
-                self.observer
-                    .viz
-                    .log_model_masks(model_key, &output.detections, frame);
-            }
-        }
-        if crop_rect.is_some()
-            && !(self.models.is_face_model(model_key) && output.detections.is_empty())
-        {
-            self.crop_frames_pending.push(CropFrameQueue {
-                model: model_key.to_string(),
-                crop_frame,
-            });
-        }
-        self.observer.emit(Event::detection(
-            self.state.frame_number(),
-            model_key,
-            output.infer_ms,
-            output.pipeline_us / 1000,
-            output
-                .detections
-                .iter()
-                .map(|detection| DetRecord::from_detection(detection, frame.w, frame.h))
-                .collect(),
-            output.postprocess_rejected,
-            output.post_nms_suppressed,
-            Some(per_class),
-            crop_rect.map(|r| r.to_array()),
-        ));
-    }
-
-    fn record_depth_result(
-        &mut self,
-        model_key: &str,
-        output: &InferenceResult,
-        crop_rect: Option<CropRect>,
-        frame_w: u32,
-        frame_h: u32,
-        now: Instant,
-    ) {
-        let (width, height, valid_pixels, min_depth_m, max_depth_m) =
-            depth_summary(output.depth.as_ref(), frame_w, frame_h);
-        let map_area = (width as u64) * (height as u64);
-        let valid_ratio = (map_area > 0).then(|| valid_pixels as f32 / map_area as f32);
-        self.metrics.tick_inference_depth(
-            model_key,
-            output.pipeline_us,
-            output.depth.as_ref(),
-            crop_rect.map(|rect| rect.to_array()),
-        );
-        #[cfg(feature = "rerun")]
-        {
-            self.observer.viz.log_infer_latency(
-                model_key,
-                output.infer_ms * 1000,
-                output.pipeline_us,
-            );
-            if let Some(rect) = crop_rect {
-                self.observer.viz.log_roi_boxes(model_key, rect);
-            }
-            self.observer
-                .viz
-                .log_model_depth(model_key, output.depth.as_ref());
-        }
-        self.observer.emit(Event::depth(
-            self.state.frame_number(),
-            model_key,
-            output.infer_ms,
-            output.pipeline_us / 1000,
-            crop_rect.map(|rect| rect.to_array()),
-            width,
-            height,
-            valid_pixels,
-            valid_ratio,
-            min_depth_m,
-            max_depth_m,
-        ));
-        self.evaluate_depth_rules(output, crop_rect, now);
-    }
-
-    fn evaluate_depth_rules(
-        &mut self,
-        output: &InferenceResult,
-        crop_rect: Option<CropRect>,
-        now: Instant,
-    ) {
-        let Some(depth) = output.depth.as_ref() else {
-            return;
-        };
-        let Some(roi) = crop_rect
-            .or(self.depth_context_roi)
-            .map(|rect| rect.to_array())
-        else {
-            return;
-        };
-        let measurements: Vec<mana_control::DepthRegionStats> = self
-            .depth_rules
-            .rules
-            .iter()
-            .filter_map(|rule| {
-                let stats = mana_perception::region_stats(depth, roi, rule.region)?;
-                Some(mana_control::DepthRegionStats {
-                    region: stats.region,
-                    valid_pixels: stats.valid_pixels,
-                    valid_ratio: stats.valid_ratio,
-                    min_depth_m: stats.min_depth_m,
-                    median_depth_m: stats.median_depth_m,
-                    p10_depth_m: stats.p10_depth_m,
-                    p90_depth_m: stats.p90_depth_m,
-                    max_depth_m: stats.max_depth_m,
-                })
-            })
-            .collect();
-        let results = self.depth_rules.evaluate(&measurements);
-        wire_depth_evidence(&mut self.control_image, &results, now);
-        for result in &results {
-            self.observer.emit(Event::depth_region(
-                self.state.frame_number(),
-                &result.rule,
-                result.region,
-                &format!("{:?}", result.metric).to_lowercase(),
-                result.value,
-                result.threshold_m,
-                result.triggered,
-                result.valid_pixels,
-                result.valid_ratio,
-                result.calibration,
-            ));
-        }
-    }
-
     fn flush_viz_metrics(&mut self, frame_buf: &Option<FrameBuffer>, timestamp_ns: i64) {
         #[cfg(feature = "rerun")]
         if let Some(fb) = frame_buf.as_ref() {
@@ -740,72 +313,6 @@ impl<R: FrameReader> App<R> {
     }
 }
 
-fn gate_observations(tracks: &[&mana_control::track::Track]) -> Vec<GateObservation> {
-    tracks
-        .iter()
-        .map(|t| GateObservation {
-            id: t.id,
-            bbox: t.bbox,
-            class: ClassName::new(t.class.as_str()),
-            confidence: t.confidence,
-            source_model: ModelId::new(t.source_model.as_str()),
-            is_confirmed: t.is_confirmed,
-            misses: t.misses,
-        })
-        .collect()
-}
-
-/// Application adapter from perception's rich consolidated evidence to the
-/// narrow control input port. Mask payloads and model-specific components stay
-/// on the perception side; control receives only scene facts it can decide on.
-fn project_scene_sample(sample: &ClinicalSample) -> mana_control::SceneSample {
-    mana_control::SceneSample {
-        observations: sample
-            .observations
-            .iter()
-            .map(|observation| {
-                let mut source_models: Vec<_> = observation
-                    .evidence
-                    .iter()
-                    .chain(&observation.components)
-                    .map(|evidence| mana_control::domain::ModelId::new(evidence.model.as_str()))
-                    .collect();
-                source_models.sort_by(|a, b| a.as_str().cmp(b.as_str()));
-                source_models.dedup();
-                let face = observation
-                    .components
-                    .iter()
-                    .filter(|component| component.class == "face")
-                    .max_by(|a, b| a.confidence.total_cmp(&b.confidence))
-                    .map(|face| mana_control::FaceObservation {
-                        bbox: face.bbox,
-                        confidence: face.confidence,
-                    });
-                mana_control::SceneObservation {
-                    class: mana_control::domain::ClassName::new(observation.class.as_str()),
-                    bbox: observation.bbox,
-                    confidence: observation.confidence,
-                    source_models,
-                    face,
-                }
-            })
-            .collect(),
-        signal_valid: sample.signal_valid,
-        raw_person_count: sample.raw_person_count,
-        frame_number: sample.frame_number,
-        face_model_ran: sample.face_model_ran,
-    }
-}
-
-/// Installs evaluated depth policy results into the control process image.
-fn wire_depth_evidence(
-    image: &mut mana_control::ProcessImage,
-    results: &[mana_control::DepthRuleResult],
-    now: Instant,
-) {
-    image.set_depth(mana_control::DepthRuleSnapshot::from_results(results), now);
-}
-
 #[cfg(feature = "rerun")]
 fn raw_frame_header(fb: &FrameBuffer, frame_id: u64, timestamp_ns: i64) -> RawFrameV1 {
     RawFrameV1 {
@@ -814,38 +321,6 @@ fn raw_frame_header(fb: &FrameBuffer, frame_id: u64, timestamp_ns: i64) -> RawFr
         frame_id,
         timestamp_ns,
         ..Default::default()
-    }
-}
-
-fn depth_summary(
-    depth: Option<&crate::depth_map::DepthFrame>,
-    fallback_width: u32,
-    fallback_height: u32,
-) -> (u32, u32, u64, Option<f32>, Option<f32>) {
-    let Some(depth) = depth else {
-        return (fallback_width, fallback_height, 0, None, None);
-    };
-    let (width, height) = depth.dims();
-    let mut valid_pixels = 0;
-    let mut min_depth = f32::INFINITY;
-    let mut max_depth: f32 = 0.0;
-    for value in depth.iter_values() {
-        if value.is_finite() && value > 0.0 {
-            valid_pixels += 1;
-            min_depth = min_depth.min(value);
-            max_depth = max_depth.max(value);
-        }
-    }
-    if valid_pixels == 0 {
-        (width, height, 0, None, None)
-    } else {
-        (
-            width,
-            height,
-            valid_pixels,
-            Some(min_depth),
-            Some(max_depth),
-        )
     }
 }
 

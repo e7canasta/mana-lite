@@ -1,6 +1,7 @@
-
+use super::record::wire_depth_evidence;
 use super::*;
 use crate::config::{MetricsTextConfig, ModelCatalog};
+use crate::infer::InferenceResult;
 use crate::ingest::SyntheticReader;
 use crate::logger::{JsonlLevel, LogManager};
 use crate::occupancy::OccupancyStateMachine;
@@ -15,6 +16,7 @@ use mana_control::{
 };
 use ndarray::Array2;
 use std::collections::HashMap;
+use std::time::Instant;
 use ultralytics_inference::DepthMap;
 
 #[test]

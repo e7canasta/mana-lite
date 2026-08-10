@@ -1,0 +1,379 @@
+//! Inference-cycle stages: schedule models, consolidate, record, publish.
+
+use crate::cascade::{CascadeTarget, GateObservation};
+use crate::config::{AppConfig, CropType};
+use crate::detection::CropRect;
+use crate::detection::{ConsolidatedObservation, DetectionRole, ModelDetections};
+use crate::infer::{InferenceResult, compute_bbox_roi, compute_upper_square_roi};
+use crate::logger::Event;
+use crate::snapshot::FrameBuffer;
+use mana_perception::domain::{ClassName, ModelId};
+use std::time::Instant;
+
+use super::observer::PipelineObserver;
+use super::{App, CycleContext, FrameSize};
+use crate::ingest::FrameReader;
+
+#[derive(Debug, Clone)]
+struct ClinicalSample {
+    observations: Vec<ConsolidatedObservation>,
+    signal_valid: bool,
+    raw_person_count: usize,
+    frame_number: u64,
+    face_model_ran: bool,
+}
+
+struct PendingModelOutput {
+    model_key: String,
+    output: InferenceResult,
+    crop_frame: Option<crate::infer::CropFrameInfo>,
+    crop_rect: Option<CropRect>,
+}
+
+impl<R: FrameReader> App<R> {
+    /// Runs one inference cycle over a keyframe, in fixed stage order.
+    pub(super) fn run_inference(&mut self, cycle: CycleContext<'_>, config: &AppConfig) {
+        let fb = cycle.frame;
+        #[cfg(feature = "rerun")]
+        self.observer.viz.clear_depth_context_boxes();
+
+        let requested = self.resolve_models(config);
+        let ordered = self.cascade.ordered(&requested);
+        let mut pending: Vec<PendingModelOutput> = Vec::new();
+
+        let primary_root_valid = self.run_root_models(&ordered, fb, &mut pending);
+        self.run_child_models(&ordered, fb, config, &mut pending);
+
+        let observations = self.consolidate_and_emit(&pending, cycle.frame_number);
+        let face_model_ran = pending
+            .iter()
+            .any(|item| self.models.is_face_model(&item.model_key));
+        let frame = FrameSize::new(fb.w, fb.h);
+        #[cfg(feature = "rerun")]
+        self.observer
+            .viz
+            .log_consolidated_observations(&observations, frame);
+
+        self.record_pending_results(pending, frame, cycle.now);
+        let raw_person_count = observations_person_count(&observations, &config.presence.class);
+        self.publish_clinical_sample(
+            ClinicalSample {
+                observations,
+                signal_valid: primary_root_valid,
+                raw_person_count,
+                frame_number: cycle.frame_number,
+                face_model_ran,
+            },
+            cycle.now,
+        );
+    }
+
+    /// Stage: run cascade roots (no parent) and note primary-root validity.
+    fn run_root_models(
+        &mut self,
+        ordered: &[&str],
+        fb: &FrameBuffer,
+        pending: &mut Vec<PendingModelOutput>,
+    ) -> bool {
+        let roots: Vec<String> = ordered
+            .iter()
+            .filter(|model| self.cascade.parent_of(model).is_none())
+            .map(|model| (*model).to_owned())
+            .collect();
+        let mut primary_root_valid = false;
+        for model_key in roots {
+            let valid = self.run_scheduled_model(&model_key, None, fb, pending);
+            if model_key == self.primary_model {
+                primary_root_valid = valid;
+            }
+        }
+        primary_root_valid
+    }
+
+    /// Stage: run cascade children when presence gate and target allow.
+    fn run_child_models(
+        &mut self,
+        ordered: &[&str],
+        fb: &FrameBuffer,
+        config: &AppConfig,
+        pending: &mut Vec<PendingModelOutput>,
+    ) {
+        let children: Vec<String> = ordered
+            .iter()
+            .filter(|model| self.cascade.parent_of(model).is_some())
+            .map(|model| (*model).to_owned())
+            .collect();
+        for model_key in children {
+            if self.presence_track_count(&config.presence.class) != 1 {
+                self.metrics.tick_infer_skip(&model_key);
+                continue;
+            }
+            let target = self.resolve_cascade_target(&model_key, pending, fb);
+            if target.is_none() {
+                self.metrics.tick_infer_skip(&model_key);
+                continue;
+            }
+            self.run_scheduled_model(&model_key, target, fb, pending);
+        }
+    }
+
+    fn presence_track_count(&self, class: &str) -> usize {
+        self.control.tracker.as_ref().map_or(0, |tracker| {
+            tracker
+                .current_tracks()
+                .into_iter()
+                .filter(|track| track.class.as_str() == class)
+                .count()
+        })
+    }
+
+    fn resolve_cascade_target(
+        &self,
+        model_key: &str,
+        pending: &[PendingModelOutput],
+        fb: &FrameBuffer,
+    ) -> Option<CascadeTarget> {
+        if self.cascade.same_frame(model_key) {
+            self.cascade
+                .parent_of(model_key)
+                .and_then(|parent| {
+                    pending
+                        .iter()
+                        .find(|item| item.model_key == parent)
+                        .map(|item| item.output.detections.as_slice())
+                })
+                .and_then(|detections| {
+                    self.cascade
+                        .target_for_detections(model_key, detections, fb.w, fb.h)
+                })
+        } else {
+            let current_tracks = self
+                .control
+                .tracker
+                .as_ref()
+                .map_or_else(Vec::new, |tracker| tracker.current_tracks());
+            let observations = gate_observations(&current_tracks);
+            self.cascade
+                .target_for(model_key, &observations, fb.w, fb.h)
+        }
+    }
+
+    /// Stage: consolidate non-depth outputs and emit per-observation events.
+    fn consolidate_and_emit(
+        &mut self,
+        pending: &[PendingModelOutput],
+        frame_number: u64,
+    ) -> Vec<ConsolidatedObservation> {
+        let mut model_outputs: Vec<ModelDetections> = Vec::new();
+        model_outputs.extend(
+            pending
+                .iter()
+                .filter(|item| !self.models.is_depth(&item.model_key))
+                .map(|item| ModelDetections {
+                    model: item.model_key.as_str(),
+                    role: if item.model_key == self.primary_model {
+                        DetectionRole::Primary
+                    } else {
+                        DetectionRole::Secondary
+                    },
+                    detections: &item.output.detections,
+                }),
+        );
+        let observations = self.detection_consolidator.consolidate(&model_outputs);
+        for observation in &observations {
+            let mut sources: Vec<String> = observation
+                .evidence
+                .iter()
+                .chain(observation.components.iter())
+                .map(|e| e.model.clone())
+                .collect();
+            sources.sort();
+            sources.dedup();
+            self.observer.emit(Event::consolidated_detection(
+                frame_number,
+                &observation.class,
+                observation.confidence,
+                observation.bbox,
+                &observation.primary_model,
+                sources,
+            ));
+        }
+        observations
+    }
+
+    /// Stage: record each pending model result (metrics, viz, JSONL, depth).
+    fn record_pending_results(
+        &mut self,
+        pending: Vec<PendingModelOutput>,
+        frame: FrameSize,
+        now: Instant,
+    ) {
+        for item in pending {
+            self.record_model_result(
+                &item.model_key,
+                &item.output,
+                item.crop_frame,
+                item.crop_rect,
+                frame,
+                now,
+            );
+        }
+    }
+
+    /// Stage: project consolidated sample into the control process image.
+    fn publish_clinical_sample(&mut self, sample: ClinicalSample, now: Instant) {
+        self.control_image.observations = Some(mana_control::AgedEvidence::new(
+            project_scene_sample(&sample),
+            now,
+        ));
+        self.control_image.measurement_pending = true;
+    }
+
+    fn run_scheduled_model(
+        &mut self,
+        model_key: &str,
+        target: Option<CascadeTarget>,
+        fb: &FrameBuffer,
+        pending: &mut Vec<PendingModelOutput>,
+    ) -> bool {
+        let is_static = self
+            .infer
+            .crop_info(model_key)
+            .is_some_and(|c| c.crop_type == CropType::Static);
+        let crop_rect = self.resolve_crop_rect(model_key, target, fb);
+        let manual_crop = if is_static { None } else { crop_rect };
+        let Some(mut output) = self.infer.run(model_key, &fb.rgb, fb.w, fb.h, manual_crop) else {
+            return false;
+        };
+        let crop_frame = output.crop_frame.take();
+        pending.push(PendingModelOutput {
+            model_key: model_key.to_owned(),
+            output,
+            crop_frame,
+            crop_rect,
+        });
+        true
+    }
+
+    fn resolve_crop_rect(
+        &self,
+        model_key: &str,
+        target: Option<CascadeTarget>,
+        fb: &FrameBuffer,
+    ) -> Option<crate::detection::CropRect> {
+        let crop_cfg = self.infer.crop_info(model_key)?;
+
+        if crop_cfg.crop_type == CropType::Static {
+            return crop_cfg.region.map(CropRect::from_array);
+        }
+
+        let target = target?;
+        if let Some(square_size) = crop_cfg.square_size {
+            return compute_upper_square_roi(
+                target.bbox,
+                square_size,
+                crop_cfg.upper_fraction.unwrap_or(0.5),
+                fb.w,
+                fb.h,
+            );
+        }
+        compute_bbox_roi(
+            target.bbox,
+            crop_cfg.margin,
+            fb.w,
+            fb.h,
+            crop_cfg.min_region,
+            crop_cfg.max_region,
+        )
+    }
+
+    fn is_model_enabled(&self, config: &AppConfig, name: &str) -> bool {
+        self.models.enabled(name)
+            && self
+                .models
+                .task_of(name)
+                .map(|task| {
+                    !config
+                        .inference
+                        .disabled_tasks
+                        .iter()
+                        .any(|disabled| disabled == task.as_str())
+                })
+                .unwrap_or(true)
+    }
+
+    fn resolve_models(&self, config: &AppConfig) -> Vec<String> {
+        let models = self.control.fsm_engine.as_ref().map_or_else(
+            || self.cascade.all_models().to_vec(),
+            |fsm| fsm.current_models(),
+        );
+        models
+            .into_iter()
+            .filter(|name| self.is_model_enabled(config, name))
+            .collect()
+    }
+}
+
+fn observations_person_count(observations: &[ConsolidatedObservation], class: &str) -> usize {
+    observations
+        .iter()
+        .filter(|observation| observation.class == class)
+        .count()
+}
+
+fn gate_observations(tracks: &[&mana_control::track::Track]) -> Vec<GateObservation> {
+    tracks
+        .iter()
+        .map(|t| GateObservation {
+            id: t.id,
+            bbox: t.bbox,
+            class: ClassName::new(t.class.as_str()),
+            confidence: t.confidence,
+            source_model: ModelId::new(t.source_model.as_str()),
+            is_confirmed: t.is_confirmed,
+            misses: t.misses,
+        })
+        .collect()
+}
+
+/// Application adapter from perception's rich consolidated evidence to the
+/// narrow control input port. Mask payloads and model-specific components stay
+/// on the perception side; control receives only scene facts it can decide on.
+fn project_scene_sample(sample: &ClinicalSample) -> mana_control::SceneSample {
+    mana_control::SceneSample {
+        observations: sample
+            .observations
+            .iter()
+            .map(|observation| {
+                let mut source_models: Vec<_> = observation
+                    .evidence
+                    .iter()
+                    .chain(&observation.components)
+                    .map(|evidence| mana_control::domain::ModelId::new(evidence.model.as_str()))
+                    .collect();
+                source_models.sort_by(|a, b| a.as_str().cmp(b.as_str()));
+                source_models.dedup();
+                let face = observation
+                    .components
+                    .iter()
+                    .filter(|component| component.class == "face")
+                    .max_by(|a, b| a.confidence.total_cmp(&b.confidence))
+                    .map(|face| mana_control::FaceObservation {
+                        bbox: face.bbox,
+                        confidence: face.confidence,
+                    });
+                mana_control::SceneObservation {
+                    class: mana_control::domain::ClassName::new(observation.class.as_str()),
+                    bbox: observation.bbox,
+                    confidence: observation.confidence,
+                    source_models,
+                    face,
+                }
+            })
+            .collect(),
+        signal_valid: sample.signal_valid,
+        raw_person_count: sample.raw_person_count,
+        frame_number: sample.frame_number,
+        face_model_ran: sample.face_model_ran,
+    }
+}
