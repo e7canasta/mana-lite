@@ -59,27 +59,8 @@ impl PresenceFilter {
         signal_valid: bool,
         now: Instant,
     ) -> (Vec<SceneObservation>, PresenceUpdate) {
-        if !self.enabled {
-            return (
-                observations.to_vec(),
-                PresenceUpdate {
-                    state: self.state,
-                    held: false,
-                    positive_ms: self.debouncer.elapsed_high_ms(now),
-                    empty_ms: self.debouncer.elapsed_low_ms(now),
-                },
-            );
-        }
-        if !signal_valid {
-            return (
-                observations.to_vec(),
-                PresenceUpdate {
-                    state: self.state,
-                    held: false,
-                    positive_ms: self.debouncer.elapsed_high_ms(now),
-                    empty_ms: self.debouncer.elapsed_low_ms(now),
-                },
-            );
+        if !self.enabled || !signal_valid {
+            return self.passthrough(observations, now);
         }
 
         let person_count = observations
@@ -88,42 +69,82 @@ impl PresenceFilter {
             .count();
 
         if person_count > 1 {
-            self.state = PresenceState::Ambiguous;
-            self.debouncer.reset();
-            self.last_person = None;
-            return (
-                observations.to_vec(),
-                PresenceUpdate {
-                    state: self.state,
-                    held: false,
-                    positive_ms: 0,
-                    empty_ms: 0,
-                },
-            );
+            return self.ambiguous(observations);
         }
 
         if let Some(person) = observations
             .iter()
             .find(|observation| observation.class.as_str() == self.class)
         {
-            let engaged =
-                self.debouncer
-                    .update_at(true, self.policy.on_ms, self.policy.off_ms, now);
-            self.last_person = Some(person.clone());
-            if engaged {
-                self.state = PresenceState::Present;
-            }
-            return (
-                observations.to_vec(),
-                PresenceUpdate {
-                    state: self.state,
-                    held: false,
-                    positive_ms: self.debouncer.elapsed_high_ms(now),
-                    empty_ms: 0,
-                },
-            );
+            return self.person_seen(observations, person, now);
         }
 
+        self.person_absent(observations, now)
+    }
+
+    fn passthrough(
+        &self,
+        observations: &[SceneObservation],
+        now: Instant,
+    ) -> (Vec<SceneObservation>, PresenceUpdate) {
+        (
+            observations.to_vec(),
+            PresenceUpdate {
+                state: self.state,
+                held: false,
+                positive_ms: self.debouncer.elapsed_high_ms(now),
+                empty_ms: self.debouncer.elapsed_low_ms(now),
+            },
+        )
+    }
+
+    fn ambiguous(
+        &mut self,
+        observations: &[SceneObservation],
+    ) -> (Vec<SceneObservation>, PresenceUpdate) {
+        self.state = PresenceState::Ambiguous;
+        self.debouncer.reset();
+        self.last_person = None;
+        (
+            observations.to_vec(),
+            PresenceUpdate {
+                state: self.state,
+                held: false,
+                positive_ms: 0,
+                empty_ms: 0,
+            },
+        )
+    }
+
+    fn person_seen(
+        &mut self,
+        observations: &[SceneObservation],
+        person: &SceneObservation,
+        now: Instant,
+    ) -> (Vec<SceneObservation>, PresenceUpdate) {
+        let engaged = self
+            .debouncer
+            .update_at(true, self.policy.on_ms, self.policy.off_ms, now);
+        self.last_person = Some(person.clone());
+        if engaged {
+            self.state = PresenceState::Present;
+        }
+        (
+            observations.to_vec(),
+            PresenceUpdate {
+                state: self.state,
+                held: false,
+                positive_ms: self.debouncer.elapsed_high_ms(now),
+                empty_ms: 0,
+            },
+        )
+    }
+
+    fn person_absent(
+        &mut self,
+        observations: &[SceneObservation],
+        now: Instant,
+    ) -> (Vec<SceneObservation>, PresenceUpdate) {
         let engaged = self
             .debouncer
             .update_at(false, self.policy.on_ms, self.policy.off_ms, now);

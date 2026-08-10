@@ -4,10 +4,14 @@
 /// Costo `cost[i][j]` entre track `i` y deteccion `j`; `INF` marca pares
 /// prohibidos (clase distinta). Devuelve la asignacion `(track_idx, det_idx)`
 /// con costo total minimo, sin pares prohibidos y sin exceder `max_cost`.
+///
+/// Kept whole on purpose: splitting the classical Hungarian algorithm makes it
+/// harder to audit, not easier (Sprint 3 length gate exception).
 #[allow(
     clippy::many_single_char_names,
     clippy::needless_range_loop,
-    clippy::items_after_statements
+    clippy::items_after_statements,
+    clippy::too_many_lines
 )]
 #[must_use]
 pub fn hungarian_min(
