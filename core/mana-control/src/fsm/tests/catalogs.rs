@@ -129,7 +129,6 @@ pub(super) fn catalog_with_roles(roles: FsmRoles) -> FsmCatalog {
 
 pub(super) fn test_zones(catalog: &FsmCatalog) -> ZoneCatalog {
     let mut zones = HashMap::new();
-    let mut needs_face_dwell = false;
     for transition in &catalog.fsm.transitions {
         for guard in &transition.guards {
             match guard {
@@ -145,23 +144,13 @@ pub(super) fn test_zones(catalog: &FsmCatalog) -> ZoneCatalog {
                         hysteresis_ms: 0,
                     });
                 }
-                FsmGuard::FaceInDwell | FsmGuard::FaceNotInDwell => {
-                    needs_face_dwell = true;
-                }
                 _ => {}
             }
         }
     }
     ZoneCatalog {
         zones,
-        face_dwell: needs_face_dwell.then_some(ZoneSpec {
-            x1: 0,
-            y1: 0,
-            x2: 1,
-            y2: 1,
-            label: None,
-            hysteresis_ms: 0,
-        }),
+        face_dwell: None,
     }
 }
 

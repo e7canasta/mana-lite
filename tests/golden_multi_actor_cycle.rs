@@ -147,7 +147,11 @@ fn catalog() -> FsmCatalog {
                 FsmTransition {
                     from: "watching".into(),
                     to: "engaged".into(),
-                    guards: vec![FsmGuard::FaceInDwell],
+                    guards: vec![FsmGuard::Signal {
+                        tag: "cara.en_dwell".into(),
+                        op: "==".into(),
+                        value: mana_lite::fsm::SignalLiteral::Bool(true),
+                    }],
                     dwell: None,
                 },
                 FsmTransition {

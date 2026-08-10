@@ -51,10 +51,13 @@ fn roles_decouple_engine_from_state_names() {
         face_confidence: Some(0.9),
         ..Default::default()
     };
-    let face_signals = snapshot_with_signals(&[(
-        "cara.confianza",
-        SignalValue::Ratio(Ratio::new(0.9).unwrap()),
-    )]);
+    let face_signals = snapshot_with_signals(&[
+        (
+            "cara.confianza",
+            SignalValue::Ratio(Ratio::new(0.9).unwrap()),
+        ),
+        ("cara.en_dwell", SignalValue::Bool(true)),
+    ]);
     let reset = engine
         .evaluate_with_signals_at(&[], None, &health, &depth, &face, &face_signals, start)
         .expect("data fresh resets to home");
@@ -245,7 +248,11 @@ fn force_safe_state_purges_corrupted_state_and_recovers_to_idle() {
             FsmTransition {
                 from: "detected".into(),
                 to: "edge".into(),
-                guards: vec![FsmGuard::FaceInDwell],
+                guards: vec![FsmGuard::Signal {
+                    tag: "cara.en_dwell".into(),
+                    op: "==".into(),
+                    value: SignalLiteral::Bool(true),
+                }],
                 dwell: Some("1000ms".into()),
             },
             FsmTransition {
@@ -275,10 +282,13 @@ fn force_safe_state_purges_corrupted_state_and_recovers_to_idle() {
         face_in_dwell: Some(true),
         ..Default::default()
     };
-    let face_signals = snapshot_with_signals(&[(
-        "cara.confianza",
-        SignalValue::Ratio(Ratio::new(0.9).unwrap()),
-    )]);
+    let face_signals = snapshot_with_signals(&[
+        (
+            "cara.confianza",
+            SignalValue::Ratio(Ratio::new(0.9).unwrap()),
+        ),
+        ("cara.en_dwell", SignalValue::Bool(true)),
+    ]);
 
     // Estado torcido: detected con latch y un timer de dwell pendiente.
     let entered = engine
@@ -354,7 +364,11 @@ fn wildcard_evaluation_does_not_run_state_specific_transition() {
         vec![FsmTransition {
             from: "idle".into(),
             to: "in_bed".into(),
-            guards: vec![FsmGuard::FaceInDwell],
+            guards: vec![FsmGuard::Signal {
+                tag: "cara.en_dwell".into(),
+                op: "==".into(),
+                value: SignalLiteral::Bool(true),
+            }],
             dwell: None,
         }],
     );
@@ -365,15 +379,17 @@ fn wildcard_evaluation_does_not_run_state_specific_transition() {
         face_in_dwell: Some(true),
         ..Default::default()
     };
+    let inside_signals = snapshot_with_signals(&[("cara.en_dwell", SignalValue::Bool(true))]);
 
     assert!(
         engine
-            .evaluate_wildcard_with_context_at(
+            .evaluate_wildcard_with_signals_at(
                 &[],
                 None,
                 &health,
                 &DepthRuleSnapshot::default(),
                 &inside,
+                &inside_signals,
                 start,
             )
             .is_none()
@@ -381,12 +397,13 @@ fn wildcard_evaluation_does_not_run_state_specific_transition() {
     assert_eq!(engine.current_state(), "idle");
     assert!(
         engine
-            .evaluate_with_context_at(
+            .evaluate_with_signals_at(
                 &[],
                 None,
                 &health,
                 &DepthRuleSnapshot::default(),
                 &inside,
+                &inside_signals,
                 start,
             )
             .is_some()

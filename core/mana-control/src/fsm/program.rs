@@ -122,7 +122,6 @@ pub enum ProgramGuard {
         op: SignalOp,
         value: SignalValue,
     },
-    FaceInDwell,
     FaceNotInDwell,
     FaceAtEdge,
     FaceNotAtEdge,
@@ -333,16 +332,6 @@ impl FsmProgram {
                             }
                         }
                     }
-                    FsmGuard::FaceInDwell | FsmGuard::FaceNotInDwell => {
-                        if let Some(zc) = zones {
-                            if zc.face_dwell.is_none() {
-                                errors.push(format!(
-                                    "transition {}→{} requires face_dwell in zone catalog",
-                                    transition.from, transition.to
-                                ));
-                            }
-                        }
-                    }
                     _ => {}
                 }
             }
@@ -410,7 +399,6 @@ impl FsmProgram {
             FsmGuard::Signal { tag, op, value } => {
                 return Self::resolve_signal_guard(tag, op, value, from, to, index, errors);
             }
-            FsmGuard::FaceInDwell => ProgramGuard::FaceInDwell,
             FsmGuard::FaceNotInDwell => ProgramGuard::FaceNotInDwell,
             FsmGuard::FaceAtEdge => ProgramGuard::FaceAtEdge,
             FsmGuard::FaceNotAtEdge => ProgramGuard::FaceNotAtEdge,

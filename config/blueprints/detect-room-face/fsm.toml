@@ -110,7 +110,7 @@ dwell = "1000ms"
 guards = [
     { type = "signal", tag = "ocupacion.cardinalidad", op = "==", value = "single" },
     { type = "signal", tag = "persona.presente", op = "==", value = true },
-    { type = "face_in_dwell" },
+    { type = "signal", tag = "cara.en_dwell", op = "==", value = true },
     { type = "face_not_at_edge" },
 ]
 
@@ -167,7 +167,7 @@ to = "in_bed"
 dwell = "1000ms"
 guards = [
     { type = "signal", tag = "ocupacion.cardinalidad", op = "==", value = "single" },
-    { type = "face_in_dwell" },
+    { type = "signal", tag = "cara.en_dwell", op = "==", value = true },
     { type = "face_not_at_edge" },
 ]
 
@@ -239,7 +239,7 @@ to = "in_bed"
 dwell = "1000ms"
 guards = [
     { type = "signal", tag = "ocupacion.cardinalidad", op = "==", value = "single" },
-    { type = "face_in_dwell" },
+    { type = "signal", tag = "cara.en_dwell", op = "==", value = true },
     { type = "face_not_at_edge" },
 ]
 
@@ -299,7 +299,7 @@ to = "in_bed"
 dwell = "1000ms"
 guards = [
     { type = "signal", tag = "ocupacion.cardinalidad", op = "==", value = "single" },
-    { type = "face_in_dwell" },
+    { type = "signal", tag = "cara.en_dwell", op = "==", value = true },
     { type = "face_not_at_edge" },
 ]
 
@@ -334,7 +334,7 @@ dwell = "1000ms"
 guards = [
     { type = "signal", tag = "ocupacion.cardinalidad", op = "==", value = "single" },
     { type = "signal", tag = "persona.presente", op = "==", value = true },
-    { type = "face_in_dwell" },
+    { type = "signal", tag = "cara.en_dwell", op = "==", value = true },
     { type = "face_not_at_edge" },
 ]
 

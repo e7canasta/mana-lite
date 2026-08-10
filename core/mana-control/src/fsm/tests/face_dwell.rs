@@ -17,7 +17,11 @@ fn face_dwell_guard_uses_face_context() {
         vec![FsmTransition {
             from: "outside".into(),
             to: "inside".into(),
-            guards: vec![FsmGuard::FaceInDwell],
+            guards: vec![FsmGuard::Signal {
+                tag: "cara.en_dwell".into(),
+                op: "==".into(),
+                value: SignalLiteral::Bool(true),
+            }],
             dwell: None,
         }],
     );
@@ -28,14 +32,16 @@ fn face_dwell_guard_uses_face_context() {
         face_in_dwell: Some(false),
         ..Default::default()
     };
+    let outside_signals = snapshot_with_signals(&[("cara.en_dwell", SignalValue::Bool(false))]);
     assert!(
         engine
-            .evaluate_with_context_at(
+            .evaluate_with_signals_at(
                 &[],
                 None,
                 &health,
                 &DepthRuleSnapshot::default(),
                 &outside,
+                &outside_signals,
                 start,
             )
             .is_none()
@@ -45,14 +51,16 @@ fn face_dwell_guard_uses_face_context() {
         face_in_dwell: Some(true),
         ..Default::default()
     };
+    let inside_signals = snapshot_with_signals(&[("cara.en_dwell", SignalValue::Bool(true))]);
     assert!(
         engine
-            .evaluate_with_context_at(
+            .evaluate_with_signals_at(
                 &[],
                 None,
                 &health,
                 &DepthRuleSnapshot::default(),
                 &inside,
+                &inside_signals,
                 start,
             )
             .is_some()
@@ -68,7 +76,11 @@ fn face_dwell_snapshot_reports_state_and_candidate_timer() {
         vec![FsmTransition {
             from: "searching".into(),
             to: "in_bed".into(),
-            guards: vec![FsmGuard::FaceInDwell],
+            guards: vec![FsmGuard::Signal {
+                tag: "cara.en_dwell".into(),
+                op: "==".into(),
+                value: SignalLiteral::Bool(true),
+            }],
             dwell: Some("1000ms".into()),
         }],
     );
@@ -84,15 +96,17 @@ fn face_dwell_snapshot_reports_state_and_candidate_timer() {
         at_edge: false,
         face_model_ran: true,
     };
+    let inside_signals = snapshot_with_signals(&[("cara.en_dwell", SignalValue::Bool(true))]);
 
     assert!(
         engine
-            .evaluate_with_context_at(
+            .evaluate_with_signals_at(
                 &[],
                 None,
                 &health,
                 &DepthRuleSnapshot::default(),
                 &inside,
+                &inside_signals,
                 start,
             )
             .is_none()
@@ -115,7 +129,14 @@ fn edge_priority_blocks_dwell_until_face_leaves_edge() {
             FsmTransition {
                 from: "edge".into(),
                 to: "in_bed".into(),
-                guards: vec![FsmGuard::FaceInDwell, FsmGuard::FaceNotAtEdge],
+                guards: vec![
+                    FsmGuard::Signal {
+                        tag: "cara.en_dwell".into(),
+                        op: "==".into(),
+                        value: SignalLiteral::Bool(true),
+                    },
+                    FsmGuard::FaceNotAtEdge,
+                ],
                 dwell: Some("1000ms".into()),
             },
             FsmTransition {
@@ -145,6 +166,7 @@ fn edge_priority_blocks_dwell_until_face_leaves_edge() {
     let signals = snapshot_with_signals(&[
         ("persona.presente", SignalValue::Bool(true)),
         ("cara.presente", SignalValue::Bool(true)),
+        ("cara.en_dwell", SignalValue::Bool(true)),
     ]);
     let at_edge = FsmSceneContext {
         person_present: true,
