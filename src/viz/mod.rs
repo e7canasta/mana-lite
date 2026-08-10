@@ -2,8 +2,6 @@ use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 
 use mana_media::RawFrameV1;
-use mana_viz::boxes::boxes2d_from_xyxy;
-use mana_viz::logging;
 
 use crate::app::FrameSize;
 
@@ -20,7 +18,10 @@ use image::{Rgb, RgbImage};
 use imageproc::drawing::draw_line_segment_mut;
 use ultralytics_inference::visualizer::color::{Colormap, DepthViz};
 
+mod boxes;
+mod frame;
 mod masks;
+use boxes::boxes2d_from_xyxy;
 use masks::{build_mask_overlay, frame_strip, polygon_in_roi, render_mask_debug_images};
 
 enum Inner {
@@ -484,7 +485,7 @@ impl VizBridge {
             return;
         }
         if let Inner::Connected { ref rec, .. } = self.inner {
-            if let Err(e) = logging::frame::log_frame_rgb24(rec, "/world/camera/bgr", header, rgb) {
+            if let Err(e) = frame::log_frame_rgb24(rec, "/world/camera/bgr", header, rgb) {
                 log::warn!("viz frame log failed: {e}");
             }
         }
@@ -499,7 +500,7 @@ impl VizBridge {
             _ => return,
         };
         let path = format!("/world/camera/crops/{model}/bgr");
-        if let Err(e) = logging::frame::log_frame_rgb24_owned(
+        if let Err(e) = frame::log_frame_rgb24_owned(
             rec,
             &path,
             &RawFrameV1 {

@@ -1,25 +1,22 @@
-use anyhow::Result;
 use mana_media::RawFrameV1;
 
-use super::util::log_at;
-
-pub fn log_frame_rgb24(
+pub(super) fn log_frame_rgb24(
     rec: &rerun::RecordingStream,
     entity_path: &str,
     header: &RawFrameV1,
     rgb: &[u8],
-) -> Result<()> {
+) -> Result<(), String> {
     let w = header.width;
     let h = header.height;
     let expected = (w * h * 3) as usize;
     let data = if rgb.len() >= expected {
         rgb[..expected].to_vec()
     } else {
-        tracing::warn!(
-            frame_id = header.frame_id,
-            got = rgb.len(),
-            expected,
-            "frame pixel data too short; padding with zeros"
+        log::warn!(
+            "frame pixel data too short; padding with zeros (frame_id={}, got={}, expected={})",
+            header.frame_id,
+            rgb.len(),
+            expected
         );
         let mut padded = vec![0u8; expected];
         padded[..rgb.len()].copy_from_slice(rgb);
@@ -28,12 +25,12 @@ pub fn log_frame_rgb24(
     log_frame_rgb24_owned(rec, entity_path, header, data)
 }
 
-pub fn log_frame_rgb24_owned(
+pub(super) fn log_frame_rgb24_owned(
     rec: &rerun::RecordingStream,
     entity_path: &str,
     header: &RawFrameV1,
     data: Vec<u8>,
-) -> Result<()> {
+) -> Result<(), String> {
     log_at(
         rec,
         entity_path,
@@ -41,6 +38,27 @@ pub fn log_frame_rgb24_owned(
         &rerun::Image::from_rgb24(data, [header.width, header.height]),
         || format!("rrd frame log failed (frame_id={})", header.frame_id),
     )
+}
+
+fn log_archetype<A: rerun::AsComponents>(
+    rec: &rerun::RecordingStream,
+    entity_path: &str,
+    archetype: &A,
+    ctx: impl FnOnce() -> String,
+) -> Result<(), String> {
+    rec.log(entity_path, archetype)
+        .map_err(|e| format!("{}: {e}", ctx()))
+}
+
+fn log_at<A: rerun::AsComponents>(
+    rec: &rerun::RecordingStream,
+    entity_path: &str,
+    timestamp_ns: i64,
+    archetype: &A,
+    ctx: impl FnOnce() -> String,
+) -> Result<(), String> {
+    rec.set_timestamp_nanos_since_epoch("frame_time", timestamp_ns);
+    log_archetype(rec, entity_path, archetype, ctx)
 }
 
 #[cfg(test)]

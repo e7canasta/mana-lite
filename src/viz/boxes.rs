@@ -1,8 +1,7 @@
 use rerun::datatypes::Vec2D;
 
 /// Build a Boxes2D archetype from an axis-aligned xyxy pixel box.
-#[must_use]
-pub fn boxes2d_from_xyxy(
+pub(super) fn boxes2d_from_xyxy(
     bbox: [f32; 4],
     color: rerun::Color,
     label: Option<&str>,

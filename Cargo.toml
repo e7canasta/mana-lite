@@ -4,7 +4,6 @@ members = [
     "core/mana-perception",
     "std/mana-id",
     "std/mana-media",
-    "std/mana-viz",
     "std/mana-geometry",
 ]
 
@@ -25,7 +24,7 @@ authors = ["Mana OS Contributors"]
 [features]
 default = ["ffmpeg", "rerun"]
 ffmpeg = ["dep:ffmpeg-next", "mana-media/ffmpeg"]
-rerun = ["dep:rerun", "dep:mana-viz", "mana-viz/rerun"]
+rerun = ["dep:rerun"]
 
 [[bin]]
 name = "mana-lite"
@@ -38,7 +37,6 @@ required-features = ["rerun"]
 
 [dependencies]
 mana-media = { path = "std/mana-media", default-features = false }
-mana-viz = { path = "std/mana-viz", optional = true, default-features = false }
 mana-geometry = { path = "std/mana-geometry", features = ["polygonize"] }
 mana-id = { path = "std/mana-id" }
 mana-control = { path = "core/mana-control" }
