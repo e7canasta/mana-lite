@@ -138,7 +138,7 @@ guards = [
 [[fsm.transitions]]
 from = "searching"
 to = "idle"
-guards = [{ type = "person_absent" }]
+guards = [{ type = "signal", tag = "persona.presente", op = "==", value = false }]
 
 # Normal face lifecycle. Edge has priority over bed so border movement is
 # visible even when the bed rectangle touches the camera boundary.
@@ -148,7 +148,7 @@ from = "detected"
 to = "exiting"
 dwell = "1500ms"
 guards = [
-    { type = "person_absent" },
+    { type = "signal", tag = "persona.presente", op = "==", value = false },
     { type = "face_was_inside" },
 ]
 
@@ -188,7 +188,7 @@ from = "in_bed"
 to = "exiting"
 dwell = "1500ms"
 guards = [
-    { type = "person_absent" },
+    { type = "signal", tag = "persona.presente", op = "==", value = false },
     { type = "face_was_inside" },
 ]
 
@@ -229,7 +229,7 @@ from = "edge"
 to = "exiting"
 dwell = "1500ms"
 guards = [
-    { type = "person_absent" },
+    { type = "signal", tag = "persona.presente", op = "==", value = false },
     { type = "face_was_inside" },
 ]
 
@@ -271,7 +271,7 @@ from = "other"
 to = "exiting"
 dwell = "1500ms"
 guards = [
-    { type = "person_absent" },
+    { type = "signal", tag = "persona.presente", op = "==", value = false },
     { type = "face_was_inside" },
 ]
 
@@ -280,7 +280,7 @@ from = "other"
 to = "idle"
 dwell = "1500ms"
 guards = [
-    { type = "person_absent" },
+    { type = "signal", tag = "persona.presente", op = "==", value = false },
     { type = "face_was_not_inside" },
 ]
 
@@ -364,4 +364,4 @@ guards = [
 from = "exiting"
 to = "idle"
 dwell = "1500ms"
-guards = [{ type = "person_absent" }]
+guards = [{ type = "signal", tag = "persona.presente", op = "==", value = false }]

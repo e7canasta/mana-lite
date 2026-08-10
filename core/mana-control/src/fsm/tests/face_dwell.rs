@@ -219,13 +219,24 @@ fn face_dwell_and_inside_latch_drive_exiting() {
             FsmTransition {
                 from: "detected".into(),
                 to: "exiting".into(),
-                guards: vec![FsmGuard::PersonAbsent, FsmGuard::FaceWasInside],
+                guards: vec![
+                    FsmGuard::Signal {
+                        tag: "persona.presente".into(),
+                        op: "==".into(),
+                        value: SignalLiteral::Bool(false),
+                    },
+                    FsmGuard::FaceWasInside,
+                ],
                 dwell: Some("1s".into()),
             },
             FsmTransition {
                 from: "exiting".into(),
                 to: "idle".into(),
-                guards: vec![FsmGuard::PersonAbsent],
+                guards: vec![FsmGuard::Signal {
+                    tag: "persona.presente".into(),
+                    op: "==".into(),
+                    value: SignalLiteral::Bool(false),
+                }],
                 dwell: Some("1s".into()),
             },
         ],
@@ -237,6 +248,7 @@ fn face_dwell_and_inside_latch_drive_exiting() {
         face_dwell: None,
     });
     let health = Health::new_at(10_000, 5_000, start);
+    let present_signals = snapshot_with_signals(&[("persona.presente", SignalValue::Bool(true))]);
     let present = FsmSceneContext {
         cardinality: Some("single".into()),
         person_present: true,
@@ -249,24 +261,26 @@ fn face_dwell_and_inside_latch_drive_exiting() {
 
     assert!(
         engine
-            .evaluate_with_context_at(
+            .evaluate_with_signals_at(
                 &[],
                 Some(&zones),
                 &health,
                 &DepthRuleSnapshot::default(),
                 &present,
+                &present_signals,
                 start,
             )
             .is_none()
     );
     assert!(
         engine
-            .evaluate_with_context_at(
+            .evaluate_with_signals_at(
                 &[],
                 Some(&zones),
                 &health,
                 &DepthRuleSnapshot::default(),
                 &present,
+                &present_signals,
                 start + std::time::Duration::from_millis(500),
             )
             .is_some()
@@ -282,26 +296,29 @@ fn face_dwell_and_inside_latch_drive_exiting() {
         at_edge: false,
         face_model_ran: true,
     };
+    let absent_signals = snapshot_with_signals(&[("persona.presente", SignalValue::Bool(false))]);
     assert!(
         engine
-            .evaluate_with_context_at(
+            .evaluate_with_signals_at(
                 &[],
                 Some(&zones),
                 &health,
                 &DepthRuleSnapshot::default(),
                 &absent,
+                &absent_signals,
                 start + std::time::Duration::from_millis(1_000),
             )
             .is_none()
     );
     assert!(
         engine
-            .evaluate_with_context_at(
+            .evaluate_with_signals_at(
                 &[],
                 Some(&zones),
                 &health,
                 &DepthRuleSnapshot::default(),
                 &absent,
+                &absent_signals,
                 start + std::time::Duration::from_millis(2_000),
             )
             .is_some()
@@ -309,24 +326,26 @@ fn face_dwell_and_inside_latch_drive_exiting() {
     assert_eq!(engine.current_state(), "exiting");
     assert!(
         engine
-            .evaluate_with_context_at(
+            .evaluate_with_signals_at(
                 &[],
                 Some(&zones),
                 &health,
                 &DepthRuleSnapshot::default(),
                 &absent,
+                &absent_signals,
                 start + std::time::Duration::from_millis(8_000),
             )
             .is_none()
     );
     assert!(
         engine
-            .evaluate_with_context_at(
+            .evaluate_with_signals_at(
                 &[],
                 Some(&zones),
                 &health,
                 &DepthRuleSnapshot::default(),
                 &absent,
+                &absent_signals,
                 start + std::time::Duration::from_millis(9_000),
             )
             .is_some()
@@ -343,13 +362,27 @@ fn face_without_inside_history_cannot_enter_exiting() {
             FsmTransition {
                 from: "other".into(),
                 to: "exiting".into(),
-                guards: vec![FsmGuard::PersonAbsent, FsmGuard::FaceWasInside],
+                guards: vec![
+                    FsmGuard::Signal {
+                        tag: "persona.presente".into(),
+                        op: "==".into(),
+                        value: SignalLiteral::Bool(false),
+                    },
+                    FsmGuard::FaceWasInside,
+                ],
                 dwell: None,
             },
             FsmTransition {
                 from: "other".into(),
                 to: "idle".into(),
-                guards: vec![FsmGuard::PersonAbsent, FsmGuard::FaceWasNotInside],
+                guards: vec![
+                    FsmGuard::Signal {
+                        tag: "persona.presente".into(),
+                        op: "==".into(),
+                        value: SignalLiteral::Bool(false),
+                    },
+                    FsmGuard::FaceWasNotInside,
+                ],
                 dwell: None,
             },
         ],
@@ -362,12 +395,14 @@ fn face_without_inside_history_cannot_enter_exiting() {
         person_present: false,
         ..Default::default()
     };
-    let result = engine.evaluate_with_context_at(
+    let absent_signals = snapshot_with_signals(&[("persona.presente", SignalValue::Bool(false))]);
+    let result = engine.evaluate_with_signals_at(
         &[],
         None,
         &health,
         &DepthRuleSnapshot::default(),
         &absent,
+        &absent_signals,
         start,
     );
     assert_eq!(result.expect("fallback to idle").to, "idle");

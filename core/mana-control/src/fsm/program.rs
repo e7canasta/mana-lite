@@ -122,7 +122,6 @@ pub enum ProgramGuard {
         op: SignalOp,
         value: SignalValue,
     },
-    PersonAbsent,
     FaceDetected {
         min_confidence: f32,
     },
@@ -415,7 +414,6 @@ impl FsmProgram {
             FsmGuard::Signal { tag, op, value } => {
                 return Self::resolve_signal_guard(tag, op, value, from, to, index, errors);
             }
-            FsmGuard::PersonAbsent => ProgramGuard::PersonAbsent,
             FsmGuard::FaceDetected { min_confidence } => ProgramGuard::FaceDetected {
                 min_confidence: *min_confidence,
             },
