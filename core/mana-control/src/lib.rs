@@ -77,7 +77,7 @@ impl<T> AgedEvidence<T> {
 
     #[must_use]
     pub fn age_ms(&self, now: Instant) -> u64 {
-        now.saturating_duration_since(self.observed_at).as_millis() as u64
+        crate::timing::elapsed_ms(now, self.observed_at)
     }
 }
 

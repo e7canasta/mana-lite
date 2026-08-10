@@ -52,9 +52,7 @@ impl Health {
     }
 
     pub fn evaluate_at(&mut self, now: Instant) -> HealthTransition {
-        let stale_ms = now
-            .saturating_duration_since(self.last_frame_at)
-            .as_millis() as u64;
+        let stale_ms = crate::timing::elapsed_ms(now, self.last_frame_at);
 
         if stale_ms > self.data_stale_ms {
             if !self.blind {

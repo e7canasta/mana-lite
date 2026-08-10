@@ -105,36 +105,39 @@ pub(super) fn state_label(program: &FsmProgram, state: &str) -> Option<String> {
     program.state(state).and_then(|s| s.label.clone())
 }
 
+/// Convierte `"500ms"`, `"5s"`, `"5m"`, `"1h"` a milisegundos.
+///
+/// Rechaza valores negativos y no finitos en vez de aceptarlos. El `as u64`
+/// sobre `f64` satura por definición del lenguaje, así que `"-5s"` daba `0`:
+/// un dwell negativo se aceptaba y significaba "sin espera". Es la misma clase
+/// de mentira que un knob que se ignora — el catálogo declaraba una condición
+/// que el programa no aplicaba.
 pub(super) fn parse_dwell(s: &str) -> Option<u64> {
     let s = s.trim();
     if s.is_empty() {
         return None;
     }
-    if let Some(num_str) = s.strip_suffix("ms") {
-        return num_str.trim().parse::<f64>().ok().map(|v| v as u64);
+    let (num_str, factor) = if let Some(rest) = s.strip_suffix("ms") {
+        (rest, 1.0)
+    } else if let Some(rest) = s.strip_suffix('s') {
+        (rest, 1_000.0)
+    } else if let Some(rest) = s.strip_suffix('m') {
+        (rest, 60_000.0)
+    } else if let Some(rest) = s.strip_suffix('h') {
+        (rest, 3_600_000.0)
+    } else {
+        return None;
+    };
+
+    let value = num_str.trim().parse::<f64>().ok()?;
+    if !value.is_finite() || value < 0.0 {
+        return None;
     }
-    if let Some(num_str) = s.strip_suffix('s') {
-        return num_str
-            .trim()
-            .parse::<f64>()
-            .ok()
-            .map(|v| (v * 1000.0) as u64);
-    }
-    if let Some(num_str) = s.strip_suffix('m') {
-        return num_str
-            .trim()
-            .parse::<f64>()
-            .ok()
-            .map(|v| (v * 60_000.0) as u64);
-    }
-    if let Some(num_str) = s.strip_suffix('h') {
-        return num_str
-            .trim()
-            .parse::<f64>()
-            .ok()
-            .map(|v| (v * 3_600_000.0) as u64);
-    }
-    None
+    let millis = value * factor;
+    // `as u64` satura en ambos extremos; el guardia de arriba ya descartó lo
+    // que no tiene sentido como duración.
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    Some(millis as u64)
 }
 
 pub(super) fn transition_trigger(t: &ProgramTransition) -> String {
@@ -195,10 +198,10 @@ pub(super) fn try_transition(
     let min_dwell = transition_min_dwell(t);
 
     let elapsed = if t.guards.is_empty() {
-        now.saturating_duration_since(*state_entered_at).as_millis() as u64
+        crate::timing::elapsed_ms(now, *state_entered_at)
     } else {
         let timer = dwell_timers.entry(trigger_key.clone()).or_insert(now);
-        now.saturating_duration_since(*timer).as_millis() as u64
+        crate::timing::elapsed_ms(now, *timer)
     };
 
     if elapsed >= min_dwell {

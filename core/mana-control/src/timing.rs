@@ -2,6 +2,18 @@
 
 use std::time::Instant;
 
+/// Milisegundos entre dos instantes, saturados.
+///
+/// `Duration::as_millis` devuelve `u128` y todo el tier lo bajaba a `u64` con
+/// un `as` que trunca en silencio. El desbordamiento real necesita ~584
+/// millones de años, así que nunca fue un bug — pero en un lazo de control el
+/// recorte se declara, no se asume. Saturar deja el peor caso en "muchísimo
+/// tiempo" en vez de en un número chico y arbitrario.
+#[must_use]
+pub fn elapsed_ms(now: Instant, since: Instant) -> u64 {
+    u64::try_from(now.saturating_duration_since(since).as_millis()).unwrap_or(u64::MAX)
+}
+
 /// Rising/falling edge debounce over wall-clock time.
 #[derive(Debug, Clone, Default)]
 pub struct Debouncer {
@@ -27,7 +39,7 @@ impl Debouncer {
             self.low_since = None;
             if !self.engaged {
                 let started = *self.high_since.get_or_insert(now);
-                if now.saturating_duration_since(started).as_millis() as u64 >= on_ms {
+                if elapsed_ms(now, started) >= on_ms {
                     self.engaged = true;
                     self.high_since = None;
                 }
@@ -38,7 +50,7 @@ impl Debouncer {
             self.high_since = None;
             if self.engaged {
                 let started = *self.low_since.get_or_insert(now);
-                if now.saturating_duration_since(started).as_millis() as u64 >= off_ms {
+                if elapsed_ms(now, started) >= off_ms {
                     self.engaged = false;
                     self.low_since = None;
                 }
@@ -55,16 +67,12 @@ impl Debouncer {
 
     #[must_use]
     pub fn elapsed_high_ms(&self, now: Instant) -> u64 {
-        self.high_since
-            .map(|t| now.saturating_duration_since(t).as_millis() as u64)
-            .unwrap_or(0)
+        self.high_since.map(|t| elapsed_ms(now, t)).unwrap_or(0)
     }
 
     #[must_use]
     pub fn elapsed_low_ms(&self, now: Instant) -> u64 {
-        self.low_since
-            .map(|t| now.saturating_duration_since(t).as_millis() as u64)
-            .unwrap_or(0)
+        self.low_since.map(|t| elapsed_ms(now, t)).unwrap_or(0)
     }
 }
 
@@ -90,9 +98,7 @@ impl Dwell {
 
     #[must_use]
     pub fn elapsed_ms(&self, now: Instant) -> u64 {
-        self.since
-            .map(|t| now.saturating_duration_since(t).as_millis() as u64)
-            .unwrap_or(0)
+        self.since.map(|t| elapsed_ms(now, t)).unwrap_or(0)
     }
 
     #[must_use]

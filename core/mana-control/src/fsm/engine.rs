@@ -93,7 +93,7 @@ impl FsmEngine {
                     .unwrap_or(0);
                 FsmDwellTimerSnapshot {
                     trigger: trigger.clone(),
-                    elapsed_ms: now.saturating_duration_since(*started_at).as_millis() as u64,
+                    elapsed_ms: crate::timing::elapsed_ms(now, *started_at),
                     required_ms,
                 }
             })
@@ -103,9 +103,7 @@ impl FsmEngine {
         FsmSnapshot {
             state: self.current_state.to_string(),
             state_label: state_label(&self.program, self.current_state.as_str()),
-            state_dwell_ms: now
-                .saturating_duration_since(self.state_entered_at)
-                .as_millis() as u64,
+            state_dwell_ms: crate::timing::elapsed_ms(now, self.state_entered_at),
             state_dwell_required_ms: self
                 .program
                 .state(self.current_state.as_str())

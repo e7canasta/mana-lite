@@ -8,6 +8,30 @@ use crate::config::FsmTransition;
 use crate::health::Health;
 use crate::zones::ZoneEngine;
 
+/// Un dwell negativo se aceptaba y valía 0, porque `f64 as u64` satura: el
+/// catálogo declaraba una espera que el programa nunca aplicaba.
+#[test]
+fn parse_dwell_rejects_values_that_are_not_durations() {
+    use super::super::guard::parse_dwell;
+
+    assert_eq!(parse_dwell("500ms"), Some(500));
+    assert_eq!(parse_dwell("5s"), Some(5_000));
+    assert_eq!(parse_dwell("5m"), Some(300_000));
+    assert_eq!(parse_dwell("1h"), Some(3_600_000));
+    assert_eq!(parse_dwell(" 250 ms "), Some(250));
+
+    assert_eq!(
+        parse_dwell("-5s"),
+        None,
+        "una espera negativa no es una espera"
+    );
+    assert_eq!(parse_dwell("NaN s"), None);
+    assert_eq!(parse_dwell("inf s"), None);
+    assert_eq!(parse_dwell("5"), None, "sin unidad no se adivina");
+    assert_eq!(parse_dwell("banana"), None);
+    assert_eq!(parse_dwell(""), None);
+}
+
 #[test]
 fn state_dwell_min_delays_transition() {
     let catalog = make_catalog_dwell(

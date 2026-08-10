@@ -25,7 +25,7 @@ impl ScanInstant {
         self.0
     }
     pub fn elapsed_ms_since(self, earlier: Self) -> u64 {
-        self.0.saturating_duration_since(earlier.0).as_millis() as u64
+        crate::timing::elapsed_ms(self.0, earlier.0)
     }
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -158,9 +158,7 @@ struct PresenceOutcome {
 
 /// Advance cadence clocks and predict tracks to `now`.
 fn predict(state: &mut ControlState, now: Instant) -> u64 {
-    let dt = now
-        .saturating_duration_since(state.last_scan_at)
-        .as_millis() as u64;
+    let dt = crate::timing::elapsed_ms(now, state.last_scan_at);
     let dt = dt.max(state.policy.scan_period_ms.max(1));
     state.last_scan_at = now;
     state.scan_seq = state.scan_seq.saturating_add(1);
