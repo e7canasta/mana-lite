@@ -83,7 +83,6 @@ fn depth_evidence_in_process_image_fires_fsm_guard() {
     const PERIOD_MS: u64 = 200;
     let start = Instant::now();
     let timeline = ScanTimeline::new(LoopId::default_loop(), start, PERIOD_MS);
-    let now = timeline.now();
 
     let mut image = ProcessImage::empty();
     image.observations = Some(AgedEvidence::new(
@@ -135,7 +134,7 @@ fn depth_evidence_in_process_image_fires_fsm_guard() {
         },
     };
 
-    let events = mana_lite::scan::scan(&mut state, &image, now);
+    let events = mana_lite::scan::scan(&mut state, &image, &timeline);
     let transitioned = events.iter().any(|event| {
         matches!(
             event,
@@ -157,7 +156,6 @@ fn empty_depth_snapshot_does_not_fire_depth_guard() {
     const PERIOD_MS: u64 = 200;
     let start = Instant::now();
     let timeline = ScanTimeline::new(LoopId::default_loop(), start, PERIOD_MS);
-    let now = timeline.now();
 
     let mut image = ProcessImage::empty();
     image.observations = Some(AgedEvidence::new(
@@ -209,7 +207,7 @@ fn empty_depth_snapshot_does_not_fire_depth_guard() {
         },
     };
 
-    let events = mana_lite::scan::scan(&mut state, &image, now);
+    let events = mana_lite::scan::scan(&mut state, &image, &timeline);
     let transitioned = events.iter().any(|event| {
         matches!(
             event,

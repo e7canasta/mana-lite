@@ -32,8 +32,11 @@ pub enum FsmGuard {
     #[serde(rename = "zone_vacated")]
     ZoneVacated {
         zone: String,
-        #[serde(default = "default_guard_confidence")]
-        min_confidence: f32,
+        /// Accepted only to be rejected at compile time: [`ZoneEvent::Vacated`]
+        /// carries no confidence, so this threshold can never be evaluated.
+        /// Silently ignoring it would let a catalog claim a gate it never had.
+        #[serde(default)]
+        min_confidence: Option<f32>,
         #[serde(default)]
         min_duration_ms: Option<u64>,
     },
@@ -219,7 +222,7 @@ pub(super) fn try_transition(
 
 pub(super) fn eval_guard(guard: &ProgramGuard, ctx: &GuardCtx<'_>) -> bool {
     match guard {
-        ProgramGuard::ZonePresent { zone } => ctx.zones.is_some_and(|engine| engine.is_occupied(zone.as_str())),
+        ProgramGuard::ZonePresent { zone } => ctx.zones.is_some_and(|engine| engine.is_occupied(zone)),
         ProgramGuard::ZoneOccupied {
             zone,
             min_confidence,
@@ -229,13 +232,13 @@ pub(super) fn eval_guard(guard: &ProgramGuard, ctx: &GuardCtx<'_>) -> bool {
                 zone: z,
                 confidence,
                 ..
-            } => z == zone.as_str() && confidence >= min_confidence,
+            } => z == zone && confidence >= min_confidence,
             _ => false,
         }),
         ProgramGuard::ZoneVacated { zone, .. } => ctx
             .zone_events
             .iter()
-            .any(|ev| matches!(ev, ZoneEvent::Vacated { zone: z, .. } if z == zone.as_str())),
+            .any(|ev| matches!(ev, ZoneEvent::Vacated { zone: z, .. } if z == zone)),
         ProgramGuard::AllZonesVacant { .. } => ctx.zones.is_some_and(ZoneEngine::all_vacant),
         ProgramGuard::DataStale => ctx.health.is_blind(),
         ProgramGuard::DataFresh => !ctx.health.is_blind(),

@@ -1,26 +1,27 @@
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::time::Instant;
 
 use crate::config::ZoneCatalog;
+use crate::domain::{ClassName, ZoneId};
 use crate::timing::Dwell;
 use crate::track::Track;
 
 #[derive(Debug, Clone)]
 pub enum ZoneEvent {
     Occupied {
-        zone: String,
+        zone: ZoneId,
         label: Option<String>,
         #[allow(dead_code)]
         track_id: u64,
-        class: String,
+        class: ClassName,
         confidence: f32,
     },
     Vacated {
-        zone: String,
+        zone: ZoneId,
         label: Option<String>,
         #[allow(dead_code)]
         track_id: u64,
-        class: String,
+        class: ClassName,
     },
 }
 
@@ -33,16 +34,19 @@ struct ZoneState {
     vacated: Dwell,
 }
 
+/// Zones are held in a `BTreeMap`, not a `HashMap`: `evaluate_at` emits one
+/// event per changed zone, and those events feed the FSM in order. Hash order
+/// would make a multi-zone tick non-reproducible between runs.
 pub struct ZoneEngine {
-    zones: HashMap<String, ZoneState>,
+    zones: BTreeMap<ZoneId, ZoneState>,
 }
 
 impl ZoneEngine {
     pub fn from_catalog(catalog: &ZoneCatalog) -> Self {
-        let mut zones = HashMap::new();
+        let mut zones = BTreeMap::new();
         for (name, entry) in &catalog.zones {
             zones.insert(
-                name.clone(),
+                ZoneId::new(name),
                 ZoneState {
                     rect: [
                         entry.x1 as f32,
@@ -122,12 +126,12 @@ impl ZoneEngine {
     }
 }
 
-fn find_class_confidence(tracks: &[&Track], id: u64) -> (String, f32) {
+fn find_class_confidence(tracks: &[&Track], id: u64) -> (ClassName, f32) {
     tracks
         .iter()
         .find(|t| t.id == id)
-        .map(|t| (t.class.to_string(), t.confidence))
-        .unwrap_or_else(|| ("unknown".into(), 0.0))
+        .map(|t| (t.class.clone(), t.confidence))
+        .unwrap_or_else(|| (ClassName::new("unknown"), 0.0))
 }
 
 fn rect_intersects(bbox: &[f32; 4], zone: &[f32; 4]) -> bool {
@@ -138,6 +142,7 @@ fn rect_intersects(bbox: &[f32; 4], zone: &[f32; 4]) -> bool {
 mod tests {
     use super::*;
     use crate::config::ZoneSpec;
+    use std::collections::HashMap;
 
     fn make_track(id: u64, class: &str, bbox: [f32; 4], confirmed: bool) -> Track {
         Track {

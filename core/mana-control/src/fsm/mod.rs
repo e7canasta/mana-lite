@@ -207,6 +207,42 @@ mod tests {
         );
     }
 
+    /// `ZoneEvent::Vacated` carries no confidence, so a `min_confidence` on a
+    /// zone_vacated guard can never be evaluated. Accepting and ignoring it
+    /// would let a catalog advertise a gate that does not exist.
+    #[test]
+    fn min_confidence_on_zone_vacated_is_rejected() {
+        let catalog = make_catalog(
+            "watching",
+            vec![("watching", vec![]), ("idle", vec![])],
+            vec![
+                FsmTransition {
+                    from: "watching".into(),
+                    to: "idle".into(),
+                    guards: vec![FsmGuard::ZoneVacated {
+                        zone: "bed".into(),
+                        min_confidence: Some(0.5),
+                        min_duration_ms: None,
+                    }],
+                    dwell: None,
+                },
+                FsmTransition {
+                    from: "idle".into(),
+                    to: "watching".into(),
+                    guards: vec![],
+                    dwell: None,
+                },
+            ],
+        );
+
+        let errors = FsmProgram::compile_lenient(&catalog, &test_zones(&catalog))
+            .expect_err("min_confidence on zone_vacated must be rejected");
+        assert!(
+            errors.iter().any(|e| e.contains("min_confidence")),
+            "expected an error about min_confidence, got {errors:?}"
+        );
+    }
+
     #[test]
     fn force_safe_state_uses_roles_in_real_catalogs() {
         let start = Instant::now(); // cfg(test)
@@ -1335,7 +1371,7 @@ mod tests {
                 to: "idle".into(),
                 guards: vec![FsmGuard::ZoneVacated {
                     zone: "bed".into(),
-                    min_confidence: 0.5,
+                    min_confidence: None,
                     min_duration_ms: None,
                 }],
                 dwell: None,
@@ -1373,7 +1409,7 @@ mod tests {
                 to: "idle".into(),
                 guards: vec![FsmGuard::ZoneVacated {
                     zone: "bed".into(),
-                    min_confidence: 0.5,
+                    min_confidence: None,
                     min_duration_ms: None,
                 }],
                 dwell: None,

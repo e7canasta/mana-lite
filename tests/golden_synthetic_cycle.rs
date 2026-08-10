@@ -84,7 +84,7 @@ fn golden_catalog() -> FsmCatalog {
                     to: "idle".into(),
                     guards: vec![FsmGuard::ZoneVacated {
                         zone: "bed".into(),
-                        min_confidence: 0.0,
+                        min_confidence: None,
                         min_duration_ms: Some(0),
                     }],
                     dwell: None,
@@ -204,7 +204,7 @@ fn synthetic_cycle_matches_golden_jsonl() {
             timeline.advance()
         };
         refresh(&mut image, person_in_bed(frame), now.as_instant());
-        let events = scan(&mut state, &image, now);
+        let events = scan(&mut state, &image, &timeline);
         image.measurement_pending = false;
         for event in scene_events_to_log(&events) {
             sink.emit(event);
@@ -215,7 +215,7 @@ fn synthetic_cycle_matches_golden_jsonl() {
     for frame in 5..=8u64 {
         let now = timeline.advance();
         refresh(&mut image, empty_room(frame), now.as_instant());
-        let events = scan(&mut state, &image, now);
+        let events = scan(&mut state, &image, &timeline);
         image.measurement_pending = false;
         for event in scene_events_to_log(&events) {
             sink.emit(event);
@@ -227,8 +227,8 @@ fn synthetic_cycle_matches_golden_jsonl() {
     image.observations = Some(AgedEvidence::new(empty_room(8), stall_observed_at));
     image.measurement_pending = false;
     for _ in 0..8 {
-        let now = timeline.advance();
-        let events = scan(&mut state, &image, now);
+        timeline.advance();
+        let events = scan(&mut state, &image, &timeline);
         for event in scene_events_to_log(&events) {
             sink.emit(event);
         }
@@ -240,7 +240,7 @@ fn synthetic_cycle_matches_golden_jsonl() {
     assert!(recovered, "leaving blind must report recovery via touch_at");
     sink.emit(Event::health_heartbeat(0, "ingest", 0));
     refresh(&mut image, empty_room(9), recover_at.as_instant());
-    let events = scan(&mut state, &image, recover_at);
+    let events = scan(&mut state, &image, &timeline);
     for event in scene_events_to_log(&events) {
         sink.emit(event);
     }

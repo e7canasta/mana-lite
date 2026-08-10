@@ -49,6 +49,20 @@ impl Hash for DomStr {
     }
 }
 
+/// Ordered by name so identifiers can key a `BTreeMap` — control code needs
+/// deterministic iteration order, not just lookup.
+impl Ord for DomStr {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.as_str().cmp(other.as_str())
+    }
+}
+
+impl PartialOrd for DomStr {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
 impl Deref for DomStr {
     type Target = str;
     fn deref(&self) -> &Self::Target {
@@ -97,7 +111,7 @@ impl From<String> for DomStr {
 macro_rules! domain_id {
     ($name:ident, $doc:expr) => {
         #[doc = $doc]
-        #[derive(Clone, PartialEq, Eq, Hash)]
+        #[derive(Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
         pub struct $name($crate::DomStr);
 
         impl $name {

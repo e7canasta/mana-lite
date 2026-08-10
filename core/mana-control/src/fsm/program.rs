@@ -103,7 +103,6 @@ pub enum ProgramGuard {
     },
     ZoneVacated {
         zone: ZoneId,
-        min_confidence: f32,
         min_duration_ms: Option<u64>,
     },
     AllZonesVacant { min_duration_ms: Option<u64> },
@@ -383,11 +382,19 @@ impl FsmProgram {
                 zone,
                 min_confidence,
                 min_duration_ms,
-            } => ProgramGuard::ZoneVacated {
-                zone: resolve_zone(zone, errors)?,
-                min_confidence: *min_confidence,
-                min_duration_ms: *min_duration_ms,
-            },
+            } => {
+                if min_confidence.is_some() {
+                    errors.push(format!(
+                        "transition {from}→{to} sets min_confidence on zone_vacated, \
+                         which carries no confidence: remove it or use zone_occupied"
+                    ));
+                    return None;
+                }
+                ProgramGuard::ZoneVacated {
+                    zone: resolve_zone(zone, errors)?,
+                    min_duration_ms: *min_duration_ms,
+                }
+            }
             FsmGuard::AllZonesVacant { min_duration_ms } => ProgramGuard::AllZonesVacant {
                 min_duration_ms: *min_duration_ms,
             },

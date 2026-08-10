@@ -134,7 +134,7 @@ fn stall_emits_consecutive_scan_seq_and_blind_on_stale() {
         } else {
             timeline.advance()
         };
-        let events = scan(&mut state, &process_image, now);
+        let events = scan(&mut state, &process_image, &timeline);
         scan_seqs.push(state.scan_seq);
         ages.push(process_image.observations_age_ms(now.as_instant()));
 

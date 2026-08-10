@@ -203,15 +203,15 @@ impl<R: FrameReader> App<R> {
     fn scan_tick(&mut self, _config: &AppConfig, now: Instant) {
         self.metrics.tick_cycle_at(now, false);
         self.drain_ingest_counters();
-        let scan_now = if self.control.scan_seq == 0 {
-            self.scan_timeline.now()
-        } else {
-            self.scan_timeline.advance()
-        };
+        // The first tick runs at the timeline origin; every later tick advances
+        // one period first, so `timeline.now()` is the instant for this scan.
+        if self.control.scan_seq != 0 {
+            self.scan_timeline.advance();
+        }
         let scene_events = crate::scan::scan(
             &mut self.control,
             &self.control_image,
-            scan_now,
+            &self.scan_timeline,
         );
         self.control_image.measurement_pending = false;
 
