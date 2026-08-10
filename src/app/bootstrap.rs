@@ -8,7 +8,7 @@ use crate::config::{
     AppConfig, BlueprintConfig, CropType, MetricsLogConfig, RerunBlueprintConfig,
     apply_model_overlay, load_config, load_depth_rules, load_fsm_catalog, load_metrics_log,
     load_model_catalog, load_rerun_blueprint, load_viz_data, load_zone_catalog,
-    validate_model_catalog, ZoneCatalog,
+    validate_model_catalog,
 };
 use crate::detection::CropRect;
 use crate::detection::DetectionConsolidator;
@@ -273,10 +273,11 @@ impl<R: FrameReader> App<R> {
                 .iter()
                 .map(|rule| rule.name.clone())
                 .collect();
+            let model_names: HashSet<String> = runtime_catalog.models.keys().cloned().collect();
             let program = FsmProgram::compile_with_references(
                 f,
                 zones.as_ref(),
-                &runtime_catalog,
+                Some(&model_names),
                 Some(&depth_rule_names),
             );
             match program {
@@ -513,7 +514,7 @@ impl<R: FrameReader> App<R> {
                 last_scan_at: boot_instant,
                 scan_seq: 0,
                 policy: ControlPolicy {
-                    person_class: config.presence.class.clone(),
+                    person_class: config.presence.class.as_str().into(),
                     presence_enabled: config.presence.enabled,
                     data_stale_ms: config.health.data_stale_ms,
                     scan_period_ms: config.scan.period_ms,

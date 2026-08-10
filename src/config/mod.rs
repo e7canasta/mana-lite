@@ -57,7 +57,9 @@ mod tests {
                 .map(|rule| rule.name.clone())
                 .collect::<std::collections::HashSet<_>>()
         });
-        FsmProgram::compile_with_references(fsm, zones, models, names.as_ref())
+        let model_names: std::collections::HashSet<String> =
+            models.models.keys().cloned().collect();
+        FsmProgram::compile_with_references(fsm, zones, Some(&model_names), names.as_ref())
             .err()
             .unwrap_or_default()
     }

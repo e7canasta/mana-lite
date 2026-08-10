@@ -18,6 +18,7 @@ fn all_fsm_catalogs_compile_with_references() {
     let models = load_model_catalog(&root.join("config/models.toml")).expect("models");
     let depth_rules = load_depth_rules(&root.join("config/depth-rules.toml")).expect("depth");
     let depth_names: HashSet<String> = depth_rules.rules.iter().map(|r| r.name.clone()).collect();
+    let model_names: HashSet<String> = models.models.keys().cloned().collect();
 
     for relative in FSM_PATHS {
         let path = root.join(relative);
@@ -27,7 +28,7 @@ fn all_fsm_catalogs_compile_with_references() {
         FsmProgram::compile_with_references(
             &catalog,
             Some(&zones),
-            &models,
+            Some(&model_names),
             Some(&depth_names),
         )
         .unwrap_or_else(|errors| {

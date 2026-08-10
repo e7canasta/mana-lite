@@ -12,6 +12,9 @@
 # Output
 # logs/
 *.jsonl
+# ...but the golden reference is a fixture, not output: without it committed
+# `git diff tests/golden/` passes vacuously and no fresh clone can run the test.
+!tests/golden/*.jsonl
 
 # IDE
 .idea/

@@ -247,12 +247,13 @@ impl FsmProgram {
     /// zone names are still resolved into [`ZoneId`]s so the program can be
     /// built for model/depth-only checks.
     ///
-    /// `depth_rule_names` is the set of known rule ids from the depth catalog;
-    /// the control crate only needs names at compile time, not measurement policy.
+    /// `model_names` and `depth_rule_names` are the known catalog keys; the
+    /// control crate only needs names at compile time, never the model catalog
+    /// or the measurement policy behind them.
     pub fn compile_with_references(
         catalog: &FsmCatalog,
         zones: Option<&ZoneCatalog>,
-        models: &impl Sized,
+        model_names: Option<&HashSet<String>>,
         depth_rule_names: Option<&HashSet<String>>,
     ) -> Result<Self, Vec<String>> {
         let synthesized;
@@ -263,7 +264,7 @@ impl FsmProgram {
                 &synthesized
             }
         };
-        let mut errors = Self::validate_references(catalog, zones, models, depth_rule_names);
+        let mut errors = Self::validate_references(catalog, zones, model_names, depth_rule_names);
         match Self::compile(catalog, zones_for_resolve) {
             Ok(program) if errors.is_empty() => Ok(program),
             Ok(_) => Err(errors),
@@ -277,10 +278,27 @@ impl FsmProgram {
     fn validate_references(
         catalog: &FsmCatalog,
         zones: Option<&ZoneCatalog>,
-        models: &impl Sized,
+        model_names: Option<&HashSet<String>>,
         depth_rule_names: Option<&HashSet<String>>,
     ) -> Vec<String> {
         let mut errors = Vec::new();
+        // A state whose model key is absent from the catalog runs no detector
+        // at all: it must fail at boot, not degrade silently at runtime.
+        if let Some(known) = model_names {
+            // Sorted: `states` is a HashMap, and boot diagnostics must be
+            // byte-identical across runs for the same catalogs.
+            let mut names: Vec<&String> = catalog.fsm.states.keys().collect();
+            names.sort_unstable();
+            for name in names {
+                for model_key in &catalog.fsm.states[name].models {
+                    if !known.contains(model_key.as_str()) {
+                        errors.push(format!(
+                            "state '{name}' references model '{model_key}' not found in model catalog"
+                        ));
+                    }
+                }
+            }
+        }
         for transition in &catalog.fsm.transitions {
             for guard in &transition.guards {
                 match guard {

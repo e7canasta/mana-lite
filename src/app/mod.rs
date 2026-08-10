@@ -21,7 +21,6 @@ use crate::logger::{DetRecord, Event, scene_events_to_log};
 use crate::metrics::{MetricsEngine, PerClassFrameStats};
 use crate::pipeline::PipelineState;
 use crate::scan::{ControlStamp, ControlState, SceneEvent, ScanTimeline};
-use mana_control::domain::LoopId;
 use crate::snapshot::{FrameBuffer, FrameDecoder, SnapshotSaver};
 use mana_types::RawFrameV1;
 use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -832,6 +831,7 @@ fn frame_timestamp_ns(
 mod tests {
     use super::*;
     use crate::config::{MetricsTextConfig, ModelCatalog};
+    use mana_control::domain::LoopId;
     use mana_control::{DepthCalibration, DepthMetric, DepthOp, DepthRegionRule, DepthRules, DepthRuleResult};
     use crate::ingest::SyntheticReader;
     use crate::logger::{JsonlLevel, LogManager};

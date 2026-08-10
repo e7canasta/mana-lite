@@ -1,6 +1,5 @@
 //! Finite state machine engine for clinical scene logic.
 
-mod dwell;
 mod engine;
 mod guard;
 mod program;
@@ -161,16 +160,51 @@ mod tests {
         }
     }
 
-    fn engine(catalog: &FsmCatalog) -> FsmEngine {
-        engine_at(catalog, Instant::now()) // cfg(test)
-    }
-
     fn engine_at(catalog: &FsmCatalog, now: Instant) -> FsmEngine {
         FsmEngine::from_program_at(
             FsmProgram::compile_lenient(catalog, &test_zones(catalog))
                 .expect("test FSM must compile"),
             now,
         )
+    }
+
+    /// A state may only name models the catalog actually declares: a typo here
+    /// means the state runs no detector, and that must fail at boot.
+    #[test]
+    fn unknown_state_model_fails_compilation() {
+        let catalog = make_catalog(
+            "idle",
+            vec![("idle", vec!["detect-fast"]), ("busy", vec!["typo-model"])],
+            vec![
+                FsmTransition {
+                    from: "idle".into(),
+                    to: "busy".into(),
+                    guards: vec![],
+                    dwell: None,
+                },
+                FsmTransition {
+                    from: "busy".into(),
+                    to: "idle".into(),
+                    guards: vec![],
+                    dwell: None,
+                },
+            ],
+        );
+        let known: std::collections::HashSet<String> = ["detect-fast".to_string()].into();
+
+        let errors = FsmProgram::compile_with_references(&catalog, None, Some(&known), None)
+            .expect_err("unknown model must be rejected");
+
+        assert!(
+            errors.iter().any(|e| e.contains("typo-model")),
+            "expected an error naming the unknown model, got {errors:?}"
+        );
+
+        // Same catalog, model names unknown to the caller: no model check runs.
+        assert!(
+            FsmProgram::compile_with_references(&catalog, None, None, None).is_ok(),
+            "model validation must stay opt-in when names are not supplied"
+        );
     }
 
     #[test]
