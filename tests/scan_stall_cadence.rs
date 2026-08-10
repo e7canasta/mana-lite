@@ -12,6 +12,7 @@ use mana_control::config::{
     FsmCatalog, FsmRoles, FsmRoot, FsmState, FsmTransition, OccupancyPolicy, PresencePoiPolicy,
     ZoneCatalog,
 };
+use mana_control::domain::LoopId;
 use mana_lite::fsm::{FsmEngine, FsmGuard, FsmProgram};
 use mana_lite::health::Health;
 use mana_lite::occupancy::OccupancyStateMachine;
@@ -69,7 +70,7 @@ fn stall_emits_consecutive_scan_seq_and_blind_on_stale() {
     const EXPECTED_SCANS: u64 = STALL_MS / PERIOD_MS; // 15
 
     let start = Instant::now();
-    let mut timeline = ScanTimeline::new(start, PERIOD_MS);
+    let mut timeline = ScanTimeline::new(LoopId::default_loop(), start, PERIOD_MS);
     let mut process_image = ProcessImage::empty();
     process_image.observations = Some(AgedEvidence::new(
         SceneSample {
@@ -85,6 +86,7 @@ fn stall_emits_consecutive_scan_seq_and_blind_on_stale() {
     process_image.measurement_pending = false;
 
     let mut state = ControlState {
+        loop_id: LoopId::default_loop(),
         tracker: None,
         presence: PresenceFilter::new(
             false,
@@ -190,7 +192,7 @@ fn stall_emits_consecutive_scan_seq_and_blind_on_stale() {
 #[test]
 fn scan_instant_is_injectable_via_timeline() {
     let origin = Instant::now();
-    let mut timeline = ScanTimeline::new(origin, 200);
+    let mut timeline = ScanTimeline::new(LoopId::default_loop(), origin, 200);
     let t0 = timeline.now();
     assert_eq!(t0.elapsed_ms_since(t0), 0);
     let t1 = timeline.advance();

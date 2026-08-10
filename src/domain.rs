@@ -3,16 +3,17 @@
 //! Prefer these newtypes over bare `String` comparisons against model keys,
 //! class names, FSM states, or zone ids.
 //!
-//! `DomStr` and `domain_id!` live in `mana-control` until Sprint 2 extracts
-//! them into `mana-id` (ADR-030). This crate owns application vocabulary
-//! (`ModelId`, `ClassName`); control owns `StateId` / `ZoneId`.
+//! Mechanism: [`mana_id`]. Control port vocabulary: `mana_control::domain`.
+//! Perception vocabulary: `mana_perception::{ModelId,ClassName}`. This binary
+//! keeps application-facing `ModelId` / `ClassName` for catalog and track
+//! surfaces; adapters convert with `.as_str()` at the control port.
 
 use std::collections::HashMap;
 
 use crate::config::{ModelCatalog, ModelTask};
 
-pub use mana_control::domain::DomStr;
-use mana_control::domain_id;
+pub use mana_id::DomStr;
+use mana_id::domain_id;
 
 domain_id!(ModelId, "Catalog key for an inference model.");
 domain_id!(ClassName, "Detection class label (person, face, …).");

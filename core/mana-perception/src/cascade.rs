@@ -1,49 +1,89 @@
 use std::collections::HashMap;
 
-use crate::config::ModelCatalog;
-use crate::track::Track;
+use serde::Deserialize;
 
-pub use crate::config::{BlueprintConfig, CascadeConfig, CascadeRule, SemanticRegion};
+use crate::domain::{ClassName, ModelId};
+
+/// Narrow port for cascade gating — no SORT filter state.
+#[derive(Debug, Clone, PartialEq)]
+pub struct GateObservation {
+    pub id: u64,
+    pub bbox: [f32; 4],
+    pub class: ClassName,
+    pub confidence: f32,
+    pub source_model: ModelId,
+    pub is_confirmed: bool,
+    pub misses: u32,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct CascadeRule {
+    pub model: String,
+    pub requires: Option<String>,
+    pub requires_class: Option<String>,
+    #[serde(default)]
+    pub requires_exact_count: Option<usize>,
+    #[serde(default)]
+    pub same_frame: bool,
+    #[serde(default)]
+    pub requires_min_confidence: Option<f32>,
+    #[serde(default)]
+    pub requires_min_area_ratio: Option<f32>,
+    #[serde(default)]
+    pub requires_region: Option<String>,
+    #[serde(default)]
+    pub requires_region_coverage: Option<f32>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct SemanticRegion {
+    pub rect: [f32; 4],
+    #[serde(default)]
+    #[allow(dead_code)]
+    pub label: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CascadeConfig {
+    pub rules: Vec<CascadeRule>,
+    #[serde(default)]
+    pub regions: HashMap<String, SemanticRegion>,
+}
 
 impl CascadeConfig {
-    pub fn validate(&self, models: &ModelCatalog, tracked_model: &str) -> Vec<String> {
+    /// Validate cascade rules against a name→enabled map (no ModelCatalog).
+    pub fn validate(&self, models: &HashMap<String, bool>, primary_model: &str) -> Vec<String> {
         let mut errors = Vec::new();
-        let tracked_rule = self.rules.iter().find(|rule| rule.model == tracked_model);
-        if tracked_rule.is_none() {
+        let primary_rule = self.rules.iter().find(|rule| rule.model == primary_model);
+        if primary_rule.is_none() {
             errors.push(format!(
-                "tracked model '{}' is missing from cascade rules",
-                tracked_model
+                "primary model '{}' is missing from cascade rules",
+                primary_model
             ));
-        } else if tracked_rule.is_some_and(|rule| rule.requires.is_some()) {
+        } else if primary_rule.is_some_and(|rule| rule.requires.is_some()) {
             errors.push(format!(
-                "tracked model '{}' must be a cascade root",
-                tracked_model
+                "primary model '{}' must be a cascade root",
+                primary_model
             ));
         }
 
         for rule in &self.rules {
-            if !models.models.contains_key(&rule.model) {
+            if !models.contains_key(&rule.model) {
                 errors.push(format!("rule references unknown model '{}'", rule.model));
             }
             if let Some(parent) = &rule.requires {
-                if !models.models.contains_key(parent) {
+                if !models.contains_key(parent) {
                     errors.push(format!(
                         "model '{}' requires unknown parent '{}'",
                         rule.model, parent
                     ));
                 }
-                let disabled_branch = models
-                    .models
-                    .get(parent)
-                    .is_some_and(|entry| !entry.enabled)
-                    && models
-                        .models
-                        .get(&rule.model)
-                        .is_some_and(|entry| !entry.enabled);
-                if parent != tracked_model && !disabled_branch {
+                let disabled_branch = models.get(parent).is_some_and(|enabled| !*enabled)
+                    && models.get(&rule.model).is_some_and(|enabled| !*enabled);
+                if parent != primary_model && !disabled_branch {
                     errors.push(format!(
-                        "model '{}' requires '{}', but only tracked model '{}' can gate children",
-                        rule.model, parent, tracked_model,
+                        "model '{}' requires '{}', but only primary model '{}' can gate children",
+                        rule.model, parent, primary_model,
                     ));
                 }
             }
@@ -115,7 +155,7 @@ struct CascadeEntry {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct CascadeTarget {
-    pub track_id: Option<u64>,
+    pub id: Option<u64>,
     pub bbox: [f32; 4],
 }
 
@@ -248,7 +288,7 @@ impl CascadeScheduler {
                     .unwrap_or(std::cmp::Ordering::Equal)
             })
             .map(|detection| CascadeTarget {
-                track_id: None,
+                id: None,
                 bbox: detection.bbox,
             })
     }
@@ -256,7 +296,7 @@ impl CascadeScheduler {
     pub fn target_for(
         &self,
         model: &str,
-        tracks: &[&Track],
+        observations: &[GateObservation],
         frame_w: u32,
         frame_h: u32,
     ) -> Option<CascadeTarget> {
@@ -276,24 +316,22 @@ impl CascadeScheduler {
         let required_region = entry.requires_region.as_deref();
         let min_region_coverage = entry.requires_region_coverage;
 
-        let candidates: Vec<&Track> = tracks
+        let candidates: Vec<&GateObservation> = observations
             .iter()
-            .copied()
-            .filter(|track| track.is_confirmed && track.misses == 0)
-            .filter(|track| track.source_model == parent_key)
-            .filter(|track| required_class.is_none_or(|class| track.class == class))
-            .filter(|track| min_confidence.is_none_or(|min| track.confidence >= min))
-            .filter(|track| {
-                min_area_ratio
-                    .is_none_or(|min| bbox_area_ratio(&track.bbox, frame_w, frame_h) >= min)
+            .filter(|obs| obs.is_confirmed && obs.misses == 0)
+            .filter(|obs| obs.source_model.as_str() == parent_key)
+            .filter(|obs| required_class.is_none_or(|class| obs.class.as_str() == class))
+            .filter(|obs| min_confidence.is_none_or(|min| obs.confidence >= min))
+            .filter(|obs| {
+                min_area_ratio.is_none_or(|min| bbox_area_ratio(&obs.bbox, frame_w, frame_h) >= min)
             })
-            .filter(|track| {
+            .filter(|obs| {
                 required_region.is_none_or(|region_name| {
                     let Some(region) = self.regions.get(region_name) else {
                         return false;
                     };
                     min_region_coverage
-                        .is_none_or(|min| bbox_region_coverage(&track.bbox, &region.rect) >= min)
+                        .is_none_or(|min| bbox_region_coverage(&obs.bbox, &region.rect) >= min)
                 })
             })
             .collect();
@@ -307,13 +345,13 @@ impl CascadeScheduler {
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
 
-        let Some(track) = best else {
+        let Some(obs) = best else {
             return None;
         };
 
         Some(CascadeTarget {
-            track_id: Some(track.id),
-            bbox: track.bbox,
+            id: Some(obs.id),
+            bbox: obs.bbox,
         })
     }
 }
@@ -348,6 +386,26 @@ fn bbox_region_coverage(bbox: &[f32; 4], region: &[f32; 4]) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn gate_obs(
+        id: u64,
+        source_model: &str,
+        class: &str,
+        bbox: [f32; 4],
+        confidence: f32,
+        is_confirmed: bool,
+        misses: u32,
+    ) -> GateObservation {
+        GateObservation {
+            id: id,
+            bbox,
+            class: ClassName::new(class),
+            confidence,
+            source_model: ModelId::new(source_model),
+            is_confirmed,
+            misses,
+        }
+    }
 
     fn test_rules() -> Vec<CascadeRule> {
         vec![
@@ -512,24 +570,18 @@ mod tests {
     #[test]
     fn child_skipped_when_parent_has_no_matching_class() {
         let cascade = CascadeScheduler::from_rules(&test_rules());
-        let tracker = Track {
-            id: 1,
-            source_model: "detect-fast".into(),
-            class: "chair".into(),
-            bbox: [0.0, 0.0, 100.0, 100.0],
-            confidence: 0.9,
-            evidence: Vec::new(),
-            kalman: crate::kalman::Kalman7::default(),
-            hits: 2,
-            hit_streak: 2,
-            misses: 0,
-            age: 2,
-            time_since_update_ms: 0,
-            is_confirmed: true,
-        };
+        let obs = gate_obs(
+            1,
+            "detect-fast",
+            "chair",
+            [0.0, 0.0, 100.0, 100.0],
+            0.9,
+            true,
+            0,
+        );
         assert!(
             cascade
-                .target_for("pose-standard", &[&tracker], 640, 480)
+                .target_for("pose-standard", &[obs], 640, 480)
                 .is_none()
         );
     }
@@ -537,49 +589,37 @@ mod tests {
     #[test]
     fn child_runs_when_parent_has_required_class() {
         let cascade = CascadeScheduler::from_rules(&test_rules());
-        let tracker = Track {
-            id: 1,
-            source_model: "detect-fast".into(),
-            class: "person".into(),
-            bbox: [0.0, 0.0, 100.0, 100.0],
-            confidence: 0.9,
-            evidence: Vec::new(),
-            kalman: crate::kalman::Kalman7::default(),
-            hits: 2,
-            hit_streak: 2,
-            misses: 0,
-            age: 2,
-            time_since_update_ms: 0,
-            is_confirmed: true,
-        };
+        let obs = gate_obs(
+            1,
+            "detect-fast",
+            "person",
+            [0.0, 0.0, 100.0, 100.0],
+            0.9,
+            true,
+            0,
+        );
         assert!(
             cascade
-                .target_for("pose-standard", &[&tracker], 640, 480)
+                .target_for("pose-standard", &[obs], 640, 480)
                 .is_some()
         );
     }
 
     #[test]
-    fn unconfirmed_track_cannot_activate_child() {
+    fn unconfirmed_observation_cannot_activate_child() {
         let cascade = CascadeScheduler::from_rules(&test_rules());
-        let tracker = Track {
-            id: 1,
-            source_model: "detect-fast".into(),
-            class: "person".into(),
-            bbox: [0.0, 0.0, 100.0, 100.0],
-            confidence: 0.9,
-            evidence: Vec::new(),
-            kalman: crate::kalman::Kalman7::default(),
-            hits: 1,
-            hit_streak: 1,
-            misses: 0,
-            age: 1,
-            time_since_update_ms: 0,
-            is_confirmed: false,
-        };
+        let obs = gate_obs(
+            1,
+            "detect-fast",
+            "person",
+            [0.0, 0.0, 100.0, 100.0],
+            0.9,
+            false,
+            0,
+        );
         assert!(
             cascade
-                .target_for("pose-standard", &[&tracker], 640, 480)
+                .target_for("pose-standard", &[obs], 640, 480)
                 .is_none()
         );
     }
@@ -624,80 +664,59 @@ mod tests {
             },
         )]);
         let cascade = CascadeScheduler::from_rules_and_regions(&rules, regions);
-        let tracker = Track {
-            id: 1,
-            source_model: "detect-fast".into(),
-            class: "person".into(),
-            bbox: [50.0, 0.0, 150.0, 100.0],
-            confidence: 0.9,
-            evidence: Vec::new(),
-            kalman: crate::kalman::Kalman7::default(),
-            hits: 2,
-            hit_streak: 2,
-            misses: 0,
-            age: 2,
-            time_since_update_ms: 0,
-            is_confirmed: true,
-        };
+        let obs = gate_obs(
+            1,
+            "detect-fast",
+            "person",
+            [50.0, 0.0, 150.0, 100.0],
+            0.9,
+            true,
+            0,
+        );
         assert!(
             cascade
-                .target_for("pose-standard", &[&tracker], 200, 100)
+                .target_for("pose-standard", &[obs.clone()], 200, 100)
                 .is_some()
         );
         assert_eq!(
             cascade
-                .target_for("pose-standard", &[&tracker], 200, 100)
+                .target_for("pose-standard", &[obs], 200, 100)
                 .unwrap()
-                .track_id,
+                .id,
             Some(1)
         );
     }
 
     #[test]
-    fn configured_cascade_has_valid_pose_rule() {
-        let config: CascadeConfig =
-            crate::config::load_config(std::path::Path::new("config/cascade.toml")).unwrap();
-        let models =
-            crate::config::load_model_catalog(std::path::Path::new("config/models.toml")).unwrap();
+    fn validate_accepts_primary_root_with_enabled_map() {
+        let config = CascadeConfig {
+            rules: test_rules(),
+            regions: HashMap::new(),
+        };
+        let models = HashMap::from([
+            ("detect-fast".into(), true),
+            ("pose-standard".into(), true),
+        ]);
         assert!(config.validate(&models, "detect-fast").is_empty());
-        assert_eq!(
-            config
-                .rules
-                .iter()
-                .find(|r| r.model == "pose-standard")
-                .and_then(|r| r.requires_region.as_deref()),
-            Some("bed")
-        );
     }
 
     #[test]
-    fn configured_blueprints_are_valid() {
-        let models =
-            crate::config::load_model_catalog(std::path::Path::new("config/models.toml")).unwrap();
-        for path in [
-            "config/blueprints/detect-face/blueprint.toml",
-            "config/blueprints/detect-face-pose-seg/blueprint.toml",
-            "config/blueprints/detect-room-raw/blueprint.toml",
-            "config/blueprints/detect-room-face/blueprint.toml",
-        ] {
-            let blueprint: BlueprintConfig =
-                crate::config::load_config(std::path::Path::new(path)).unwrap();
-            let config = CascadeConfig {
-                rules: blueprint.rules.clone(),
-                regions: blueprint.regions.clone(),
-            };
-            assert!(
-                config
-                    .validate(&models, &blueprint.blueprint.primary_model)
-                    .is_empty(),
-                "invalid blueprint {path}"
-            );
-            assert!(
-                blueprint
-                    .blueprint
-                    .models
-                    .contains(&blueprint.blueprint.primary_model)
-            );
-        }
+    fn validate_rejects_unknown_model_and_non_root_primary() {
+        let config = CascadeConfig {
+            rules: test_rules(),
+            regions: HashMap::new(),
+        };
+        let models = HashMap::from([("detect-fast".into(), true)]);
+        let errors = config.validate(&models, "pose-standard");
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.contains("must be a cascade root"))
+        );
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.contains("unknown model 'pose-standard'"))
+        );
     }
 }

@@ -48,7 +48,7 @@ mod tests {
         fsm: &FsmCatalog,
         models: &ModelCatalog,
         zones: Option<&ZoneCatalog>,
-        depth_rules: Option<&crate::depth::DepthRules>,
+        depth_rules: Option<&mana_control::DepthRules>,
     ) -> Vec<String> {
         let names = depth_rules.map(|rules| {
             rules
@@ -111,6 +111,65 @@ mod tests {
         assert_eq!(face_crop.class.as_deref(), Some("person"));
         assert_eq!(face_crop.square_size, Some(320));
         assert_eq!(face_crop.upper_fraction, Some(0.50));
+    }
+
+    fn model_enabled_map(catalog: &ModelCatalog) -> std::collections::HashMap<String, bool> {
+        catalog
+            .models
+            .iter()
+            .map(|(name, entry)| (name.clone(), entry.enabled))
+            .collect()
+    }
+
+    #[test]
+    fn configured_cascade_has_valid_pose_rule() {
+        let config: CascadeConfig =
+            load_config(Path::new("config/cascade.toml")).unwrap();
+        let models = load_model_catalog(Path::new("config/models.toml")).unwrap();
+        assert!(
+            config
+                .validate(&model_enabled_map(&models), "detect-fast")
+                .is_empty()
+        );
+        assert_eq!(
+            config
+                .rules
+                .iter()
+                .find(|r| r.model == "pose-standard")
+                .and_then(|r| r.requires_region.as_deref()),
+            Some("bed")
+        );
+    }
+
+    #[test]
+    fn configured_blueprints_are_valid() {
+        let models = load_model_catalog(Path::new("config/models.toml")).unwrap();
+        let enabled = model_enabled_map(&models);
+        for path in [
+            "config/blueprints/detect-face/blueprint.toml",
+            "config/blueprints/detect-face-pose-seg/blueprint.toml",
+            "config/blueprints/detect-room-raw/blueprint.toml",
+            "config/blueprints/detect-room-face/blueprint.toml",
+        ] {
+            let blueprint: BlueprintConfig =
+                load_config(Path::new(path)).unwrap();
+            let config = CascadeConfig {
+                rules: blueprint.rules.clone(),
+                regions: blueprint.regions.clone(),
+            };
+            assert!(
+                config
+                    .validate(&enabled, &blueprint.blueprint.primary_model)
+                    .is_empty(),
+                "invalid blueprint {path}"
+            );
+            assert!(
+                blueprint
+                    .blueprint
+                    .models
+                    .contains(&blueprint.blueprint.primary_model)
+            );
+        }
     }
 
     #[test]

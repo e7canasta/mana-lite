@@ -23,13 +23,13 @@ fn to_scene(observations: &[mana_lite::detection::ConsolidatedObservation]) -> V
     observations
         .iter()
         .map(|observation| SceneObservation {
-            class: observation.class.clone(),
+            class: mana_control::domain::ClassName::new(observation.class.as_str()),
             bbox: observation.bbox,
             confidence: observation.confidence,
             source_models: observation
                 .evidence
                 .iter()
-                .map(|e| e.model.clone())
+                .map(|e| mana_control::domain::ModelId::new(e.model.as_str()))
                 .collect(),
             face: observation
                 .components

@@ -13,6 +13,7 @@ use mana_control::config::{
     FsmCatalog, FsmRoles, FsmRoot, FsmState, FsmTransition, OccupancyPolicy, PresencePoiPolicy,
     ZoneCatalog, ZoneSpec,
 };
+use mana_control::domain::LoopId;
 use mana_lite::fsm::{FsmEngine, FsmGuard, FsmProgram};
 use mana_lite::health::Health;
 use mana_lite::logger::{Event, LogSink, RecordingSink, render_events_fixed_ts, scene_events_to_log};
@@ -142,6 +143,7 @@ fn control_state(start: Instant) -> ControlState {
     let zones = zone_catalog();
     let program = FsmProgram::compile_lenient(&golden_catalog(), &zones).expect("compile");
     ControlState {
+        loop_id: LoopId::default_loop(),
         tracker: Some(Tracker::with_config(TrackerConfig {
             min_hits: 1,
             ..TrackerConfig::default()
@@ -187,7 +189,7 @@ fn refresh(image: &mut ProcessImage, sample: SceneSample, at: Instant) {
 #[test]
 fn synthetic_cycle_matches_golden_jsonl() {
     let start = Instant::now();
-    let mut timeline = ScanTimeline::new(start, PERIOD_MS);
+    let mut timeline = ScanTimeline::new(LoopId::default_loop(), start, PERIOD_MS);
     let mut state = control_state(start);
     let mut image = ProcessImage::empty();
     let mut sink = RecordingSink::default();

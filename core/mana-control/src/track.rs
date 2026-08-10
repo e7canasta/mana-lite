@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use crate::assignment::hungarian_min;
+use crate::domain::{ClassName, ModelId};
 use crate::SceneObservation;
 use crate::kalman::{Kalman7, KalmanConfig};
 use mana_geometry::iou::{OverlapMetric, box_overlap};
@@ -9,11 +10,11 @@ use mana_geometry::iou::{OverlapMetric, box_overlap};
 #[derive(Debug, Clone)]
 pub struct Track {
     pub id: u64,
-    pub source_model: String,
-    pub class: String,
+    pub source_model: ModelId,
+    pub class: ClassName,
     pub bbox: [f32; 4],
     pub confidence: f32,
-    pub evidence: Vec<String>,
+    pub evidence: Vec<ModelId>,
     pub kalman: Kalman7,
     pub hits: u32,
     pub hit_streak: u32,
@@ -27,7 +28,7 @@ pub struct Track {
 pub enum TrackEvent {
     Created {
         id: u64,
-        class: String,
+        class: ClassName,
         bbox: [f32; 4],
     },
     Updated {
@@ -36,29 +37,33 @@ pub enum TrackEvent {
     },
     Lost {
         id: u64,
-        class: String,
+        class: ClassName,
         misses: u32,
     },
     Deleted {
         id: u64,
-        class: String,
+        class: ClassName,
         reason: String,
     },
 }
 
 #[derive(Debug, Clone)]
 pub struct TrackObservation {
-    pub primary_model: String,
-    pub class: String,
+    pub primary_model: ModelId,
+    pub class: ClassName,
     pub confidence: f32,
     pub bbox: [f32; 4],
-    pub evidence: Vec<String>,
+    pub evidence: Vec<ModelId>,
 }
 
 impl From<&SceneObservation> for TrackObservation {
     fn from(observation: &SceneObservation) -> Self {
         Self {
-            primary_model: observation.source_models.first().cloned().unwrap_or_default(),
+            primary_model: observation
+                .source_models
+                .first()
+                .cloned()
+                .unwrap_or_else(|| ModelId::new("")),
             class: observation.class.clone(),
             confidence: observation.confidence,
             bbox: observation.bbox,
@@ -462,7 +467,13 @@ impl Tracker {
     }
 }
 
-fn merge_evidence(target: &mut Vec<String>, incoming: &[String]) { for evidence in incoming { if !target.contains(evidence) { target.push(evidence.clone()); } } }
+fn merge_evidence(target: &mut Vec<ModelId>, incoming: &[ModelId]) {
+    for evidence in incoming {
+        if !target.contains(evidence) {
+            target.push(evidence.clone());
+        }
+    }
+}
 
 fn bbox_to_measurement(bbox: [f32; 4]) -> [f32; 4] {
     let [x1, y1, x2, y2] = bbox;

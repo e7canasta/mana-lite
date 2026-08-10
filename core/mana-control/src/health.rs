@@ -29,11 +29,6 @@ pub struct Health {
 }
 
 impl Health {
-    // FIXME(ADR-029): wall-clock escape hatch; prefer `new_at` with an injected clock.
-    pub fn new(data_stale_ms: u64, stale_warn_ms: u64) -> Self {
-        Self::new_at(data_stale_ms, stale_warn_ms, Instant::now())
-    }
-
     pub fn new_at(data_stale_ms: u64, stale_warn_ms: u64, now: Instant) -> Self {
         Self {
             last_frame_at: now,
@@ -42,12 +37,6 @@ impl Health {
             blind: false,
             stale: false,
         }
-    }
-
-    // FIXME(ADR-029): wall-clock escape hatch; prefer `touch_at`.
-    #[allow(dead_code)]
-    pub fn touch(&mut self) {
-        self.touch_at(Instant::now());
     }
 
     /// Marca senal fresca. Devuelve si se venia de blind: en el superloop la
@@ -60,12 +49,6 @@ impl Health {
         self.blind = false;
         self.stale = false;
         was_blind
-    }
-
-    // FIXME(ADR-029): wall-clock escape hatch; prefer `evaluate_at`.
-    #[allow(dead_code)]
-    pub fn evaluate(&mut self) -> HealthTransition {
-        self.evaluate_at(Instant::now())
     }
 
     pub fn evaluate_at(&mut self, now: Instant) -> HealthTransition {
@@ -113,7 +96,7 @@ mod tests {
 
     #[test]
     fn health_enters_stale_at_half_threshold() {
-        let start = Instant::now();
+        let start = Instant::now(); // cfg(test)
         let mut health = Health::new_at(10_000, 5_000, start);
         let at = |ms: u64| start + std::time::Duration::from_millis(ms);
 
@@ -129,7 +112,7 @@ mod tests {
 
     #[test]
     fn health_uses_configured_stale_warning_threshold() {
-        let start = Instant::now();
+        let start = Instant::now(); // cfg(test)
         let mut health = Health::new_at(10_000, 2_000, start);
         let at = |ms: u64| start + std::time::Duration::from_millis(ms);
 
@@ -145,7 +128,7 @@ mod tests {
 
     #[test]
     fn health_enters_blind_at_full_threshold() {
-        let start = Instant::now();
+        let start = Instant::now(); // cfg(test)
         let mut health = Health::new_at(10_000, 5_000, start);
         let at = |ms: u64| start + std::time::Duration::from_millis(ms);
 
@@ -160,7 +143,7 @@ mod tests {
 
     #[test]
     fn blind_fires_once_while_condition_holds() {
-        let start = Instant::now();
+        let start = Instant::now(); // cfg(test)
         let mut health = Health::new_at(10_000, 5_000, start);
         let at = |ms: u64| start + std::time::Duration::from_millis(ms);
 
@@ -177,7 +160,7 @@ mod tests {
 
     #[test]
     fn blind_persists_across_intermediate_hysteresis_band() {
-        let start = Instant::now();
+        let start = Instant::now(); // cfg(test)
         let mut health = Health::new_at(10_000, 5_000, start);
         let at = |ms: u64| start + std::time::Duration::from_millis(ms);
 
@@ -190,7 +173,7 @@ mod tests {
 
     #[test]
     fn recovered_fires_once_then_stays_silent() {
-        let start = Instant::now();
+        let start = Instant::now(); // cfg(test)
         let mut health = Health::new_at(10_000, 5_000, start);
         let at = |ms: u64| start + std::time::Duration::from_millis(ms);
 
@@ -206,7 +189,7 @@ mod tests {
         // blind/stale) antes de que evaluate_at corra: la rama Recovered de
         // evaluate jamas se cumple en vivo. La recuperacion la reporta
         // touch_at, y el heartbeat se emite en el touch del frame valido.
-        let start = Instant::now();
+        let start = Instant::now(); // cfg(test)
         let mut health = Health::new_at(10_000, 5_000, start);
         let at = |ms: u64| start + std::time::Duration::from_millis(ms);
 
@@ -218,7 +201,7 @@ mod tests {
 
     #[test]
     fn evaluate_at_saturates_when_clock_goes_backwards() {
-        let start = Instant::now();
+        let start = Instant::now(); // cfg(test)
         let mut health = Health::new_at(10_000, 5_000, start);
         assert_eq!(
             health.evaluate_at(start - std::time::Duration::from_millis(100)),

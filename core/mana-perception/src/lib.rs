@@ -4,28 +4,13 @@
 //! raw measurements and detections, while the application owns adaptation to
 //! the control port.
 
-// FIXME: Cascade scheduling still accepts application configuration and
-// control-owned tracks; it remains here while its input port is narrowed.
-// The scheduler implementation is retained in `cascade.rs` for that follow-up.
+pub mod cascade;
 pub mod depth_map;
 pub mod detection;
+pub mod domain;
 
-/// Raw depth-map storage in local ROI coordinates.
-#[derive(Debug, Clone, PartialEq)]
-pub struct DepthFrame {
-    pub width: u32,
-    pub height: u32,
-    pub values: Vec<f32>,
-}
-
-impl DepthFrame {
-    #[must_use]
-    pub fn value_at(&self, x: u32, y: u32) -> Option<f32> {
-        (x < self.width && y < self.height)
-            .then(|| self.values.get((y * self.width + x) as usize).copied())
-            .flatten()
-    }
-}
+pub use domain::{ClassName, DomStr, ModelId};
+pub use depth_map::DepthFrame;
 
 /// Raw, policy-free depth statistics for a region.
 #[derive(Debug, Clone, PartialEq)]
@@ -42,6 +27,8 @@ pub struct RegionStats {
 }
 
 /// Computes region statistics without thresholds, rule names, or policy.
+///
+/// `roi` and `region` are in global coordinates; the depth map is local to the ROI.
 #[must_use]
 pub fn region_stats(depth: &DepthFrame, roi: [u32; 4], region: [u32; 4]) -> Option<RegionStats> {
     let x1 = region[0].max(roi[0]);
@@ -51,20 +38,19 @@ pub fn region_stats(depth: &DepthFrame, roi: [u32; 4], region: [u32; 4]) -> Opti
     if x2 <= x1 || y2 <= y1 {
         return None;
     }
+    let (map_width, map_height) = depth.dims();
     let local_x1 = x1 - roi[0];
     let local_y1 = y1 - roi[1];
-    let local_x2 = (x2 - roi[0]).min(depth.width);
-    let local_y2 = (y2 - roi[1]).min(depth.height);
+    let local_x2 = (x2 - roi[0]).min(map_width);
+    let local_y2 = (y2 - roi[1]).min(map_height);
     if local_x2 <= local_x1 || local_y2 <= local_y1 {
         return None;
     }
     let mut values = Vec::new();
     for y in local_y1..local_y2 {
         for x in local_x1..local_x2 {
-            if let Some(value) = depth
-                .value_at(x, y)
-                .filter(|value| value.is_finite() && *value > 0.0)
-            {
+            let value = depth.value_at(y as usize, x as usize);
+            if value.is_finite() && value > 0.0 {
                 values.push(value);
             }
         }
@@ -73,21 +59,92 @@ pub fn region_stats(depth: &DepthFrame, roi: [u32; 4], region: [u32; 4]) -> Opti
         return None;
     }
     values.sort_unstable_by(f32::total_cmp);
+    let n = values.len();
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        clippy::cast_precision_loss
+    )]
     let percentile = |p: f32| {
-        values[((p * values.len() as f32).ceil() as usize)
+        let rank = ((p * n as f32).ceil() as usize)
             .saturating_sub(1)
-            .min(values.len() - 1)]
+            .min(n - 1);
+        values[rank]
     };
     let area = u64::from(local_x2 - local_x1) * u64::from(local_y2 - local_y1);
     Some(RegionStats {
         roi,
         region,
-        valid_pixels: values.len() as u64,
-        valid_ratio: (area > 0).then(|| values.len() as f32 / area as f32),
+        valid_pixels: n as u64,
+        #[allow(clippy::cast_precision_loss)]
+        valid_ratio: (area > 0).then(|| n as f32 / area as f32),
         min_depth_m: Some(values[0]),
         median_depth_m: Some(percentile(0.5)),
         p10_depth_m: Some(percentile(0.1)),
         p90_depth_m: Some(percentile(0.9)),
-        max_depth_m: Some(values[values.len() - 1]),
+        max_depth_m: Some(values[n - 1]),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ndarray::Array2;
+    use ultralytics_inference::DepthMap;
+
+    #[allow(clippy::cast_possible_truncation)]
+    fn map_from_rows(rows: &[&[f32]]) -> DepthFrame {
+        let data = Array2::from_shape_fn((rows.len(), rows[0].len()), |(y, x)| rows[y][x]);
+        DepthFrame::from_ultralytics(DepthMap::new(
+            data,
+            (rows.len() as u32, rows[0].len() as u32),
+        ))
+    }
+
+    #[test]
+    fn stats_median_and_percentiles() {
+        let roi = [0, 0, 4, 4];
+        let map = map_from_rows(&[
+            &[1.0, 2.0, 3.0, 0.0],
+            &[4.0, 0.0, 0.0, 0.0],
+            &[0.0, 0.0, 0.0, 0.0],
+            &[0.0, 0.0, 0.0, 0.0],
+        ]);
+        let stats = region_stats(&map, roi, [0, 0, 4, 4]).expect("full ROI query");
+        assert_eq!(stats.valid_pixels, 4);
+        assert_eq!(stats.valid_ratio, Some(0.25));
+        assert_eq!(stats.min_depth_m, Some(1.0));
+        assert_eq!(stats.max_depth_m, Some(4.0));
+        assert_eq!(stats.median_depth_m, Some(2.0));
+        assert_eq!(stats.p10_depth_m, Some(1.0));
+        assert_eq!(stats.p90_depth_m, Some(4.0));
+    }
+
+    #[test]
+    fn region_partially_outside_map_is_clamped() {
+        let roi = [10, 10, 14, 14];
+        let map = map_from_rows(&[
+            &[0.0, 0.0, 0.0, 0.0],
+            &[0.0, 0.0, 0.0, 0.0],
+            &[0.0, 0.0, 5.0, 0.0],
+            &[0.0, 0.0, 0.0, 0.0],
+        ]);
+        let stats = region_stats(&map, roi, [12, 12, 100, 100]).expect("clamped query");
+        assert_eq!(stats.valid_pixels, 1);
+        assert_eq!(stats.valid_ratio, Some(0.25));
+    }
+
+    #[test]
+    fn region_without_valid_pixels_has_no_stats() {
+        let roi = [0, 0, 4, 4];
+        let map = map_from_rows(&[&[0.0; 4], &[0.0; 4], &[0.0; 4], &[0.0; 4]]);
+        assert_eq!(region_stats(&map, roi, [0, 0, 4, 4]), None);
+    }
+
+    #[test]
+    fn fully_outside_region_has_no_stats() {
+        let roi = [560, 140, 1240, 820];
+        let map = map_from_rows(&[&[1.0, 1.0], &[1.0, 1.0]]);
+        assert_eq!(region_stats(&map, roi, [0, 0, 100, 100]), None);
+    }
 }

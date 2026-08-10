@@ -7,6 +7,7 @@ description = "Fixed-cadence scene control for mana-lite"
 license = "AGPL-3.0"
 
 [dependencies]
+mana-id = { path = "../../std/mana-id" }
 mana-geometry = { path = "../../std/mana-geometry" }
 serde = { version = "1", features = ["derive"] }
 

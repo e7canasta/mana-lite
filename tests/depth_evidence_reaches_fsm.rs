@@ -8,6 +8,7 @@ use std::collections::HashMap;
 use std::time::Instant;
 
 use mana_control::{DepthMetric, DepthRuleResult, DepthRuleSnapshot};
+use mana_control::domain::LoopId;
 use mana_lite::config::{
     FsmCatalog, FsmGuard, FsmRoles, FsmRoot, FsmState, FsmTransition, ZoneCatalog,
 };
@@ -81,7 +82,7 @@ fn triggered_snapshot(rule: &str) -> DepthRuleSnapshot {
 fn depth_evidence_in_process_image_fires_fsm_guard() {
     const PERIOD_MS: u64 = 200;
     let start = Instant::now();
-    let timeline = ScanTimeline::new(start, PERIOD_MS);
+    let timeline = ScanTimeline::new(LoopId::default_loop(), start, PERIOD_MS);
     let now = timeline.now();
 
     let mut image = ProcessImage::empty();
@@ -100,6 +101,7 @@ fn depth_evidence_in_process_image_fires_fsm_guard() {
     let program =
         FsmProgram::compile_lenient(&depth_catalog(), &ZoneCatalog::default()).expect("compile");
     let mut state = ControlState {
+        loop_id: LoopId::default_loop(),
         tracker: None,
         presence: PresenceFilter::new(
             false,
@@ -154,7 +156,7 @@ fn depth_evidence_in_process_image_fires_fsm_guard() {
 fn empty_depth_snapshot_does_not_fire_depth_guard() {
     const PERIOD_MS: u64 = 200;
     let start = Instant::now();
-    let timeline = ScanTimeline::new(start, PERIOD_MS);
+    let timeline = ScanTimeline::new(LoopId::default_loop(), start, PERIOD_MS);
     let now = timeline.now();
 
     let mut image = ProcessImage::empty();
@@ -173,6 +175,7 @@ fn empty_depth_snapshot_does_not_fire_depth_guard() {
     let program =
         FsmProgram::compile_lenient(&depth_catalog(), &ZoneCatalog::default()).expect("compile");
     let mut state = ControlState {
+        loop_id: LoopId::default_loop(),
         tracker: None,
         presence: PresenceFilter::new(
             false,

@@ -3,11 +3,12 @@
 use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 
-use crate::cascade::{BlueprintConfig, CascadeRule, CascadeScheduler};
+use crate::cascade::{CascadeRule, CascadeScheduler};
 use crate::config::{
-    AppConfig, CropType, MetricsLogConfig, RerunBlueprintConfig, apply_model_overlay, load_config,
-    load_depth_rules, load_fsm_catalog, load_metrics_log, load_model_catalog, load_rerun_blueprint,
-    load_viz_data, load_zone_catalog, validate_model_catalog, ZoneCatalog,
+    AppConfig, BlueprintConfig, CropType, MetricsLogConfig, RerunBlueprintConfig,
+    apply_model_overlay, load_config, load_depth_rules, load_fsm_catalog, load_metrics_log,
+    load_model_catalog, load_rerun_blueprint, load_viz_data, load_zone_catalog,
+    validate_model_catalog, ZoneCatalog,
 };
 use crate::detection::CropRect;
 use crate::detection::DetectionConsolidator;
@@ -26,6 +27,8 @@ use crate::snapshot::{FrameDecoder, SnapshotSaver};
 use crate::track::{Tracker, TrackerConfig};
 use crate::viz::{FixedRoi, VizBridge};
 use crate::zones::ZoneEngine;
+use mana_control::domain::LoopId;
+use mana_control::scan::ScanTimeline;
 
 use super::{App, FanoutObserver, VERSION};
 
@@ -383,17 +386,17 @@ impl<R: FrameReader> App<R> {
             .zones
             .then(|| zones.as_ref().map(ZoneEngine::from_catalog))
             .flatten();
-        let fsm_engine = config
-            .pipeline
-            .fsm
-            .then(|| fsm_program.map(FsmEngine::from_program))
-            .flatten();
+        let model_enabled: HashMap<String, bool> = runtime_catalog
+            .models
+            .iter()
+            .map(|(name, entry)| (name.clone(), entry.enabled))
+            .collect();
         let (cascade_rules, cascade_regions) = if let Some(ref bp) = blueprint {
             let cfg = crate::cascade::CascadeConfig {
                 rules: bp.rules.clone(),
                 regions: bp.regions.clone(),
             };
-            let errors = cfg.validate(&runtime_catalog, &primary_model);
+            let errors = cfg.validate(&model_enabled, &primary_model);
             if !errors.is_empty() {
                 return Err(ManaError::Config(ConfigError::InvalidValue {
                     field: "inference.blueprint_file".into(),
@@ -403,7 +406,7 @@ impl<R: FrameReader> App<R> {
             (cfg.rules, cfg.regions)
         } else if let Some(ref path) = config.inference.cascade_file {
             let cfg: crate::cascade::CascadeConfig = load_config(path)?;
-            let errors = cfg.validate(&runtime_catalog, &primary_model);
+            let errors = cfg.validate(&model_enabled, &primary_model);
             if !errors.is_empty() {
                 return Err(ManaError::Config(ConfigError::InvalidValue {
                     field: "inference.cascade_file".into(),
@@ -436,7 +439,6 @@ impl<R: FrameReader> App<R> {
             metrics_log.metrics.report_interval_s,
             config.health.cycle_budget_ms,
         );
-        let health = Health::new(config.health.data_stale_ms, config.health.stale_warn_ms);
         let decoder = FrameDecoder::new()?;
         let snapshots = SnapshotSaver::new(
             config.output.snapshot_dir.clone(),
@@ -473,6 +475,18 @@ impl<R: FrameReader> App<R> {
         // la rotación del sistema, y un re-anclaje mal hecho reabriría el salto.
         let boot_wall = chrono::Utc::now();
         let boot_instant = Instant::now();
+        let loop_id = LoopId::default_loop();
+        let health = Health::new_at(
+            config.health.data_stale_ms,
+            config.health.stale_warn_ms,
+            boot_instant,
+        );
+        let fsm_engine = config
+            .pipeline
+            .fsm
+            .then(|| fsm_program.map(|program| FsmEngine::from_program_at(program, boot_instant)))
+            .flatten();
+        let scan_timeline = ScanTimeline::new(loop_id.clone(), boot_instant, config.scan.period_ms);
         let person_detection_roi = models
             .first_with_role(ModelRole::Boxes)
             .and_then(|id| static_roi_map.get(id.as_str()).copied());
@@ -482,6 +496,7 @@ impl<R: FrameReader> App<R> {
             primary_model,
             models,
             control: ControlState {
+                loop_id,
                 tracker,
                 zone_engine,
                 fsm_engine,
@@ -507,6 +522,7 @@ impl<R: FrameReader> App<R> {
                     face_edge_margin_px: config.detection.face_edge_margin_px,
                 },
             },
+            scan_timeline,
             cascade,
             detection_consolidator: DetectionConsolidator::new(
                 config.detection.face_component_coverage,

@@ -130,26 +130,26 @@ fn main() -> Result<(), Box<dyn Error>> {
     if let Some(region) = opts.region {
         let roi_array = result.roi.map(|(x1, y1, x2, y2)| [x1, y1, x2, y2]);
         if let Some(roi_array) = roi_array {
-            match mana_lite::depth::region_stats(
-                &mana_lite::depth_map::DepthFrame::from_ultralytics(depth.clone()),
-                roi_array,
-                region,
-            ) {
-                Some(stats) => println!(
-                    "region_stats=roi={:?} region={:?} local={:?} map={}x{} valid_pixels={} valid_ratio={:?} min_depth_m={:?} median_depth_m={:?} p10_depth_m={:?} p90_depth_m={:?} max_depth_m={:?}",
-                    stats.roi,
-                    stats.region,
-                    stats.local,
-                    stats.map_width,
-                    stats.map_height,
-                    stats.valid_pixels,
-                    stats.valid_ratio,
-                    stats.min_depth_m,
-                    stats.median_depth_m,
-                    stats.p10_depth_m,
-                    stats.p90_depth_m,
-                    stats.max_depth_m,
-                ),
+            let depth_frame =
+                mana_lite::depth_map::DepthFrame::from_ultralytics(depth.clone());
+            match mana_lite::region_stats(&depth_frame, roi_array, region) {
+                Some(stats) => {
+                    let (map_width, map_height) = depth_frame.dims();
+                    println!(
+                        "region_stats=roi={:?} region={:?} map={}x{} valid_pixels={} valid_ratio={:?} min_depth_m={:?} median_depth_m={:?} p10_depth_m={:?} p90_depth_m={:?} max_depth_m={:?}",
+                        stats.roi,
+                        stats.region,
+                        map_width,
+                        map_height,
+                        stats.valid_pixels,
+                        stats.valid_ratio,
+                        stats.min_depth_m,
+                        stats.median_depth_m,
+                        stats.p10_depth_m,
+                        stats.p90_depth_m,
+                        stats.max_depth_m,
+                    );
+                }
                 None => println!("region_stats=no_intersection_or_no_valid region={region:?}"),
             }
         } else {

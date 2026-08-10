@@ -14,16 +14,10 @@ pub mod track;
 pub mod window;
 pub mod zones;
 
-/// Control-side depth policy vocabulary.
-pub mod depth {
-    pub use super::{
-        DepthCalibration, DepthMetric, DepthOp, DepthRegionRule, DepthRegionStats, DepthRuleResult,
-        DepthRuleSnapshot, DepthRules,
-    };
-}
-
 use std::collections::{HashMap, HashSet};
-use std::time::{Duration, Instant};
+use std::time::Instant;
+
+use crate::domain::{ClassName, ModelId};
 
 /// Narrow observation vocabulary accepted by the control loop.
 ///
@@ -31,10 +25,10 @@ use std::time::{Duration, Instant};
 /// not cross this port.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SceneObservation {
-    pub class: String,
+    pub class: ClassName,
     pub bbox: [f32; 4],
     pub confidence: f32,
-    pub source_models: Vec<String>,
+    pub source_models: Vec<ModelId>,
     pub face: Option<FaceObservation>,
 }
 
@@ -227,6 +221,17 @@ impl DepthRules {
                     Some(format!("rule '{}' has invalid threshold_m", rule.name))
                 } else if !(0.0..=1.0).contains(&rule.min_valid_ratio) {
                     Some(format!("rule '{}' has invalid min_valid_ratio", rule.name))
+                } else if let Some(cal) = rule.calibration
+                    && (!cal.reference_model_m.is_finite()
+                        || !cal.reference_scene_m.is_finite()
+                        || cal.reference_model_m <= 0.0
+                        || cal.reference_scene_m <= 0.0
+                        || !cal.scale().is_finite())
+                {
+                    Some(format!(
+                        "rule '{}' has invalid calibration references (must be finite and > 0)",
+                        rule.name
+                    ))
                 } else if !names.insert(rule.name.clone()) {
                     Some(format!("duplicate depth rule name '{}'", rule.name))
                 } else {
@@ -302,27 +307,6 @@ impl DepthRuleSnapshot {
     }
 }
 
-/// Injectable clock for deterministic scan tests.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub struct ScanInstant(Instant);
-
-impl ScanInstant {
-    #[must_use]
-    pub const fn from_instant(instant: Instant) -> Self {
-        Self(instant)
-    }
-
-    #[must_use]
-    pub const fn as_instant(self) -> Instant {
-        self.0
-    }
-
-    #[must_use]
-    pub fn saturating_duration_since(self, earlier: Self) -> Duration {
-        self.0.saturating_duration_since(earlier.0)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -330,14 +314,14 @@ mod tests {
 
     #[test]
     fn observations_age_ms_is_max_without_evidence() {
-        let start = Instant::now();
+        let start = Instant::now(); // cfg(test)
         let image = ProcessImage::empty();
         assert_eq!(image.observations_age_ms(start), u64::MAX);
     }
 
     #[test]
     fn observations_age_ms_grows_from_observed_at() {
-        let start = Instant::now();
+        let start = Instant::now(); // cfg(test)
         let image = ProcessImage {
             observations: Some(AgedEvidence::new(
                 SceneSample {
@@ -361,7 +345,7 @@ mod tests {
 
     #[test]
     fn depth_age_ms_none_until_reset_or_set() {
-        let start = Instant::now();
+        let start = Instant::now(); // cfg(test)
         let mut image = ProcessImage::empty();
         assert_eq!(image.depth_age_ms(start), None);
 
@@ -375,7 +359,7 @@ mod tests {
 
     #[test]
     fn reset_then_set_depth_leaves_rule_triggered() {
-        let start = Instant::now();
+        let start = Instant::now(); // cfg(test)
         let mut image = ProcessImage::empty();
         image.reset_depth(start);
         assert_eq!(image.depth_snapshot().is_triggered("bed-approach"), None);
@@ -396,5 +380,93 @@ mod tests {
             image.depth_snapshot().is_triggered("bed-approach"),
             Some(true)
         );
+    }
+
+    fn sample_stats(median: f32, valid_ratio: f32) -> DepthRegionStats {
+        DepthRegionStats {
+            region: [0, 0, 2, 2],
+            valid_pixels: 4,
+            valid_ratio: Some(valid_ratio),
+            min_depth_m: Some(median),
+            median_depth_m: Some(median),
+            p10_depth_m: Some(median),
+            p90_depth_m: Some(median),
+            max_depth_m: Some(median),
+        }
+    }
+
+    #[test]
+    fn depth_rules_evaluate_triggers_below_threshold() {
+        let rules = DepthRules {
+            rules: vec![DepthRegionRule {
+                name: "close".into(),
+                region: [0, 0, 2, 2],
+                metric: DepthMetric::Median,
+                op: DepthOp::Lt,
+                threshold_m: 2.0,
+                min_valid_ratio: 0.0,
+                calibration: None,
+            }],
+        };
+        let results = rules.evaluate(&[sample_stats(1.0, 1.0)]);
+        assert_eq!(results.len(), 1);
+        assert!(results[0].triggered);
+        assert_eq!(results[0].value, Some(1.0));
+    }
+
+    #[test]
+    fn depth_rules_suppress_by_min_valid_ratio() {
+        let rules = DepthRules {
+            rules: vec![DepthRegionRule {
+                name: "sparse".into(),
+                region: [0, 0, 2, 2],
+                metric: DepthMetric::Median,
+                op: DepthOp::Lt,
+                threshold_m: 2.0,
+                min_valid_ratio: 0.5,
+                calibration: None,
+            }],
+        };
+        assert!(rules.evaluate(&[sample_stats(1.0, 0.25)]).is_empty());
+    }
+
+    #[test]
+    fn depth_rules_apply_calibration_scale() {
+        let rules = DepthRules {
+            rules: vec![DepthRegionRule {
+                name: "calibrated".into(),
+                region: [0, 0, 2, 2],
+                metric: DepthMetric::Median,
+                op: DepthOp::Lt,
+                threshold_m: 1.2,
+                min_valid_ratio: 0.0,
+                calibration: Some(DepthCalibration {
+                    reference_model_m: 2.0,
+                    reference_scene_m: 1.0,
+                }),
+            }],
+        };
+        let results = rules.evaluate(&[sample_stats(2.0, 1.0)]);
+        assert_eq!(results[0].value, Some(1.0));
+        assert!(results[0].triggered);
+    }
+
+    #[test]
+    fn depth_rules_reject_invalid_calibration() {
+        let rules = DepthRules {
+            rules: vec![DepthRegionRule {
+                name: "cal".into(),
+                region: [0, 0, 1, 1],
+                metric: DepthMetric::Median,
+                op: DepthOp::Lt,
+                threshold_m: 1.0,
+                min_valid_ratio: 0.5,
+                calibration: Some(DepthCalibration {
+                    reference_model_m: 0.0,
+                    reference_scene_m: 1.0,
+                }),
+            }],
+        };
+        assert!(!rules.validate().is_empty());
     }
 }

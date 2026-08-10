@@ -69,7 +69,7 @@ pub enum Event {
         triggered: bool,
         valid_pixels: u64,
         valid_ratio: Option<f32>,
-        calibration: Option<crate::depth::DepthCalibration>,
+        calibration: Option<mana_control::DepthCalibration>,
     },
     ConsolidatedDetection {
         frame_id: u64,
@@ -286,7 +286,7 @@ pub fn track_event_to_log(event: &TrackEvent, stamp: ControlStamp) -> Event {
             event: "track_created".into(),
             detail: format!("track{id}"),
             attrs: control_stamp_attrs(stamp, vec![
-                ("class".into(), class.clone()),
+                ("class".into(), class.to_string()),
                 ("bbox".into(), format_bbox(bbox)),
             ]),
         },
@@ -301,7 +301,7 @@ pub fn track_event_to_log(event: &TrackEvent, stamp: ControlStamp) -> Event {
             attrs: control_stamp_attrs(
                 stamp,
                 vec![
-                    ("class".into(), class.clone()),
+                    ("class".into(), class.to_string()),
                     ("misses".into(), misses.to_string()),
                 ],
             ),
@@ -312,7 +312,7 @@ pub fn track_event_to_log(event: &TrackEvent, stamp: ControlStamp) -> Event {
             attrs: control_stamp_attrs(
                 stamp,
                 vec![
-                    ("class".into(), class.clone()),
+                    ("class".into(), class.to_string()),
                     ("reason".into(), reason.clone()),
                 ],
             ),
@@ -432,12 +432,16 @@ pub fn scene_events_to_log(events: &[SceneEvent]) -> Vec<Event> {
                     continue;
                 };
                 for track in tracks {
-                    let mut sources = track.evidence.clone();
+                    let mut sources: Vec<String> = track
+                        .evidence
+                        .iter()
+                        .map(|model| model.as_str().to_string())
+                        .collect();
                     sources.sort();
                     sources.dedup();
                     out.push(Event::entity(
                         track.id,
-                        &track.class,
+                        track.class.as_str(),
                         track.bbox,
                         sources,
                         stamp,
@@ -620,7 +624,7 @@ impl Event {
         triggered: bool,
         valid_pixels: u64,
         valid_ratio: Option<f32>,
-        calibration: Option<crate::depth::DepthCalibration>,
+        calibration: Option<mana_control::DepthCalibration>,
     ) -> Self {
         Event::DepthRegion {
             version: crate::depth::DEPTH_REGION_EVENT_VERSION,

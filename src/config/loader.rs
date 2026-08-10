@@ -6,7 +6,6 @@ use super::env::apply_env_overrides;
 use super::fsm::FsmCatalog;
 use super::observability::{MetricsLogConfig, RerunBlueprintConfig, VizDataConfig};
 use super::zones::ZoneCatalog;
-use crate::depth::DepthRules;
 use crate::error::{ConfigError, Result};
 
 fn read_file(path: &Path) -> Result<String> {
@@ -39,8 +38,18 @@ pub fn load_fsm_catalog(path: &Path) -> Result<FsmCatalog> {
     load_config(path)
 }
 
-pub fn load_depth_rules(path: &Path) -> Result<DepthRules> {
-    load_config(path)
+pub fn load_depth_rules(path: &Path) -> Result<mana_control::DepthRules> {
+    let content = read_file(path)?;
+    crate::depth::parse_depth_rules(&content).map_err(|e| match e {
+        crate::error::ManaError::Config(ConfigError::ParseError { msg, .. }) => {
+            ConfigError::ParseError {
+                file: path.display().to_string(),
+                msg,
+            }
+            .into()
+        }
+        other => other,
+    })
 }
 
 pub fn load_viz_data(path: &Path) -> Result<VizDataConfig> {

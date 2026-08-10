@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::time::Instant;
 
 use crate::domain::StateId;
-use crate::depth::DepthRuleSnapshot;
+use crate::DepthRuleSnapshot;
 use crate::health::Health;
 use crate::zones::{ZoneEngine, ZoneEvent};
 
@@ -60,10 +60,6 @@ pub struct FsmEngine {
 }
 
 impl FsmEngine {
-    pub fn from_program(program: FsmProgram) -> Self {
-        Self::from_program_at(program, Instant::now())
-    }
-
     pub fn from_program_at(program: FsmProgram, now: Instant) -> Self {
         Self {
             current_state: program.initial().clone(),
@@ -81,10 +77,6 @@ impl FsmEngine {
     #[must_use]
     pub fn face_was_inside(&self) -> bool {
         self.face_was_inside
-    }
-
-    pub fn snapshot(&self) -> FsmSnapshot {
-        self.snapshot_at(Instant::now())
     }
 
     pub fn snapshot_at(&self, now: Instant) -> FsmSnapshot {
@@ -123,60 +115,8 @@ impl FsmEngine {
         }
     }
 
-    pub fn evaluate(
-        &mut self,
-        zone_events: &[ZoneEvent],
-        zone_engine: &ZoneEngine,
-        health: &Health,
-        depth: &DepthRuleSnapshot,
-    ) -> Option<FsmTransitionResult> {
-        self.evaluate_with_context(
-            zone_events,
-            Some(zone_engine),
-            health,
-            depth,
-            &FsmSceneContext::default(),
-        )
-    }
-
-    pub fn evaluate_with_context(
-        &mut self,
-        zone_events: &[ZoneEvent],
-        zone_engine: Option<&ZoneEngine>,
-        health: &Health,
-        depth: &DepthRuleSnapshot,
-        context: &FsmSceneContext,
-    ) -> Option<FsmTransitionResult> {
-        self.evaluate_with_context_at(
-            zone_events,
-            zone_engine,
-            health,
-            depth,
-            context,
-            Instant::now(),
-        )
-    }
-
     /// Evaluate only global (`from = "*"`) transitions between keyframes.
     /// State-specific scene transitions must wait for fresh frame evidence.
-    pub fn evaluate_wildcard_with_context(
-        &mut self,
-        zone_events: &[ZoneEvent],
-        zone_engine: Option<&ZoneEngine>,
-        health: &Health,
-        depth: &DepthRuleSnapshot,
-        context: &FsmSceneContext,
-    ) -> Option<FsmTransitionResult> {
-        self.evaluate_wildcard_with_context_at(
-            zone_events,
-            zone_engine,
-            health,
-            depth,
-            context,
-            Instant::now(),
-        )
-    }
-
     pub fn evaluate_wildcard_with_context_at(
         &mut self,
         zone_events: &[ZoneEvent],

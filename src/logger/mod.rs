@@ -518,7 +518,7 @@ mod tests {
             true,
             462400,
             Some(1.0),
-            Some(crate::depth::DepthCalibration {
+            Some(mana_control::DepthCalibration {
                 reference_model_m: 2.0,
                 reference_scene_m: 1.0,
             }),

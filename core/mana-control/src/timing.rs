@@ -113,7 +113,7 @@ mod tests {
 
     #[test]
     fn debouncer_requires_on_ms_before_engage() {
-        let start = Instant::now();
+        let start = Instant::now(); // cfg(test)
         let mut d = Debouncer::new();
         assert!(!d.update_at(true, 100, 50, start));
         assert!(!d.update_at(true, 100, 50, start + Duration::from_millis(50)));
@@ -122,7 +122,7 @@ mod tests {
 
     #[test]
     fn dwell_tracks_elapsed() {
-        let start = Instant::now();
+        let start = Instant::now(); // cfg(test)
         let mut dwell = Dwell::new();
         dwell.start_or_keep(start);
         assert!(!dwell.ready(start + Duration::from_millis(50), 100));

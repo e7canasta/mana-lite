@@ -84,7 +84,7 @@ impl PresenceFilter {
 
         let person_count = observations
             .iter()
-            .filter(|observation| observation.class == self.class)
+            .filter(|observation| observation.class.as_str() == self.class)
             .count();
 
         if person_count > 1 {
@@ -104,7 +104,7 @@ impl PresenceFilter {
 
         if let Some(person) = observations
             .iter()
-            .find(|observation| observation.class == self.class)
+            .find(|observation| observation.class.as_str() == self.class)
         {
             let engaged =
                 self.debouncer
@@ -189,7 +189,7 @@ mod tests {
     fn holds_one_person_during_short_valid_dropout() {
         let mut filter = PresenceFilter::new(true, "person", config(800));
         let one = [person()];
-        let start = Instant::now();
+        let start = Instant::now(); // cfg(test)
         filter.update_at(&one, true, start);
         let (observations, update) =
             filter.update_at(&one, true, start + Duration::from_millis(DT_MS));
@@ -215,7 +215,7 @@ mod tests {
             },
         );
         let one = [person()];
-        let start = Instant::now();
+        let start = Instant::now(); // cfg(test)
 
         assert_eq!(
             filter.update_at(&one, true, start).1.state,
@@ -240,7 +240,7 @@ mod tests {
     #[test]
     fn releases_presence_after_configured_empty_ms() {
         let mut filter = PresenceFilter::new(true, "person", config(600));
-        let start = Instant::now();
+        let start = Instant::now(); // cfg(test)
         filter.update_at(&[person()], true, start);
         filter.update_at(&[person()], true, start + Duration::from_millis(DT_MS));
         filter.update_at(&[], true, start + Duration::from_millis(DT_MS * 2));
@@ -255,7 +255,7 @@ mod tests {
     #[test]
     fn invalid_signal_does_not_count_as_absence() {
         let mut filter = PresenceFilter::new(true, "person", config(400));
-        let start = Instant::now();
+        let start = Instant::now(); // cfg(test)
         filter.update_at(&[person()], true, start);
         filter.update_at(&[person()], true, start + Duration::from_millis(DT_MS));
         let (observations, update) =
@@ -270,7 +270,7 @@ mod tests {
     fn multiple_people_are_ambiguous_and_never_held() {
         let mut filter = PresenceFilter::new(true, "person", config(800));
         let two = [person(), person()];
-        let (observations, update) = filter.update_at(&two, true, Instant::now());
+        let (observations, update) = filter.update_at(&two, true, Instant::now()); // cfg(test)
         assert_eq!(observations.len(), 2);
         assert_eq!(update.state, PresenceState::Ambiguous);
         assert!(!update.held);
@@ -287,7 +287,7 @@ mod tests {
                 off_ms: 800,
             },
         );
-        let start = Instant::now();
+        let start = Instant::now(); // cfg(test)
         filter.update_at(&[person()], true, start);
         filter.update_at(&[person()], true, start + Duration::from_millis(200));
 
@@ -304,7 +304,7 @@ mod tests {
     fn disabled_filter_passes_observations_without_debounce() {
         let mut filter = PresenceFilter::new(false, "person", config(800));
         let one = [person()];
-        let start = Instant::now();
+        let start = Instant::now(); // cfg(test)
 
         let (observations, update) = filter.update_at(&one, true, start);
         assert_eq!(observations.len(), 1);
@@ -322,7 +322,7 @@ mod tests {
     fn ambiguous_clears_when_back_to_zero_or_one() {
         let mut filter = PresenceFilter::new(true, "person", config(200));
         let two = [person(), person()];
-        let start = Instant::now();
+        let start = Instant::now(); // cfg(test)
 
         assert_eq!(
             filter.update_at(&two, true, start).1.state,

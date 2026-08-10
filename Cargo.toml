@@ -2,6 +2,7 @@
 members = [
     "core/mana-control",
     "core/mana-perception",
+    "std/mana-id",
     "std/mana-rtsp",
     "std/mana-types",
     "std/mana-video",
@@ -38,6 +39,7 @@ mana-video = { path = "std/mana-video", default-features = false }
 mana-viz = { path = "std/mana-viz", default-features = false }
 mana-types = { path = "std/mana-types" }
 mana-geometry = { path = "std/mana-geometry", features = ["polygonize"] }
+mana-id = { path = "std/mana-id" }
 mana-control = { path = "core/mana-control" }
 mana-perception = { path = "core/mana-perception" }
 retina = "0.4"

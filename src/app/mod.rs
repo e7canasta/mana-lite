@@ -7,7 +7,8 @@ mod observer;
 pub use cycle::CycleContext;
 pub use observer::{FanoutObserver, NullObserver, PipelineObserver};
 
-use crate::cascade::{CascadeScheduler, CascadeTarget};
+use crate::cascade::{CascadeScheduler, CascadeTarget, GateObservation};
+use mana_perception::domain::{ClassName, ModelId};
 use crate::config::{AppConfig, CropType};
 use crate::detection::CropRect;
 use crate::detection::{ConsolidatedObservation, DetectionConsolidator, DetectionRole, ModelDetections};
@@ -19,7 +20,8 @@ use crate::ingest::{FrameReader, IngestEngine, RawKeyframe, RetinaReader};
 use crate::logger::{DetRecord, Event, scene_events_to_log};
 use crate::metrics::{MetricsEngine, PerClassFrameStats};
 use crate::pipeline::PipelineState;
-use crate::scan::{ControlStamp, ControlState, SceneEvent};
+use crate::scan::{ControlStamp, ControlState, SceneEvent, ScanTimeline};
+use mana_control::domain::LoopId;
 use crate::snapshot::{FrameBuffer, FrameDecoder, SnapshotSaver};
 use mana_types::RawFrameV1;
 use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -35,13 +37,14 @@ pub struct App<R: FrameReader = RetinaReader> {
     pub(crate) infer: InferEngine,
     pub(crate) primary_model: String,
     pub(crate) control: ControlState,
+    pub(crate) scan_timeline: ScanTimeline,
     pub(crate) cascade: CascadeScheduler,
     pub(crate) detection_consolidator: DetectionConsolidator,
     pub(crate) models: ModelRegistry,
     pub(crate) ingest: IngestEngine<R>,
     pub(crate) metrics: MetricsEngine,
     pub(crate) depth_context_roi: Option<CropRect>,
-    pub(crate) depth_rules: crate::depth::DepthRules,
+    pub(crate) depth_rules: mana_control::DepthRules,
     pub(crate) decoder: FrameDecoder,
     pub(crate) snapshots: SnapshotSaver,
     pub(crate) observer: FanoutObserver,
@@ -201,10 +204,15 @@ impl<R: FrameReader> App<R> {
     fn scan_tick(&mut self, _config: &AppConfig, now: Instant) {
         self.metrics.tick_cycle_at(now, false);
         self.drain_ingest_counters();
+        let scan_now = if self.control.scan_seq == 0 {
+            self.scan_timeline.now()
+        } else {
+            self.scan_timeline.advance()
+        };
         let scene_events = crate::scan::scan(
             &mut self.control,
             &self.control_image,
-            crate::scan::ScanInstant::from_instant(now),
+            scan_now,
         );
         self.control_image.measurement_pending = false;
 
@@ -294,7 +302,7 @@ impl<R: FrameReader> App<R> {
                 tracker
                     .current_tracks()
                     .into_iter()
-                    .filter(|track| track.class == config.presence.class)
+                    .filter(|track| track.class.as_str() == config.presence.class)
                     .count()
             }) != 1
             {
@@ -320,8 +328,9 @@ impl<R: FrameReader> App<R> {
                     .tracker
                     .as_ref()
                     .map_or_else(Vec::new, |tracker| tracker.current_tracks());
+                let observations = gate_observations(&current_tracks);
                 self.cascade
-                    .target_for(&model_key, &current_tracks, fb.w, fb.h)
+                    .target_for(&model_key, &observations, fb.w, fb.h)
             };
             if target.is_none() {
                 self.metrics.tick_infer_skip(&model_key);
@@ -625,12 +634,27 @@ impl<R: FrameReader> App<R> {
         else {
             return;
         };
-        let results = self.depth_rules.evaluate(depth, roi);
-        // Depth policy is projected into the control-owned process image.
-        // App and control still own parallel DepthRuleResult types; Sprint 2
-        // collapses the duplication when the `pub mod depth` shim goes away.
+        let measurements: Vec<mana_control::DepthRegionStats> = self
+            .depth_rules
+            .rules
+            .iter()
+            .filter_map(|rule| {
+                let stats = mana_perception::region_stats(depth, roi, rule.region)?;
+                Some(mana_control::DepthRegionStats {
+                    region: stats.region,
+                    valid_pixels: stats.valid_pixels,
+                    valid_ratio: stats.valid_ratio,
+                    min_depth_m: stats.min_depth_m,
+                    median_depth_m: stats.median_depth_m,
+                    p10_depth_m: stats.p10_depth_m,
+                    p90_depth_m: stats.p90_depth_m,
+                    max_depth_m: stats.max_depth_m,
+                })
+            })
+            .collect();
+        let results = self.depth_rules.evaluate(&measurements);
         wire_depth_evidence(&mut self.control_image, &results, now);
-        for result in results {
+        for result in &results {
             self.observer.emit(Event::depth_region(
                 self.state.frame_number(),
                 &result.rule,
@@ -680,6 +704,21 @@ impl<R: FrameReader> App<R> {
     }
 }
 
+fn gate_observations(tracks: &[&mana_control::track::Track]) -> Vec<GateObservation> {
+    tracks
+        .iter()
+        .map(|t| GateObservation {
+            id: t.id,
+            bbox: t.bbox,
+            class: ClassName::new(t.class.as_str()),
+            confidence: t.confidence,
+            source_model: ModelId::new(t.source_model.as_str()),
+            is_confirmed: t.is_confirmed,
+            misses: t.misses,
+        })
+        .collect()
+}
+
 /// Application adapter from perception's rich consolidated evidence to the
 /// narrow control input port. Mask payloads and model-specific components stay
 /// on the perception side; control receives only scene facts it can decide on.
@@ -693,9 +732,9 @@ fn project_scene_sample(sample: &ClinicalSample) -> mana_control::SceneSample {
                     .evidence
                     .iter()
                     .chain(&observation.components)
-                    .map(|evidence| evidence.model.clone())
+                    .map(|evidence| mana_control::domain::ModelId::new(evidence.model.as_str()))
                     .collect();
-                source_models.sort();
+                source_models.sort_by(|a, b| a.as_str().cmp(b.as_str()));
                 source_models.dedup();
                 let face = observation
                     .components
@@ -707,7 +746,7 @@ fn project_scene_sample(sample: &ClinicalSample) -> mana_control::SceneSample {
                         confidence: face.confidence,
                     });
                 mana_control::SceneObservation {
-                    class: observation.class.clone(),
+                    class: mana_control::domain::ClassName::new(observation.class.as_str()),
                     bbox: observation.bbox,
                     confidence: observation.confidence,
                     source_models,
@@ -722,48 +761,13 @@ fn project_scene_sample(sample: &ClinicalSample) -> mana_control::SceneSample {
     }
 }
 
-/// Maps app-owned depth policy results into the control-owned vocabulary.
-///
-/// Field-for-field copy across the temporary type fork; Sprint 2 removes the
-/// duplication when `src/depth.rs` stops owning its own result types.
-fn project_depth_results(
-    results: &[crate::depth::DepthRuleResult],
-) -> Vec<mana_control::DepthRuleResult> {
-    results
-        .iter()
-        .map(|result| mana_control::DepthRuleResult {
-            rule: result.rule.clone(),
-            region: result.region,
-            metric: match result.metric {
-                crate::depth::DepthMetric::Min => mana_control::DepthMetric::Min,
-                crate::depth::DepthMetric::Median => mana_control::DepthMetric::Median,
-                crate::depth::DepthMetric::P10 => mana_control::DepthMetric::P10,
-                crate::depth::DepthMetric::P90 => mana_control::DepthMetric::P90,
-                crate::depth::DepthMetric::Max => mana_control::DepthMetric::Max,
-            },
-            threshold_m: result.threshold_m,
-            value: result.value,
-            triggered: result.triggered,
-            valid_pixels: result.valid_pixels,
-            valid_ratio: result.valid_ratio,
-            calibration: result.calibration.map(|c| mana_control::DepthCalibration {
-                reference_model_m: c.reference_model_m,
-                reference_scene_m: c.reference_scene_m,
-            }),
-        })
-        .collect()
-}
-
-/// Projects evaluated depth rules into the control process image.
+/// Installs evaluated depth policy results into the control process image.
 fn wire_depth_evidence(
     image: &mut mana_control::ProcessImage,
-    results: &[crate::depth::DepthRuleResult],
+    results: &[mana_control::DepthRuleResult],
     now: Instant,
 ) {
-    image.set_depth(
-        mana_control::DepthRuleSnapshot::from_results(&project_depth_results(results)),
-        now,
-    );
+    image.set_depth(mana_control::DepthRuleSnapshot::from_results(results), now);
 }
 
 fn raw_frame_header(fb: &FrameBuffer, frame_id: u64, timestamp_ns: i64) -> RawFrameV1 {
@@ -784,7 +788,7 @@ fn depth_summary(
     let Some(depth) = depth else {
         return (fallback_width, fallback_height, 0, None, None);
     };
-    let (width, height) = crate::depth::map_dims(depth);
+    let (width, height) = depth.dims();
     let mut valid_pixels = 0;
     let mut min_depth = f32::INFINITY;
     let mut max_depth: f32 = 0.0;
@@ -828,7 +832,7 @@ fn frame_timestamp_ns(
 mod tests {
     use super::*;
     use crate::config::{MetricsTextConfig, ModelCatalog};
-    use crate::depth::{DepthMetric, DepthOp, DepthRegionRule, DepthRules};
+    use mana_control::{DepthCalibration, DepthMetric, DepthOp, DepthRegionRule, DepthRules, DepthRuleResult};
     use crate::ingest::SyntheticReader;
     use crate::logger::{JsonlLevel, LogManager};
     use crate::occupancy::OccupancyStateMachine;
@@ -858,32 +862,21 @@ mod tests {
     }
 
     #[test]
-    fn projected_depth_results_reach_control_snapshot() {
-        let results = [crate::depth::DepthRuleResult {
+    fn wired_depth_results_reach_control_snapshot() {
+        let results = [DepthRuleResult {
             rule: "bed-approach".into(),
             region: [10, 20, 30, 40],
-            metric: crate::depth::DepthMetric::Median,
+            metric: DepthMetric::Median,
             threshold_m: 1.5,
             value: Some(1.0),
             triggered: true,
             valid_pixels: 8,
             valid_ratio: Some(0.9),
-            calibration: Some(crate::depth::DepthCalibration {
+            calibration: Some(DepthCalibration {
                 reference_model_m: 1.0,
                 reference_scene_m: 2.0,
             }),
         }];
-        let projected = project_depth_results(&results);
-        assert_eq!(projected.len(), 1);
-        assert_eq!(projected[0].rule, "bed-approach");
-        assert!(projected[0].triggered);
-        assert_eq!(
-            projected[0].calibration,
-            Some(mana_control::DepthCalibration {
-                reference_model_m: 1.0,
-                reference_scene_m: 2.0,
-            })
-        );
 
         let mut image = mana_control::ProcessImage::empty();
         let now = Instant::now();
@@ -895,7 +888,7 @@ mod tests {
         assert_eq!(
             image.depth_snapshot().is_triggered("bed-approach"),
             Some(true),
-            "evaluate_depth_rules must project results into ProcessImage, not reset them"
+            "evaluate_depth_rules must wire results into ProcessImage, not reset them"
         );
     }
 
@@ -916,6 +909,7 @@ mod tests {
             infer: InferEngine::from_catalog(&empty_catalog).expect("empty catalog loads"),
             primary_model: "detect-fast".into(),
             control: ControlState {
+                loop_id: LoopId::default_loop(),
                 tracker: None,
                 presence: PresenceFilter::new(
                     false,
@@ -948,6 +942,7 @@ mod tests {
                     face_edge_margin_px: 0,
                 },
             },
+            scan_timeline: ScanTimeline::new(LoopId::default_loop(), start, 200),
             cascade: CascadeScheduler::from_rules(&[]),
             detection_consolidator: DetectionConsolidator::new(0.7, 0.65, 0.5),
             models: ModelRegistry::from_catalog(&empty_catalog, "detect-fast"),

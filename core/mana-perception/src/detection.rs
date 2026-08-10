@@ -64,7 +64,7 @@ impl Detection {
 /// `polygons` are simplified contours normalized to the full frame.
 ///
 /// `compact` and `polygons` are `Arc`-shared: the mask travels from
-/// inference through consolidation and tracking without deep copies;
+/// inference through consolidation without deep copies;
 /// the only owned copy happens at the wire boundary, which belongs to
 /// `logger` — no a este modulo.
 #[derive(Debug, Clone)]

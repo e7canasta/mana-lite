@@ -292,7 +292,7 @@ mod tests {
     #[test]
     fn one_person_is_not_replaced_by_a_single_second_person_candidate() {
         let mut machine = OccupancyStateMachine::new(policy());
-        let start = Instant::now();
+        let start = Instant::now(); // cfg(test)
 
         machine.update_at(evidence(1, true, 1), at(start, 0));
         assert_eq!(
@@ -310,7 +310,7 @@ mod tests {
     #[test]
     fn multiple_requires_sustained_time_and_two_confirmed_tracks() {
         let mut machine = OccupancyStateMachine::new(policy());
-        let start = Instant::now();
+        let start = Instant::now(); // cfg(test)
 
         machine.update_at(evidence(2, true, 1), at(start, 0));
         machine.update_at(evidence(2, true, 2), at(start, 0));
@@ -322,7 +322,7 @@ mod tests {
     #[test]
     fn multiple_returns_to_single_after_configured_exit_timer() {
         let mut machine = OccupancyStateMachine::new(policy());
-        let start = Instant::now();
+        let start = Instant::now(); // cfg(test)
 
         machine.update_at(evidence(2, true, 2), at(start, 0));
         machine.update_at(evidence(2, true, 2), at(start, 2_000));
@@ -336,7 +336,7 @@ mod tests {
     #[test]
     fn invalid_signal_does_not_advance_the_state_machine() {
         let mut machine = OccupancyStateMachine::new(policy());
-        let start = Instant::now();
+        let start = Instant::now(); // cfg(test)
 
         machine.update_at(evidence(1, true, 1), at(start, 0));
         machine.update_at(evidence(1, true, 1), at(start, 1_000));
@@ -357,7 +357,7 @@ mod tests {
     #[test]
     fn held_poi_does_not_start_room_exit_timer() {
         let mut machine = OccupancyStateMachine::new(policy());
-        let start = Instant::now();
+        let start = Instant::now(); // cfg(test)
 
         machine.update_at(evidence(1, true, 1), at(start, 0));
         machine.update_at(evidence(1, true, 1), at(start, 1_000));
@@ -370,7 +370,7 @@ mod tests {
     #[test]
     fn empty_requires_configured_valid_time_without_poi() {
         let mut machine = OccupancyStateMachine::new(policy());
-        let start = Instant::now();
+        let start = Instant::now(); // cfg(test)
 
         assert_eq!(
             machine.update_at(evidence(1, true, 1), at(start, 0)).state,
@@ -412,7 +412,7 @@ mod tests {
     #[test]
     fn single_raw_person_releases_to_empty() {
         let mut machine = OccupancyStateMachine::new(policy());
-        let start = Instant::now();
+        let start = Instant::now(); // cfg(test)
 
         machine.update_at(evidence(1, true, 1), at(start, 0));
         machine.update_at(evidence(1, true, 1), at(start, 1_000));
@@ -433,7 +433,7 @@ mod tests {
     #[test]
     fn person_candidate_does_not_count_as_empty() {
         let mut machine = OccupancyStateMachine::new(policy());
-        let start = Instant::now();
+        let start = Instant::now(); // cfg(test)
 
         for _ in 0..5 {
             assert_eq!(
@@ -448,7 +448,7 @@ mod tests {
         let mut policy = policy();
         policy.require_confirmed_tracks = false;
         let mut machine = OccupancyStateMachine::new(policy);
-        let start = Instant::now();
+        let start = Instant::now(); // cfg(test)
 
         machine.update_at(evidence(2, true, 0), at(start, 0));
         let update = machine.update_at(evidence(2, true, 0), at(start, 2_000));
@@ -458,7 +458,7 @@ mod tests {
     #[test]
     fn irregular_keyframe_gaps_use_elapsed_time_not_tick_count() {
         let mut machine = OccupancyStateMachine::new(policy());
-        let start = Instant::now();
+        let start = Instant::now(); // cfg(test)
 
         machine.update_at(evidence(1, true, 1), at(start, 0));
         machine.update_at(evidence(1, true, 1), at(start, 1_000));
@@ -524,7 +524,7 @@ mod tests {
     #[test]
     fn multiple_to_empty_after_exit_then_empty_timer() {
         let mut machine = OccupancyStateMachine::new(policy());
-        let start = Instant::now();
+        let start = Instant::now(); // cfg(test)
 
         machine.update_at(evidence(2, true, 2), at(start, 0));
         machine.update_at(evidence(2, true, 2), at(start, 2_000));
@@ -541,7 +541,7 @@ mod tests {
         let mut policy = policy();
         policy.require_confirmed_tracks = false;
         let mut machine = OccupancyStateMachine::new(policy);
-        let start = Instant::now();
+        let start = Instant::now(); // cfg(test)
 
         assert_eq!(machine.state(), RoomCardinality::Empty);
         machine.update_at(evidence(2, true, 0), at(start, 0));
@@ -553,7 +553,7 @@ mod tests {
     #[test]
     fn second_person_confirmed_clears_to_none_when_back_to_single() {
         let mut machine = OccupancyStateMachine::new(policy());
-        let start = Instant::now();
+        let start = Instant::now(); // cfg(test)
 
         machine.update_at(evidence(2, true, 2), at(start, 0));
         machine.update_at(evidence(2, true, 2), at(start, 2_000));
@@ -574,7 +574,7 @@ mod tests {
     #[test]
     fn second_person_candidate_clears_when_raw_drops() {
         let mut machine = OccupancyStateMachine::new(policy());
-        let start = Instant::now();
+        let start = Instant::now(); // cfg(test)
 
         machine.update_at(evidence(1, true, 1), at(start, 0));
         machine.update_at(evidence(1, true, 1), at(start, 1_000));

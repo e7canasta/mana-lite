@@ -61,10 +61,6 @@ impl ZoneEngine {
         Self { zones }
     }
 
-    pub fn evaluate(&mut self, tracks: &[&Track]) -> Vec<ZoneEvent> {
-        self.evaluate_at(tracks, Instant::now())
-    }
-
     pub fn evaluate_at(&mut self, tracks: &[&Track], now: Instant) -> Vec<ZoneEvent> {
         let mut events = Vec::new();
 
@@ -130,7 +126,7 @@ fn find_class_confidence(tracks: &[&Track], id: u64) -> (String, f32) {
     tracks
         .iter()
         .find(|t| t.id == id)
-        .map(|t| (t.class.clone(), t.confidence))
+        .map(|t| (t.class.to_string(), t.confidence))
         .unwrap_or_else(|| ("unknown".into(), 0.0))
 }
 
@@ -179,7 +175,7 @@ mod tests {
         };
         let mut engine = ZoneEngine::from_catalog(&catalog);
         let track = make_track(1, "person", [50.0, 50.0, 150.0, 150.0], true);
-        let events = engine.evaluate(&[&track]);
+        let events = engine.evaluate_at(&[&track], Instant::now()); // cfg(test)
         assert!(
             events
                 .iter()
@@ -206,8 +202,8 @@ mod tests {
         let mut engine = ZoneEngine::from_catalog(&catalog);
         let track = make_track(1, "person", [100.0, 100.0, 200.0, 200.0], true);
 
-        engine.evaluate(&[&track]);
-        let events = engine.evaluate(&[]);
+        engine.evaluate_at(&[&track], Instant::now()); // cfg(test)
+        let events = engine.evaluate_at(&[], Instant::now()); // cfg(test)
         assert!(
             events
                 .iter()
@@ -233,7 +229,7 @@ mod tests {
         };
         let mut engine = ZoneEngine::from_catalog(&catalog);
         let unconfirmed = make_track(1, "person", [100.0, 100.0, 200.0, 200.0], false);
-        let events = engine.evaluate(&[&unconfirmed]);
+        let events = engine.evaluate_at(&[&unconfirmed], Instant::now()); // cfg(test)
         assert!(events.is_empty());
     }
 
@@ -253,7 +249,7 @@ mod tests {
             )]),
             face_dwell: None,
         };
-        let start = Instant::now();
+        let start = Instant::now(); // cfg(test)
         let mut engine = ZoneEngine::from_catalog(&catalog);
         let track = make_track(1, "person", [100.0, 100.0, 200.0, 200.0], true);
 

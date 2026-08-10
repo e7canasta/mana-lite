@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 use std::time::Instant;
 
-use crate::depth::DepthRuleSnapshot;
+use crate::DepthRuleSnapshot;
 use crate::health::Health;
 use crate::zones::{ZoneEngine, ZoneEvent};
 

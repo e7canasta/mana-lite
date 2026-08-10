@@ -20,7 +20,7 @@ mod tests {
     use crate::config::{
         FsmCatalog, FsmRoles, FsmRoot, FsmState, FsmTransition, ZoneCatalog, ZoneSpec,
     };
-    use crate::depth::DepthRuleSnapshot;
+    use crate::DepthRuleSnapshot;
     use crate::health::Health;
     use crate::zones::{ZoneEngine, ZoneEvent};
 
@@ -162,7 +162,7 @@ mod tests {
     }
 
     fn engine(catalog: &FsmCatalog) -> FsmEngine {
-        engine_at(catalog, Instant::now())
+        engine_at(catalog, Instant::now()) // cfg(test)
     }
 
     fn engine_at(catalog: &FsmCatalog, now: Instant) -> FsmEngine {
@@ -175,7 +175,7 @@ mod tests {
 
     #[test]
     fn force_safe_state_uses_roles_in_real_catalogs() {
-        let start = Instant::now();
+        let start = Instant::now(); // cfg(test)
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         for rel in [
             "config/fsm.toml",
@@ -197,7 +197,7 @@ mod tests {
 
     #[test]
     fn roles_decouple_engine_from_state_names() {
-        let start = Instant::now();
+        let start = Instant::now(); // cfg(test)
         let mut catalog = catalog_with_roles(FsmRoles {
             safe: "offline".into(),
             reset: "home".into(),
@@ -252,8 +252,8 @@ mod tests {
                 dwell: None,
             }],
         );
-        let mut engine = engine(&catalog);
-        let start = Instant::now();
+        let start = Instant::now(); // cfg(test)
+        let mut engine = engine_at(&catalog, start);
         let zones = ZoneEngine::from_catalog(&crate::config::ZoneCatalog {
             zones: HashMap::new(),
             face_dwell: None,
@@ -262,7 +262,7 @@ mod tests {
         let mut health = Health::new_at(100, 50, start); // 100ms stale
         let _ = health.evaluate_at(start + std::time::Duration::from_millis(200)); // trigger blind
 
-        let result = engine.evaluate(&[], &zones, &health, &DepthRuleSnapshot::default());
+        let result = engine.evaluate_with_context_at(&[], Some(&zones), &health, &DepthRuleSnapshot::default(), &FsmSceneContext::default(), start);
         assert!(result.is_some());
         assert_eq!(result.unwrap().to, "blind");
         assert_eq!(engine.current_state(), "blind");
@@ -300,7 +300,7 @@ mod tests {
                 },
             ],
         );
-        let start = Instant::now();
+        let start = Instant::now(); // cfg(test)
         let mut engine = engine_at(&catalog, start);
         let zones = ZoneEngine::from_catalog(&crate::config::ZoneCatalog {
             zones: HashMap::new(),
@@ -403,7 +403,7 @@ mod tests {
                 },
             ],
         );
-        let start = Instant::now();
+        let start = Instant::now(); // cfg(test)
         let mut engine = engine_at(&catalog, start);
         let zones = ZoneEngine::from_catalog(&crate::config::ZoneCatalog {
             zones: HashMap::new(),
@@ -492,9 +492,9 @@ mod tests {
                 dwell: None,
             }],
         );
-        let start = Instant::now();
+        let start = Instant::now(); // cfg(test)
         let mut engine = engine_at(&catalog, start);
-        let health = Health::new(10_000, 5_000);
+        let health = Health::new_at(10_000, 5_000, start);
         let inside = FsmSceneContext {
             face_in_dwell: Some(true),
             ..Default::default()
@@ -544,12 +544,13 @@ mod tests {
                 dwell: None,
             }],
         );
-        let mut engine = engine(&catalog);
+        let start = Instant::now(); // cfg(test)
+        let mut engine = engine_at(&catalog, start);
         let zones = ZoneEngine::from_catalog(&crate::config::ZoneCatalog {
             zones: HashMap::new(),
             face_dwell: None,
         });
-        let health = Health::new(10_000, 5_000);
+        let health = Health::new_at(10_000, 5_000, start);
 
         let events = vec![ZoneEvent::Occupied {
             zone: "bed".into(),
@@ -558,7 +559,7 @@ mod tests {
             class: "person".into(),
             confidence: 0.9,
         }];
-        let result = engine.evaluate(&events, &zones, &health, &DepthRuleSnapshot::default());
+        let result = engine.evaluate_with_context_at(&events, Some(&zones), &health, &DepthRuleSnapshot::default(), &FsmSceneContext::default(), start);
 
         assert!(result.is_some());
         assert_eq!(result.unwrap().to, "watching");
@@ -581,12 +582,13 @@ mod tests {
                 dwell: None,
             }],
         );
-        let mut engine = engine(&catalog);
+        let start = Instant::now(); // cfg(test)
+        let mut engine = engine_at(&catalog, start);
         let zones = ZoneEngine::from_catalog(&crate::config::ZoneCatalog {
             zones: HashMap::new(),
             face_dwell: None,
         });
-        let health = Health::new(10_000, 5_000);
+        let health = Health::new_at(10_000, 5_000, start);
 
         let events = vec![ZoneEvent::Occupied {
             zone: "bed".into(),
@@ -595,7 +597,7 @@ mod tests {
             class: "person".into(),
             confidence: 0.6,
         }];
-        let result = engine.evaluate(&events, &zones, &health, &DepthRuleSnapshot::default());
+        let result = engine.evaluate_with_context_at(&events, Some(&zones), &health, &DepthRuleSnapshot::default(), &FsmSceneContext::default(), start);
         assert!(result.is_none());
         assert_eq!(engine.current_state(), "idle");
     }
@@ -623,12 +625,13 @@ mod tests {
                 dwell: None,
             }],
         );
-        let mut engine = engine(&catalog);
+        let start = Instant::now(); // cfg(test)
+        let mut engine = engine_at(&catalog, start);
         let zones = ZoneEngine::from_catalog(&crate::config::ZoneCatalog {
             zones: HashMap::new(),
             face_dwell: None,
         });
-        let health = Health::new(10_000, 5_000);
+        let health = Health::new_at(10_000, 5_000, start);
 
         let events = vec![ZoneEvent::Occupied {
             zone: "bed".into(),
@@ -637,7 +640,7 @@ mod tests {
             class: "person".into(),
             confidence: 0.9,
         }];
-        let result = engine.evaluate(&events, &zones, &health, &DepthRuleSnapshot::default());
+        let result = engine.evaluate_with_context_at(&events, Some(&zones), &health, &DepthRuleSnapshot::default(), &FsmSceneContext::default(), start);
         assert!(result.is_none());
         assert_eq!(engine.current_state(), "idle");
     }
@@ -654,7 +657,7 @@ mod tests {
                 dwell: None,
             }],
         );
-        let start = Instant::now();
+        let start = Instant::now(); // cfg(test)
         let mut engine = engine_at(&catalog, start);
         let zones = ZoneEngine::from_catalog(&crate::config::ZoneCatalog {
             zones: HashMap::new(),
@@ -704,7 +707,7 @@ mod tests {
                 dwell: Some("100ms".into()),
             }],
         );
-        let start = Instant::now();
+        let start = Instant::now(); // cfg(test)
         let mut engine = engine_at(&catalog, start);
         let zones = ZoneEngine::from_catalog(&crate::config::ZoneCatalog {
             zones: HashMap::new(),
@@ -755,15 +758,16 @@ mod tests {
                 dwell: None,
             }],
         );
-        let mut engine = engine(&catalog);
+        let start = Instant::now(); // cfg(test)
+        let mut engine = engine_at(&catalog, start);
         let zones = ZoneEngine::from_catalog(&crate::config::ZoneCatalog {
             zones: HashMap::new(),
             face_dwell: None,
         });
-        let health = Health::new(10_000, 5_000);
+        let health = Health::new_at(10_000, 5_000, start);
 
         let triggered = make_snapshot("bed-approach", true);
-        let result = engine.evaluate(&[], &zones, &health, &triggered);
+        let result = engine.evaluate_with_context_at(&[], Some(&zones), &health, &triggered, &FsmSceneContext::default(), start);
         assert!(result.is_some());
         assert_eq!(engine.current_state(), "approaching");
     }
@@ -783,22 +787,23 @@ mod tests {
                 dwell: None,
             }],
         );
-        let mut engine = engine(&catalog);
+        let start = Instant::now(); // cfg(test)
+        let mut engine = engine_at(&catalog, start);
         let zones = ZoneEngine::from_catalog(&crate::config::ZoneCatalog {
             zones: HashMap::new(),
             face_dwell: None,
         });
-        let health = Health::new(10_000, 5_000);
+        let health = Health::new_at(10_000, 5_000, start);
 
         // Sin evidencia de la regla (mapa, ROI o cobertura) -> guard falso.
         let empty = DepthRuleSnapshot::default();
-        assert!(engine.evaluate(&[], &zones, &health, &empty).is_none());
+        assert!(engine.evaluate_with_context_at(&[], Some(&zones), &health, &empty, &FsmSceneContext::default(), start).is_none());
         assert_eq!(engine.current_state(), "idle");
 
         let not_triggered = make_snapshot("bed-approach", false);
         assert!(
             engine
-                .evaluate(&[], &zones, &health, &not_triggered)
+                .evaluate_with_context_at(&[], Some(&zones), &health, &not_triggered, &FsmSceneContext::default(), start)
                 .is_none()
         );
         assert_eq!(engine.current_state(), "idle");
@@ -819,21 +824,22 @@ mod tests {
                 dwell: None,
             }],
         );
-        let mut engine = engine(&catalog);
+        let start = Instant::now(); // cfg(test)
+        let mut engine = engine_at(&catalog, start);
         let zones = ZoneEngine::from_catalog(&crate::config::ZoneCatalog {
             zones: HashMap::new(),
             face_dwell: None,
         });
-        let health = Health::new(10_000, 5_000);
+        let health = Health::new_at(10_000, 5_000, start);
 
         assert!(
             engine
-                .evaluate(&[], &zones, &health, &make_snapshot("bed-approach", true))
+                .evaluate_with_context_at(&[], Some(&zones), &health, &make_snapshot("bed-approach", true), &FsmSceneContext::default(), start)
                 .is_none()
         );
         assert!(
             engine
-                .evaluate(&[], &zones, &health, &make_snapshot("bed-approach", false))
+                .evaluate_with_context_at(&[], Some(&zones), &health, &make_snapshot("bed-approach", false), &FsmSceneContext::default(), start)
                 .is_some()
         );
         assert_eq!(engine.current_state(), "idle");
@@ -851,15 +857,23 @@ mod tests {
                 dwell: None,
             }],
         );
-        let mut engine = engine(&catalog);
-        let health = Health::new(10_000, 5_000);
+        let start = Instant::now(); // cfg(test)
+        let mut engine = engine_at(&catalog, start);
+        let health = Health::new_at(10_000, 5_000, start);
         let outside = FsmSceneContext {
             face_in_dwell: Some(false),
             ..Default::default()
         };
         assert!(
             engine
-                .evaluate_with_context(&[], None, &health, &DepthRuleSnapshot::default(), &outside,)
+                .evaluate_with_context_at(
+                    &[],
+                    None,
+                    &health,
+                    &DepthRuleSnapshot::default(),
+                    &outside,
+                    start,
+                )
                 .is_none()
         );
 
@@ -869,7 +883,14 @@ mod tests {
         };
         assert!(
             engine
-                .evaluate_with_context(&[], None, &health, &DepthRuleSnapshot::default(), &inside,)
+                .evaluate_with_context_at(
+                    &[],
+                    None,
+                    &health,
+                    &DepthRuleSnapshot::default(),
+                    &inside,
+                    start,
+                )
                 .is_some()
         );
         assert_eq!(engine.current_state(), "inside");
@@ -887,9 +908,9 @@ mod tests {
                 dwell: Some("1000ms".into()),
             }],
         );
-        let start = Instant::now();
+        let start = Instant::now(); // cfg(test)
         let mut engine = engine_at(&catalog, start);
-        let health = Health::new(10_000, 5_000);
+        let health = Health::new_at(10_000, 5_000, start);
         let inside = FsmSceneContext {
             cardinality: Some("single".into()),
             person_present: true,
@@ -946,9 +967,9 @@ mod tests {
                 },
             ],
         );
-        let start = Instant::now();
+        let start = Instant::now(); // cfg(test)
         let mut engine = engine_at(&catalog, start);
-        let health = Health::new(10_000, 5_000);
+        let health = Health::new_at(10_000, 5_000, start);
         let at_edge = FsmSceneContext {
             person_present: true,
             face_present: true,
@@ -1037,13 +1058,13 @@ mod tests {
                 },
             ],
         );
-        let start = Instant::now();
+        let start = Instant::now(); // cfg(test)
         let mut engine = engine_at(&catalog, start);
         let zones = ZoneEngine::from_catalog(&crate::config::ZoneCatalog {
             zones: HashMap::new(),
             face_dwell: None,
         });
-        let health = Health::new(10_000, 5_000);
+        let health = Health::new_at(10_000, 5_000, start);
         let present = FsmSceneContext {
             cardinality: Some("single".into()),
             person_present: true,
@@ -1161,9 +1182,9 @@ mod tests {
                 },
             ],
         );
-        let start = Instant::now();
+        let start = Instant::now(); // cfg(test)
         let mut engine = engine_at(&catalog, start);
-        let health = Health::new(10_000, 5_000);
+        let health = Health::new_at(10_000, 5_000, start);
         let absent = FsmSceneContext {
             cardinality: Some("single".into()),
             person_present: false,
@@ -1218,7 +1239,7 @@ mod tests {
                 dwell: None,
             }],
         );
-        let start = Instant::now();
+        let start = Instant::now(); // cfg(test)
         let mut engine = engine_at(&catalog, start);
         let mut zones = ZoneEngine::from_catalog(&test_zones(&catalog));
         occupy_zone(&mut zones, true, start);
@@ -1250,7 +1271,7 @@ mod tests {
                 dwell: None,
             }],
         );
-        let start = Instant::now();
+        let start = Instant::now(); // cfg(test)
         let mut engine = engine_at(&catalog, start);
         let zones = ZoneEngine::from_catalog(&test_zones(&catalog));
         let health = Health::new_at(10_000, 5_000, start);
@@ -1286,7 +1307,7 @@ mod tests {
                 dwell: None,
             }],
         );
-        let start = Instant::now();
+        let start = Instant::now(); // cfg(test)
         let mut engine = engine_at(&catalog, start);
         let zones = ZoneEngine::from_catalog(&test_zones(&catalog));
         let health = Health::new_at(10_000, 5_000, start);
@@ -1324,7 +1345,7 @@ mod tests {
                 dwell: None,
             }],
         );
-        let start = Instant::now();
+        let start = Instant::now(); // cfg(test)
         let mut engine = engine_at(&catalog, start);
         let zones = ZoneEngine::from_catalog(&test_zones(&catalog));
         let health = Health::new_at(10_000, 5_000, start);
@@ -1358,7 +1379,7 @@ mod tests {
                 dwell: None,
             }],
         );
-        let start = Instant::now();
+        let start = Instant::now(); // cfg(test)
         let mut engine = engine_at(&catalog, start);
         let zones = ZoneEngine::from_catalog(&ZoneCatalog {
             zones: HashMap::from([(
@@ -1402,7 +1423,7 @@ mod tests {
                 dwell: None,
             }],
         );
-        let start = Instant::now();
+        let start = Instant::now(); // cfg(test)
         let mut engine = engine_at(&catalog, start);
         let mut zones = ZoneEngine::from_catalog(&ZoneCatalog {
             zones: HashMap::from([(
@@ -1451,7 +1472,7 @@ mod tests {
                 dwell: None,
             }],
         );
-        let start = Instant::now();
+        let start = Instant::now(); // cfg(test)
         let mut engine = engine_at(&catalog, start);
         let health = Health::new_at(10_000, 5_000, start);
         let scene = FsmSceneContext {
@@ -1484,7 +1505,7 @@ mod tests {
                 dwell: None,
             }],
         );
-        let start = Instant::now();
+        let start = Instant::now(); // cfg(test)
         let mut engine = engine_at(&catalog, start);
         let health = Health::new_at(10_000, 5_000, start);
         let scene = FsmSceneContext {
@@ -1519,7 +1540,7 @@ mod tests {
                 dwell: None,
             }],
         );
-        let start = Instant::now();
+        let start = Instant::now(); // cfg(test)
         let mut engine = engine_at(&catalog, start);
         let health = Health::new_at(10_000, 5_000, start);
         let at_edge = FsmSceneContext {
@@ -1550,7 +1571,7 @@ mod tests {
                 dwell: None,
             }],
         );
-        let start = Instant::now();
+        let start = Instant::now(); // cfg(test)
         let mut engine = engine_at(&catalog, start);
         let health = Health::new_at(10_000, 5_000, start);
         let not_at_edge = FsmSceneContext {
@@ -1574,11 +1595,11 @@ mod tests {
     }
 
     fn make_snapshot(rule: &str, triggered: bool) -> DepthRuleSnapshot {
-        use crate::depth::DepthRuleResult;
+        use crate::DepthRuleResult;
         DepthRuleSnapshot::from_results(&[DepthRuleResult {
             rule: rule.into(),
             region: [0, 0, 2, 2],
-            metric: crate::depth::DepthMetric::Median,
+            metric: crate::DepthMetric::Median,
             threshold_m: 1.5,
             value: Some(1.0),
             triggered,

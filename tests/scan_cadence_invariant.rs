@@ -1,6 +1,7 @@
 use std::time::Instant;
 
 use mana_control::config::{OccupancyPolicy, PresencePoiPolicy};
+use mana_control::domain::LoopId;
 use mana_lite::health::Health;
 use mana_lite::occupancy::{OccupancyStateMachine, RoomCardinality};
 use mana_lite::presence::PresenceFilter;
@@ -20,8 +21,9 @@ fn person() -> SceneObservation {
 }
 
 fn single_at(start: Instant, period_ms: u64) -> Instant {
-    let mut timeline = ScanTimeline::new(start, period_ms);
+    let mut timeline = ScanTimeline::new(LoopId::default_loop(), start, period_ms);
     let mut state = ControlState {
+        loop_id: LoopId::default_loop(),
         tracker: None,
         presence: PresenceFilter::new(
             true,
