@@ -122,7 +122,6 @@ pub enum ProgramGuard {
         op: SignalOp,
         value: SignalValue,
     },
-    FaceNotInDwell,
     FaceAtEdge,
     FaceNotAtEdge,
     FaceWasInside,
@@ -399,7 +398,6 @@ impl FsmProgram {
             FsmGuard::Signal { tag, op, value } => {
                 return Self::resolve_signal_guard(tag, op, value, from, to, index, errors);
             }
-            FsmGuard::FaceNotInDwell => ProgramGuard::FaceNotInDwell,
             FsmGuard::FaceAtEdge => ProgramGuard::FaceAtEdge,
             FsmGuard::FaceNotAtEdge => ProgramGuard::FaceNotAtEdge,
             FsmGuard::FaceWasInside => ProgramGuard::FaceWasInside,

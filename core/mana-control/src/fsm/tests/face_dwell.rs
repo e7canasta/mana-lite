@@ -153,7 +153,11 @@ fn edge_priority_blocks_dwell_until_face_leaves_edge() {
                         op: "==".into(),
                         value: SignalLiteral::Bool(false),
                     },
-                    FsmGuard::FaceNotInDwell,
+                    FsmGuard::Signal {
+                        tag: "cara.en_dwell".into(),
+                        op: "==".into(),
+                        value: SignalLiteral::Bool(false),
+                    },
                     FsmGuard::FaceNotAtEdge,
                 ],
                 dwell: Some("700ms".into()),
