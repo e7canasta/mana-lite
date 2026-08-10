@@ -280,6 +280,12 @@ mod tests {
     #[test]
     fn test_load_app_config() {
         let config = load_app_config(Path::new("config/mana.toml")).unwrap();
+        assert_mana_toml_core(&config);
+        let model = load_model_catalog(Path::new("config/models.toml")).unwrap();
+        assert_models_toml_core(&model);
+    }
+
+    fn assert_mana_toml_core(config: &AppConfig) {
         assert_eq!(config.source.transport, "tcp");
         assert!(config.source.keyframes_only);
         assert!(config.presence.enabled);
@@ -317,7 +323,9 @@ mod tests {
         assert_eq!(config.tracking.noise.process_velocity, 0.25);
         assert!(config.health.is_valid());
         assert!(config.tracking.is_valid());
-        let model = load_model_catalog(Path::new("config/models.toml")).unwrap();
+    }
+
+    fn assert_models_toml_core(model: &ModelCatalog) {
         assert!(model.models["detect-fast"].postprocess.is_valid());
         assert_eq!(
             model.models["detect-fast"].postprocess.allow_classes,
@@ -329,6 +337,25 @@ mod tests {
             model.models["face-yolo"].postprocess.max_detections,
             Some(1)
         );
+        assert_face_matrix_entries(model);
+        assert_eq!(
+            model.models["seg-standard"]
+                .postprocess
+                .min_component_area_ratio,
+            0.05
+        );
+        assert_eq!(model.models["seg-standard"].polygon_simplify, 0.98);
+        assert_eq!(model.models["seg-standard"].postprocess.mask_threshold, 0.5);
+        assert_eq!(
+            model.models["depth-standard"]
+                .crop
+                .as_ref()
+                .and_then(|crop| crop.region),
+            Some([560, 140, 1240, 820])
+        );
+    }
+
+    fn assert_face_matrix_entries(model: &ModelCatalog) {
         for version in [11, 12] {
             for size in ["s", "m", "l"] {
                 for imgsz in [320, 640] {
@@ -346,21 +373,6 @@ mod tests {
                 }
             }
         }
-        assert_eq!(
-            model.models["seg-standard"]
-                .postprocess
-                .min_component_area_ratio,
-            0.05
-        );
-        assert_eq!(model.models["seg-standard"].polygon_simplify, 0.98);
-        assert_eq!(model.models["seg-standard"].postprocess.mask_threshold, 0.5);
-        assert_eq!(
-            model.models["depth-standard"]
-                .crop
-                .as_ref()
-                .and_then(|crop| crop.region),
-            Some([560, 140, 1240, 820])
-        );
     }
 
     #[test]
