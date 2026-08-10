@@ -40,7 +40,10 @@ async fn bootstrap_with_reader_wires_real_catalogs() {
     );
     assert!(config.pipeline.zones);
     assert!(config.pipeline.fsm);
-    assert!(app.control.tracker.is_some(), "pipeline.track=true wires tracker");
+    assert!(
+        app.control.tracker.is_some(),
+        "pipeline.track=true wires tracker"
+    );
     assert!(
         app.control.zone_engine.is_some(),
         "pipeline.zones=true with zones.toml wires zone_engine"
@@ -59,7 +62,10 @@ async fn bootstrap_with_reader_wires_real_catalogs() {
     );
 
     assert_eq!(app.control.policy.person_class.as_str(), "person");
-    assert_eq!(app.control.policy.data_stale_ms, config.health.data_stale_ms);
+    assert_eq!(
+        app.control.policy.data_stale_ms,
+        config.health.data_stale_ms
+    );
     assert_eq!(app.control.policy.scan_period_ms, config.scan.period_ms);
     assert_eq!(
         app.control.policy.face_dwell_roi,
