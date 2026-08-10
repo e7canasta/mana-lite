@@ -30,6 +30,7 @@ pub use mana_control::scan;
 pub mod snapshot;
 pub use mana_control::timing;
 pub use mana_control::track;
+#[cfg(feature = "rerun")]
 pub mod viz;
 pub use mana_control::window;
 pub use mana_control::zones;

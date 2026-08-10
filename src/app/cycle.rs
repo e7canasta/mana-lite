@@ -3,6 +3,21 @@
 use crate::snapshot::FrameBuffer;
 use std::time::Instant;
 
+/// Frame pixel dimensions — always available, independent of the `rerun` feature.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct FrameSize {
+    pub w: u32,
+    pub h: u32,
+}
+
+impl FrameSize {
+    #[must_use]
+    #[inline]
+    pub const fn new(w: u32, h: u32) -> Self {
+        Self { w, h }
+    }
+}
+
 /// Bundle of per-cycle facts previously passed as loose parameters through
 /// `run_inference` and related stage methods.
 #[derive(Clone, Copy)]
@@ -42,7 +57,7 @@ impl<'a> CycleContext<'a> {
     }
 
     #[must_use]
-    pub const fn frame_size(&self) -> mana_viz::logging::util::FrameSize {
-        mana_viz::logging::util::FrameSize::new(self.frame.w, self.frame.h)
+    pub const fn frame_size(&self) -> FrameSize {
+        FrameSize::new(self.frame.w, self.frame.h)
     }
 }

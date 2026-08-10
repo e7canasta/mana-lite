@@ -2,6 +2,7 @@
 
 use crate::logger::{Event, LogSink};
 use crate::occupancy::{RoomCardinality, SecondPersonState, SignalValidity};
+#[cfg(feature = "rerun")]
 use crate::viz::VizBridge;
 
 /// Decouples stage code from concrete observability backends so stages can
@@ -18,6 +19,7 @@ pub trait PipelineObserver {
 
     fn flush(&mut self);
 
+    #[cfg(feature = "rerun")]
     fn viz_mut(&mut self) -> Option<&mut VizBridge> {
         None
     }
@@ -47,13 +49,20 @@ impl PipelineObserver for NullObserver {
 
 /// Combined Rerun + JSONL observer used by the production binary.
 pub struct FanoutObserver {
+    #[cfg(feature = "rerun")]
     pub viz: VizBridge,
     pub log: Box<dyn LogSink>,
 }
 
 impl FanoutObserver {
+    #[cfg(feature = "rerun")]
     pub fn new(viz: VizBridge, log: Box<dyn LogSink>) -> Self {
         Self { viz, log }
+    }
+
+    #[cfg(not(feature = "rerun"))]
+    pub fn new(log: Box<dyn LogSink>) -> Self {
+        Self { log }
     }
 }
 
@@ -64,7 +73,10 @@ impl PipelineObserver for FanoutObserver {
         second_person: SecondPersonState,
         signal: SignalValidity,
     ) {
+        #[cfg(feature = "rerun")]
         self.viz.log_occupancy_state(state, second_person, signal);
+        #[cfg(not(feature = "rerun"))]
+        let _ = (state, second_person, signal);
     }
 
     fn emit(&mut self, event: Event) {
@@ -73,9 +85,11 @@ impl PipelineObserver for FanoutObserver {
 
     fn flush(&mut self) {
         self.log.flush();
+        #[cfg(feature = "rerun")]
         self.viz.tick();
     }
 
+    #[cfg(feature = "rerun")]
     fn viz_mut(&mut self) -> Option<&mut VizBridge> {
         Some(&mut self.viz)
     }

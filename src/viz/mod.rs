@@ -4,7 +4,8 @@ use std::time::{Duration, Instant};
 use mana_types::RawFrameV1;
 use mana_viz::boxes::boxes2d_from_xyxy;
 use mana_viz::logging;
-use mana_viz::util::FrameSize;
+
+use crate::app::FrameSize;
 
 use crate::config::{RerunRoot, VizSendToggles};
 use crate::depth_map::DepthFrame;

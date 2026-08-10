@@ -4,7 +4,7 @@ mod bootstrap;
 mod cycle;
 mod observer;
 
-pub use cycle::CycleContext;
+pub use cycle::{CycleContext, FrameSize};
 pub use observer::{FanoutObserver, NullObserver, PipelineObserver};
 
 use crate::cascade::{CascadeScheduler, CascadeTarget, GateObservation};
@@ -24,6 +24,7 @@ use crate::pipeline::PipelineState;
 use crate::scan::{ControlStamp, ControlState, ScanTimeline, SceneEvent};
 use crate::snapshot::{FrameBuffer, FrameDecoder, SnapshotSaver};
 use mana_perception::domain::{ClassName, ModelId};
+#[cfg(feature = "rerun")]
 use mana_types::RawFrameV1;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::time::Instant;
@@ -176,16 +177,19 @@ impl<R: FrameReader> App<R> {
             self.observer.log.as_mut(),
             cycle_now,
         );
-        self.observer
-            .viz
-            .set_frame_time(self.state.frame_number(), frame_timestamp_ns);
-        self.observer.viz.log_keyframe_selection(
-            kf.keyframes_seen,
-            kf.keyframes_dropped,
-            kf.source_window_ms,
-        );
-        self.observer.viz.log_decode_latency(decode_us);
-        self.observer.viz.log_keyframe_gap(dt_ms);
+        #[cfg(feature = "rerun")]
+        {
+            self.observer
+                .viz
+                .set_frame_time(self.state.frame_number(), frame_timestamp_ns);
+            self.observer.viz.log_keyframe_selection(
+                kf.keyframes_seen,
+                kf.keyframes_dropped,
+                kf.source_window_ms,
+            );
+            self.observer.viz.log_decode_latency(decode_us);
+            self.observer.viz.log_keyframe_gap(dt_ms);
+        }
         self.save_snapshot_if_enabled(&kf.h264, &frame_buf, config);
 
         let Some(ref fb) = frame_buf else { return };
@@ -229,10 +233,20 @@ impl<R: FrameReader> App<R> {
                     signal,
                 } => self.observer.on_occupancy(*state, *second_person, *signal),
                 SceneEvent::EntityBoxes(tracks) => {
-                    let track_refs: Vec<_> = tracks.iter().collect();
-                    self.observer.viz.log_entity_boxes(&track_refs);
+                    #[cfg(feature = "rerun")]
+                    {
+                        let track_refs: Vec<_> = tracks.iter().collect();
+                        self.observer.viz.log_entity_boxes(&track_refs);
+                    }
+                    #[cfg(not(feature = "rerun"))]
+                    let _ = tracks;
                 }
-                SceneEvent::FsmState(state) => self.observer.viz.log_face_state(state),
+                SceneEvent::FsmState(state) => {
+                    #[cfg(feature = "rerun")]
+                    self.observer.viz.log_face_state(state);
+                    #[cfg(not(feature = "rerun"))]
+                    let _ = state;
+                }
                 SceneEvent::Presence { stamp, .. }
                 | SceneEvent::Track { stamp, .. }
                 | SceneEvent::Zone { stamp, .. } => {
@@ -278,6 +292,7 @@ impl<R: FrameReader> App<R> {
 
     fn run_inference(&mut self, cycle: CycleContext<'_>, config: &AppConfig) {
         let fb = cycle.frame;
+        #[cfg(feature = "rerun")]
         self.observer.viz.clear_depth_context_boxes();
         let requested = self.resolve_models(config);
         let ordered = self.cascade.ordered(&requested);
@@ -380,17 +395,18 @@ impl<R: FrameReader> App<R> {
                 sources,
             ));
         }
-        self.observer.viz.log_consolidated_observations(
-            &observations,
-            mana_viz::util::FrameSize::new(fb.w, fb.h),
-        );
+        let frame = FrameSize::new(fb.w, fb.h);
+        #[cfg(feature = "rerun")]
+        self.observer
+            .viz
+            .log_consolidated_observations(&observations, frame);
         for item in pending {
             self.record_model_result(
                 &item.model_key,
                 &item.output,
                 item.crop_frame,
                 item.crop_rect,
-                mana_viz::util::FrameSize::new(fb.w, fb.h),
+                frame,
                 cycle.now,
             );
         }
@@ -502,7 +518,7 @@ impl<R: FrameReader> App<R> {
         output: &InferenceResult,
         crop_frame: Option<crate::infer::CropFrameInfo>,
         crop_rect: Option<CropRect>,
-        frame: mana_viz::util::FrameSize,
+        frame: FrameSize,
         now: Instant,
     ) {
         if self.models.is_depth(model_key) {
@@ -523,36 +539,39 @@ impl<R: FrameReader> App<R> {
             &output.detections,
             crop_rect.map(|r| r.to_array()),
         );
-        self.observer
-            .viz
-            .log_infer_latency(model_key, output.infer_ms * 1000, output.pipeline_us);
-        if let Some(rect) = crop_rect {
-            self.observer.viz.log_roi_boxes(model_key, rect);
-        }
-        self.observer
-            .viz
-            .log_per_frame_class_stats(model_key, &per_class);
-        self.observer
-            .viz
-            .log_model_detections(model_key, &output.detections, crop_rect, frame);
-        self.observer
-            .viz
-            .log_model_pose(model_key, &output.detections);
-        self.observer.viz.log_depth_context_boxes(
-            model_key,
-            &output.detections,
-            self.depth_context_roi,
-        );
-        self.observer.viz.log_depth_context_polygons(
-            model_key,
-            &output.detections,
-            self.depth_context_roi,
-            frame,
-        );
-        if output.detections.iter().any(|d| d.mask.is_some()) {
+        #[cfg(feature = "rerun")]
+        {
             self.observer
                 .viz
-                .log_model_masks(model_key, &output.detections, frame);
+                .log_infer_latency(model_key, output.infer_ms * 1000, output.pipeline_us);
+            if let Some(rect) = crop_rect {
+                self.observer.viz.log_roi_boxes(model_key, rect);
+            }
+            self.observer
+                .viz
+                .log_per_frame_class_stats(model_key, &per_class);
+            self.observer
+                .viz
+                .log_model_detections(model_key, &output.detections, crop_rect, frame);
+            self.observer
+                .viz
+                .log_model_pose(model_key, &output.detections);
+            self.observer.viz.log_depth_context_boxes(
+                model_key,
+                &output.detections,
+                self.depth_context_roi,
+            );
+            self.observer.viz.log_depth_context_polygons(
+                model_key,
+                &output.detections,
+                self.depth_context_roi,
+                frame,
+            );
+            if output.detections.iter().any(|d| d.mask.is_some()) {
+                self.observer
+                    .viz
+                    .log_model_masks(model_key, &output.detections, frame);
+            }
         }
         if crop_rect.is_some()
             && !(self.models.is_face_model(model_key) && output.detections.is_empty())
@@ -598,15 +617,18 @@ impl<R: FrameReader> App<R> {
             output.depth.as_ref(),
             crop_rect.map(|rect| rect.to_array()),
         );
-        self.observer
-            .viz
-            .log_infer_latency(model_key, output.infer_ms * 1000, output.pipeline_us);
-        if let Some(rect) = crop_rect {
-            self.observer.viz.log_roi_boxes(model_key, rect);
+        #[cfg(feature = "rerun")]
+        {
+            self.observer
+                .viz
+                .log_infer_latency(model_key, output.infer_ms * 1000, output.pipeline_us);
+            if let Some(rect) = crop_rect {
+                self.observer.viz.log_roi_boxes(model_key, rect);
+            }
+            self.observer
+                .viz
+                .log_model_depth(model_key, output.depth.as_ref());
         }
-        self.observer
-            .viz
-            .log_model_depth(model_key, output.depth.as_ref());
         self.observer.emit(Event::depth(
             self.state.frame_number(),
             model_key,
@@ -675,6 +697,7 @@ impl<R: FrameReader> App<R> {
     }
 
     fn flush_viz_metrics(&mut self, frame_buf: &Option<FrameBuffer>, timestamp_ns: i64) {
+        #[cfg(feature = "rerun")]
         if let Some(fb) = frame_buf.as_ref() {
             let header = raw_frame_header(fb, self.state.frame_number(), timestamp_ns);
             self.observer.viz.log_frame(&header, &fb.rgb);
@@ -685,6 +708,11 @@ impl<R: FrameReader> App<R> {
                         .log_crop_frame(&entry.model, &header, crop);
                 }
             }
+        }
+        #[cfg(not(feature = "rerun"))]
+        {
+            let _ = (frame_buf, timestamp_ns);
+            self.crop_frames_pending.clear();
         }
     }
 
@@ -774,6 +802,7 @@ fn wire_depth_evidence(
     image.set_depth(mana_control::DepthRuleSnapshot::from_results(results), now);
 }
 
+#[cfg(feature = "rerun")]
 fn raw_frame_header(fb: &FrameBuffer, frame_id: u64, timestamp_ns: i64) -> RawFrameV1 {
     RawFrameV1 {
         width: fb.w,
@@ -841,6 +870,7 @@ mod tests {
     use crate::occupancy::OccupancyStateMachine;
     use crate::presence::PresenceFilter;
     use crate::scan::ControlPolicy;
+    #[cfg(feature = "rerun")]
     use crate::viz::VizBridge;
     use mana_control::config::{OccupancyPolicy, PresencePoiPolicy};
     use mana_control::domain::LoopId;
@@ -962,10 +992,13 @@ mod tests {
             depth_rules: rules,
             decoder: FrameDecoder::new().expect("ffmpeg decoder"),
             snapshots: SnapshotSaver::new(None, false).expect("snapshots"),
+            #[cfg(feature = "rerun")]
             observer: FanoutObserver::new(
                 VizBridge::disabled(),
                 Box::new(LogManager::new(JsonlLevel::Info)),
             ),
+            #[cfg(not(feature = "rerun"))]
+            observer: FanoutObserver::new(Box::new(LogManager::new(JsonlLevel::Info))),
             state: PipelineState::new(MetricsTextConfig::default(), 20, 3),
             boot_wall: chrono::Utc::now(),
             boot_instant: start,

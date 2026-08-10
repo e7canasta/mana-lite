@@ -25,6 +25,7 @@ use crate::pipeline::PipelineState;
 use crate::scan::{ControlPolicy, ControlState};
 use crate::snapshot::{FrameDecoder, SnapshotSaver};
 use crate::track::{Tracker, TrackerConfig};
+#[cfg(feature = "rerun")]
 use crate::viz::{FixedRoi, VizBridge};
 use crate::zones::ZoneEngine;
 use mana_control::domain::LoopId;
@@ -337,7 +338,7 @@ impl<R: FrameReader> App<R> {
             .and_then(|catalog| catalog.face_dwell.as_ref())
             .map(|entry| CropRect::from_array(entry.rect()));
 
-        let mut fixed_rois: Vec<FixedRoi> = runtime_catalog
+        let mut static_roi_map: HashMap<String, CropRect> = runtime_catalog
             .models
             .iter()
             .filter(|(_, entry)| entry.enabled)
@@ -347,23 +348,24 @@ impl<R: FrameReader> App<R> {
                     .as_ref()
                     .filter(|crop| crop.crop_type == CropType::Static)
                     .and_then(|crop| crop.region)
-                    .map(|region| FixedRoi {
-                        model: model.clone(),
-                        rect: CropRect::from_array(region),
-                    })
+                    .map(|region| (model.clone(), CropRect::from_array(region)))
             })
             .collect();
         if let Some(rect) = face_dwell_roi {
-            fixed_rois.push(FixedRoi {
-                model: "face-dwell".into(),
-                rect,
-            });
+            static_roi_map.insert("face-dwell".into(), rect);
         }
-        fixed_rois.sort_by(|a, b| a.model.cmp(&b.model));
-        let static_roi_map: HashMap<String, CropRect> = fixed_rois
-            .iter()
-            .map(|roi| (roi.model.clone(), roi.rect))
-            .collect();
+        #[cfg(feature = "rerun")]
+        let fixed_rois: Vec<FixedRoi> = {
+            let mut fixed_rois: Vec<FixedRoi> = static_roi_map
+                .iter()
+                .map(|(model, rect)| FixedRoi {
+                    model: model.clone(),
+                    rect: *rect,
+                })
+                .collect();
+            fixed_rois.sort_by(|a, b| a.model.cmp(&b.model));
+            fixed_rois
+        };
 
         let infer = InferEngine::from_catalog(&runtime_catalog)?;
         log::info!("inference: {} model(s) loaded", infer.model_count());
@@ -446,6 +448,7 @@ impl<R: FrameReader> App<R> {
             config.output.snapshot_verbose,
         )?;
 
+        #[cfg(feature = "rerun")]
         let viz = if config.viz.enabled {
             log::info!(
                 "viz: will connect to rerun at {} when viewer opens",
@@ -461,6 +464,10 @@ impl<R: FrameReader> App<R> {
         } else {
             VizBridge::disabled()
         };
+        #[cfg(not(feature = "rerun"))]
+        {
+            let _ = (&viz_data, &rerun_blueprint);
+        }
 
         let state = PipelineState::new(
             metrics_log.metrics.text.clone(),
@@ -548,7 +555,10 @@ impl<R: FrameReader> App<R> {
             depth_rules,
             decoder,
             snapshots,
+            #[cfg(feature = "rerun")]
             observer: FanoutObserver::new(viz, log),
+            #[cfg(not(feature = "rerun"))]
+            observer: FanoutObserver::new(log),
             state,
             boot_wall,
             boot_instant,
