@@ -1,7 +1,14 @@
 # ADR-028: Crate Boundaries as Compile-Time Enforcement
 
-**Status:** Accepted
+**Status:** Accepted · **implementado** en el Sprint 4 (2026-08-10)
 **Date:** 2026-08-09
+
+> El workspace quedó en seis paquetes: `mana-lite`, `mana-control`,
+> `mana-perception`, `mana-id`, `mana-geometry`, `mana-media`. `mana-types`,
+> `mana-video`, `mana-rtsp` y `mana-viz` ya no existen. Corrección respecto del
+> análisis de abajo: `PixelFormat` y `RawFrameV1` **no** eran tipos wire muertos
+> —tenían 31 usos entre los dos— así que se mudaron a `mana-media` en vez de
+> borrarse.
 
 ## Context
 

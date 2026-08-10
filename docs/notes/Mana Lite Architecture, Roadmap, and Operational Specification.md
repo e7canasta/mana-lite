@@ -81,7 +81,7 @@ El sistema utiliza métricas como el `gap_ms` (tiempo entre frames procesados) y
 
 ---
 
-En el contexto del sistema `mana-lite`, el **BufferPool** es una utilidad de gestión de memoria situada en la crate `mana-video` diseñada para optimizar el rendimiento del pipeline de video.
+En el contexto del sistema `mana-lite`, el **BufferPool** es una utilidad de gestión de memoria situada en la crate `mana-media` (antes `mana-video`, fusionada en el Sprint 4) diseñada para optimizar el rendimiento del pipeline de video.
 
 Su función principal y beneficios se detallan a continuación:
 

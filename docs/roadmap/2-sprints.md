@@ -297,5 +297,5 @@ vez de 510. Para iterar sobre T2, es la forma rápida.
 ## Referencias
 
 - [1-big-picture.md](1-big-picture.md) — arquitectura por tiers, matriz, estado medido
-- [Onboarding — Mana Lite como middleware de control](<Onboarding — Mana Lite como middleware de control.md>)
+- [0-onboarding.md](0-onboarding.md) — entrada para alguien nuevo: modelo mental, tiers, cómo trabajar
 - ADRs [027](../adrs/027-tier-architecture.md) · [028](../adrs/028-crate-boundaries.md) · [029](../adrs/029-injected-clock.md) · [030](../adrs/030-shared-mechanism-owned-vocabulary.md) · [031](../adrs/031-scene-signal-table.md)

@@ -10,9 +10,9 @@ no por tema, ni por dominio de negocio.
 
 | | Documento | Para qué |
 |---|---|---|
+| **0** | [Onboarding](0-onboarding.md) | **Empezá acá.** Modelo mental, tiers, estado de hoy, cómo buildear rápido y dónde está la red de seguridad. |
 | **1** | [Big Picture](1-big-picture.md) | Los cuatro tiers, la matriz de dependencias, el estado real medido y cómo crece el diseño. **Normativo.** |
 | **2** | [Sprints](2-sprints.md) | Seis sprints con compuertas mecánicas, las cinco fases y el contrato de revisión. **Ejecutable.** |
-| — | [Onboarding](<Onboarding — Mana Lite como middleware de control.md>) | Entrada para alguien nuevo: el modelo mental y el stress-test de crecimiento. |
 
 ## En una pantalla
 
