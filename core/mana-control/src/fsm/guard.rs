@@ -62,8 +62,6 @@ pub enum FsmGuard {
         op: String,
         value: SignalLiteral,
     },
-    #[serde(rename = "person_present")]
-    PersonPresent,
     #[serde(rename = "person_absent")]
     PersonAbsent,
     #[serde(rename = "face_detected")]
@@ -272,7 +270,6 @@ pub(super) fn eval_guard(guard: &ProgramGuard, ctx: &GuardCtx<'_>) -> bool {
         ProgramGuard::Signal { tag, op, value } => {
             ctx.signals.matches(tag, *op, value).unwrap_or(false)
         }
-        ProgramGuard::PersonPresent => ctx.scene.person_present,
         ProgramGuard::PersonAbsent => !ctx.scene.person_present,
         ProgramGuard::FaceDetected { min_confidence } => {
             ctx.scene.face_present && ctx.scene.face_confidence.unwrap_or(0.0) >= *min_confidence

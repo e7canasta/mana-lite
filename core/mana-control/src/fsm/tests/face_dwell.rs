@@ -6,6 +6,7 @@ use super::catalogs::*;
 use crate::DepthRuleSnapshot;
 use crate::config::FsmTransition;
 use crate::health::Health;
+use crate::signals::SignalValue;
 use crate::zones::ZoneEngine;
 
 #[test]
@@ -121,7 +122,11 @@ fn edge_priority_blocks_dwell_until_face_leaves_edge() {
                 from: "edge".into(),
                 to: "other".into(),
                 guards: vec![
-                    FsmGuard::PersonPresent,
+                    FsmGuard::Signal {
+                        tag: "persona.presente".into(),
+                        op: "==".into(),
+                        value: SignalLiteral::Bool(true),
+                    },
                     FsmGuard::FaceAbsent,
                     FsmGuard::FaceNotInDwell,
                     FsmGuard::FaceNotAtEdge,
@@ -133,6 +138,7 @@ fn edge_priority_blocks_dwell_until_face_leaves_edge() {
     let start = Instant::now(); // cfg(test)
     let mut engine = engine_at(&catalog, start);
     let health = Health::new_at(10_000, 5_000, start);
+    let signals = snapshot_with_signals(&[("persona.presente", SignalValue::Bool(true))]);
     let at_edge = FsmSceneContext {
         person_present: true,
         face_present: true,
@@ -143,12 +149,13 @@ fn edge_priority_blocks_dwell_until_face_leaves_edge() {
 
     assert!(
         engine
-            .evaluate_with_context_at(
+            .evaluate_with_signals_at(
                 &[],
                 None,
                 &health,
                 &DepthRuleSnapshot::default(),
                 &at_edge,
+                &signals,
                 start,
             )
             .is_none()
@@ -161,12 +168,13 @@ fn edge_priority_blocks_dwell_until_face_leaves_edge() {
     };
     assert!(
         engine
-            .evaluate_with_context_at(
+            .evaluate_with_signals_at(
                 &[],
                 None,
                 &health,
                 &DepthRuleSnapshot::default(),
                 &away_from_edge,
+                &signals,
                 start + std::time::Duration::from_millis(1_000),
             )
             .is_none()
@@ -174,12 +182,13 @@ fn edge_priority_blocks_dwell_until_face_leaves_edge() {
     assert_eq!(engine.current_state(), "edge");
     assert_eq!(
         engine
-            .evaluate_with_context_at(
+            .evaluate_with_signals_at(
                 &[],
                 None,
                 &health,
                 &DepthRuleSnapshot::default(),
                 &away_from_edge,
+                &signals,
                 start + std::time::Duration::from_millis(2_000),
             )
             .expect("dwell should complete after leaving edge")

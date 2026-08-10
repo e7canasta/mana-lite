@@ -6,7 +6,7 @@ use crate::DepthRuleSnapshot;
 use crate::config::{
     FsmCatalog, FsmRoles, FsmRoot, FsmState, FsmTransition, ZoneCatalog, ZoneSpec,
 };
-use crate::signals::{SignalTable, SignalValue, scene_signal_catalog};
+use crate::signals::{SceneSignalsSnapshot, SignalTable, SignalValue, scene_signal_catalog};
 
 pub(super) fn make_catalog(
     initial: &str,
@@ -18,6 +18,20 @@ pub(super) fn make_catalog(
         states.into_iter().map(|(n, m)| (n, m, None)).collect(),
         transitions,
     )
+}
+
+pub(super) fn snapshot_with_signals(entries: &[(&str, SignalValue)]) -> SceneSignalsSnapshot {
+    let mut table = SignalTable::new();
+    for (tag, value) in entries {
+        table
+            .insert(
+                scene_signal_catalog(),
+                crate::domain::SignalTag::new(tag),
+                value.clone(),
+            )
+            .unwrap();
+    }
+    table.snapshot(scene_signal_catalog())
 }
 
 pub(super) fn make_catalog_dwell(
