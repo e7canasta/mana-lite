@@ -56,5 +56,6 @@ Cada guard simple se migró en un commit independiente:
 ## Siguiente etapa
 
 La Etapa D puede agregar el evento observable del snapshot completo, conectarlo
-al logger y retirar gradualmente `FsmSceneContext` como struct plano. No se debe
+al logger y retirar gradualmente `FsmSceneContext` como struct plano. La entrada
+operativa está en [10-sprint-4-handoff.md](10-sprint-4-handoff.md). No se debe
 mezclar esa limpieza con cambios de política clínica.

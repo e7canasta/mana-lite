@@ -53,6 +53,7 @@ construida después de que existen los consumidores obliga a migrarlos.
 | [7-sprint-2-handoff.md](7-sprint-2-handoff.md) | **El onboarding.** Entrada operativa para producir señales en paralelo |
 | [8-sprint-2-cierre.md](8-sprint-2-cierre.md) | **La evidencia.** Cierre de Etapa B y compuerta de señales en paralelo |
 | [9-sprint-3-cierre.md](9-sprint-3-cierre.md) | **La evidencia.** Cierre de Etapa C y migración de guards simples |
+| [10-sprint-4-handoff.md](10-sprint-4-handoff.md) | **El onboarding.** Entrada operativa para implementar Etapa D |
 | [5-engine-funcional.md](5-engine-funcional.md) | **El engine.** Arranque, tick, evaluación, fallas y observabilidad objetivo |
 | [design.md](design.md) | **El diseño técnico.** Decisiones de implementación, catálogo, guard y evento de auditoría |
 | [requirements.md](requirements.md) | **Los requisitos.** Resultados de producto, criterios de aceptación y trazabilidad |

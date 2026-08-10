@@ -1,10 +1,10 @@
 # Backlog operativo — Señales de escena
 
 **Estado:** Sprint 3 / Etapa C cerrada; Etapa D pendiente
-**Próximo hito:** D — gemelo visible
+**Próximo hito:** D — gemelo visible ([handoff](10-sprint-4-handoff.md))
 **Fuente de verdad:** [1-spec.md](1-spec.md), [requirements.md](requirements.md),
-[design.md](design.md), [2-sprints.md](2-sprints.md), [3-sprint-1.md](3-sprint-1.md)
-y [7-sprint-2-handoff.md](7-sprint-2-handoff.md)
+[design.md](design.md), [2-sprints.md](2-sprints.md), [3-sprint-1.md](3-sprint-1.md),
+[7-sprint-2-handoff.md](7-sprint-2-handoff.md) y [10-sprint-4-handoff.md](10-sprint-4-handoff.md)
 
 Este archivo es el backlog ejecutable del proyecto. El roadmap describe las
 etapas y el diseño explica la arquitectura; aquí se define el orden de trabajo,
@@ -29,7 +29,7 @@ los archivos que toca cada tarea y la evidencia necesaria para cerrarla.
 | A | **Cerrada** | Catálogo, valores, operadores y tabla sin consumidores productivos. | [6-sprint-1-cierre.md](6-sprint-1-cierre.md) |
 | B | **Cerrada** | Doble producción, paridad y latch derivado. | [8-sprint-2-cierre.md](8-sprint-2-cierre.md) |
 | C | **Cerrada** | Guard `Signal`, compilación de boot y once migraciones. | [9-sprint-3-cierre.md](9-sprint-3-cierre.md) |
-| D | Pendiente | Snapshot observable, logger y retiro del contexto plano. | [2-sprints.md](2-sprints.md#etapa-d--el-gemelo-visible) |
+| D | Pendiente | Snapshot observable, logger y retiro del contexto plano. | [10-sprint-4-handoff.md](10-sprint-4-handoff.md) |
 
 ## 3. Sprint 1 — definición de terminado
 
@@ -332,3 +332,4 @@ profundidad permanecen con sus motores propios.
 - [x] S3-05: verificar debug, release, `ffmpeg` y goldens sin cambios.
 
 La evidencia de cierre está en [9-sprint-3-cierre.md](9-sprint-3-cierre.md).
+La entrada operativa de D está en [10-sprint-4-handoff.md](10-sprint-4-handoff.md).
