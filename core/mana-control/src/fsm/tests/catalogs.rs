@@ -6,8 +6,6 @@ use crate::DepthRuleSnapshot;
 use crate::config::{
     FsmCatalog, FsmRoles, FsmRoot, FsmState, FsmTransition, ZoneCatalog, ZoneSpec,
 };
-use crate::health::Health;
-use crate::zones::{ZoneEngine, ZoneEvent};
 
 pub(super) fn make_catalog(
     initial: &str,
