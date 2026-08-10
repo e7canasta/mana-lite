@@ -62,8 +62,6 @@ pub enum FsmGuard {
         op: String,
         value: SignalLiteral,
     },
-    #[serde(rename = "cardinality")]
-    Cardinality { value: String },
     #[serde(rename = "person_present")]
     PersonPresent,
     #[serde(rename = "person_absent")]
@@ -273,9 +271,6 @@ pub(super) fn eval_guard(guard: &ProgramGuard, ctx: &GuardCtx<'_>) -> bool {
         }
         ProgramGuard::Signal { tag, op, value } => {
             ctx.signals.matches(tag, *op, value).unwrap_or(false)
-        }
-        ProgramGuard::Cardinality { value } => {
-            ctx.scene.cardinality.as_deref() == Some(value.as_str())
         }
         ProgramGuard::PersonPresent => ctx.scene.person_present,
         ProgramGuard::PersonAbsent => !ctx.scene.person_present,

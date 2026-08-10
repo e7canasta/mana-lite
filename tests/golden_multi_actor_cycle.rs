@@ -162,24 +162,30 @@ fn catalog() -> FsmCatalog {
                 FsmTransition {
                     from: "watching".into(),
                     to: "crowded".into(),
-                    guards: vec![FsmGuard::Cardinality {
-                        value: "multiple".into(),
+                    guards: vec![FsmGuard::Signal {
+                        tag: "ocupacion.cardinalidad".into(),
+                        op: "==".into(),
+                        value: mana_lite::fsm::SignalLiteral::Text("multiple".into()),
                     }],
                     dwell: None,
                 },
                 FsmTransition {
                     from: "idle".into(),
                     to: "crowded".into(),
-                    guards: vec![FsmGuard::Cardinality {
-                        value: "multiple".into(),
+                    guards: vec![FsmGuard::Signal {
+                        tag: "ocupacion.cardinalidad".into(),
+                        op: "==".into(),
+                        value: mana_lite::fsm::SignalLiteral::Text("multiple".into()),
                     }],
                     dwell: None,
                 },
                 FsmTransition {
                     from: "crowded".into(),
                     to: "idle".into(),
-                    guards: vec![FsmGuard::Cardinality {
-                        value: "empty".into(),
+                    guards: vec![FsmGuard::Signal {
+                        tag: "ocupacion.cardinalidad".into(),
+                        op: "==".into(),
+                        value: mana_lite::fsm::SignalLiteral::Text("empty".into()),
                     }],
                     dwell: None,
                 },

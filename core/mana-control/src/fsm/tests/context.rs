@@ -5,6 +5,19 @@ use super::catalogs::*;
 use crate::DepthRuleSnapshot;
 use crate::config::FsmTransition;
 use crate::health::Health;
+use crate::signals::{SignalTable, SignalValue, scene_signal_catalog};
+
+fn cardinality_snapshot(value: &str) -> crate::signals::SceneSignalsSnapshot {
+    let mut table = SignalTable::new();
+    table
+        .insert(
+            scene_signal_catalog(),
+            crate::domain::SignalTag::new("ocupacion.cardinalidad"),
+            SignalValue::Label(value.into()),
+        )
+        .unwrap();
+    table.snapshot(scene_signal_catalog())
+}
 
 #[test]
 fn cardinality_guard_matches_scene_context() {
@@ -14,8 +27,10 @@ fn cardinality_guard_matches_scene_context() {
         vec![FsmTransition {
             from: "idle".into(),
             to: "single".into(),
-            guards: vec![FsmGuard::Cardinality {
-                value: "single".into(),
+            guards: vec![FsmGuard::Signal {
+                tag: "ocupacion.cardinalidad".into(),
+                op: "==".into(),
+                value: SignalLiteral::Text("single".into()),
             }],
             dwell: None,
         }],
@@ -28,12 +43,14 @@ fn cardinality_guard_matches_scene_context() {
         ..Default::default()
     };
 
-    let result = engine.evaluate_with_context_at(
+    let snapshot = cardinality_snapshot("single");
+    let result = engine.evaluate_with_signals_at(
         &[],
         None,
         &health,
         &DepthRuleSnapshot::default(),
         &scene,
+        &snapshot,
         start,
     );
     assert_eq!(result.expect("cardinality match").to, "single");
@@ -47,8 +64,10 @@ fn cardinality_guard_rejects_mismatch() {
         vec![FsmTransition {
             from: "idle".into(),
             to: "single".into(),
-            guards: vec![FsmGuard::Cardinality {
-                value: "single".into(),
+            guards: vec![FsmGuard::Signal {
+                tag: "ocupacion.cardinalidad".into(),
+                op: "==".into(),
+                value: SignalLiteral::Text("single".into()),
             }],
             dwell: None,
         }],
@@ -61,14 +80,16 @@ fn cardinality_guard_rejects_mismatch() {
         ..Default::default()
     };
 
+    let snapshot = cardinality_snapshot("multiple");
     assert!(
         engine
-            .evaluate_with_context_at(
+            .evaluate_with_signals_at(
                 &[],
                 None,
                 &health,
                 &DepthRuleSnapshot::default(),
                 &scene,
+                &snapshot,
                 start,
             )
             .is_none()

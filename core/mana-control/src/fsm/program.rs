@@ -122,9 +122,6 @@ pub enum ProgramGuard {
         op: SignalOp,
         value: SignalValue,
     },
-    Cardinality {
-        value: String,
-    },
     PersonPresent,
     PersonAbsent,
     FaceDetected {
@@ -352,14 +349,6 @@ impl FsmProgram {
                             }
                         }
                     }
-                    FsmGuard::Cardinality { value }
-                        if !matches!(value.as_str(), "empty" | "single" | "multiple") =>
-                    {
-                        errors.push(format!(
-                            "transition {}→{} has invalid cardinality '{}'",
-                            transition.from, transition.to, value
-                        ));
-                    }
                     _ => {}
                 }
             }
@@ -427,9 +416,6 @@ impl FsmProgram {
             FsmGuard::Signal { tag, op, value } => {
                 return Self::resolve_signal_guard(tag, op, value, from, to, index, errors);
             }
-            FsmGuard::Cardinality { value } => ProgramGuard::Cardinality {
-                value: value.clone(),
-            },
             FsmGuard::PersonPresent => ProgramGuard::PersonPresent,
             FsmGuard::PersonAbsent => ProgramGuard::PersonAbsent,
             FsmGuard::FaceDetected { min_confidence } => ProgramGuard::FaceDetected {
