@@ -1,0 +1,10 @@
+track,occupancy,presence,entity_boxes,fsm_state
+track,occupancy,presence,zone,zone,entity_boxes,fsm_transition,fsm_state
+track,occupancy,presence,entity_boxes,fsm_transition,fsm_state
+track,occupancy,presence,entity_boxes,fsm_transition,fsm_state
+track,occupancy,presence,zone,zone,entity_boxes,fsm_transition,fsm_state
+track,occupancy,presence,entity_boxes,fsm_state
+track,occupancy,presence,entity_boxes,fsm_transition,fsm_state,health
+track,occupancy,presence,entity_boxes,fsm_state
+track,occupancy,presence,entity_boxes,fsm_state
+track,occupancy,presence,entity_boxes,fsm_state
