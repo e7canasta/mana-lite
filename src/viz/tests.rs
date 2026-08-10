@@ -1,4 +1,3 @@
-
 use super::*;
 use crate::occupancy::{RoomCardinality, SecondPersonState};
 use std::time::Instant;

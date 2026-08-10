@@ -1,4 +1,3 @@
-
 use super::*;
 use crate::detection::DetectionMask;
 use mana_geometry::compact_mask::CompactMask;

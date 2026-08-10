@@ -2,11 +2,12 @@
 
 use image::{Rgb, RgbImage};
 use imageproc::drawing::draw_line_segment_mut;
-use mana_geometry::compact_mask::CompactMask;
 
+use crate::app::FrameSize;
 use crate::detection::{CropRect, Detection};
+use crate::domain::ModelRole;
 
-use super::PALETTE;
+use super::{Inner, PALETTE, VizBridge, sanitize_entity_name};
 
 pub(super) fn polygon_in_roi(poly: &[[f32; 2]], fw: f32, fh: f32, roi: CropRect) -> Vec<[f32; 2]> {
     let roi_x1 = roi.x1 as f32;
@@ -213,4 +214,193 @@ pub(super) fn render_mask_debug_images(
     }
 
     Some((mask_img, poly_img, mask_w, mask_h))
+}
+
+impl VizBridge {
+    pub fn log_depth_context_polygons(
+        &self,
+        model: &str,
+        detections: &[Detection],
+        depth_context_roi: Option<CropRect>,
+        frame: FrameSize,
+    ) {
+        if !self.toggles.mask_polygons || self.role_of(model) != ModelRole::Mask {
+            return;
+        }
+        let Some(depth_context_roi) = depth_context_roi else {
+            return;
+        };
+        let rec = match &self.inner {
+            Inner::Connected { rec, .. } => rec,
+            _ => return,
+        };
+        if detections.is_empty() {
+            return;
+        }
+        let base = "/world/camera/crops/depth-standard/depth/context/seg-standard/polygon";
+        rec.log(base, &rerun::Clear::recursive()).ok();
+        let fw = frame.w.max(1) as f32;
+        let fh = frame.h.max(1) as f32;
+
+        for (index, detection) in detections.iter().enumerate() {
+            let Some(mask) = &detection.mask else {
+                continue;
+            };
+            for (polygon_index, polygon) in mask.polygons.as_ref().iter().enumerate() {
+                let points = polygon_in_roi(polygon, fw, fh, depth_context_roi);
+                if points.len() < 2 {
+                    continue;
+                }
+                let path = format!("{base}/{index}/{polygon_index}");
+                let strip = rerun::LineStrips2D::new([points])
+                    .with_colors([rerun::Color::from_unmultiplied_rgba(255, 255, 255, 165)])
+                    .with_radii([rerun::Radius::new_ui_points(3.0)]);
+                if let Err(e) = rec.log(path.as_str(), &strip) {
+                    log::warn!("viz depth context polygon {path} failed: {e}");
+                }
+            }
+        }
+    }
+
+    /// Log instance masks as a class-id overlay (RGBA) at mask resolution,
+    /// plus — when `mask_debug` is enabled — standalone mask and contour
+    /// images under `/world/camera/debug/{model}/...` for visual inspection.
+    /// Overlay pattern imported from mana-os
+    /// `mana-rerun-common::logging::segmentation::log_segmentation_overlay`.
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        clippy::cast_precision_loss
+    )]
+    pub fn log_model_masks(&self, model: &str, detections: &[Detection], frame: FrameSize) {
+        if !self.toggles.masks {
+            return;
+        }
+        let rec = match &self.inner {
+            Inner::Connected { rec, .. } => rec,
+            _ => return,
+        };
+        let model = sanitize_entity_name(model);
+        let mask_path = format!("/world/camera/masks/{model}");
+        let crop_mask_path = format!("/world/camera/crops/{model}/mask");
+        rec.log(mask_path.as_str(), &rerun::Clear::recursive()).ok();
+        rec.log(crop_mask_path.as_str(), &rerun::Clear::recursive())
+            .ok();
+
+        let masked: Vec<&Detection> = detections.iter().filter(|d| d.mask.is_some()).collect();
+        if masked.is_empty() {
+            return;
+        }
+        let [mask_w, mask_h] = masked[0].mask.as_ref().unwrap().mask_dims;
+        if mask_w == 0 || mask_h == 0 {
+            return;
+        }
+
+        let overlay = build_mask_overlay(&masked, mask_w, mask_h, frame.w, frame.h);
+
+        let mut rgba = Vec::with_capacity(overlay.len() * 4);
+        for pixel in &overlay {
+            match *pixel {
+                0 => rgba.extend_from_slice(&[0, 0, 0, 0]),
+                0xFF => rgba.extend_from_slice(&[255, 255, 255, 255]),
+                id => {
+                    let [r, g, b] = PALETTE[(id - 1) as usize];
+                    rgba.extend_from_slice(&[r, g, b, 120]);
+                }
+            }
+        }
+        let image = rerun::Image::from_rgba32(rgba, [mask_w, mask_h]);
+        if let Err(e) = rec.log(mask_path.as_str(), &image) {
+            log::warn!("viz mask overlay {model} failed: {e}");
+        }
+        if let Err(e) = rec.log(crop_mask_path.as_str(), &image) {
+            log::warn!("viz crop mask overlay {model} failed: {e}");
+        }
+
+        self.log_mask_debug(rec, &model, &masked, frame.w, frame.h);
+        self.log_mask_polygons(rec, &model, &masked, frame.w, frame.h);
+    }
+
+    /// Log the simplified contour polygons as real 2D primitives on the
+    /// camera plane (frame pixel coordinates, closed loops), so they can be
+    /// inspected as a polygon in the viewer — vertex count follows the
+    /// per-model `polygon_simplify` epsilon.
+    fn log_mask_polygons(
+        &self,
+        rec: &rerun::RecordingStream,
+        model: &str,
+        masked: &[&Detection],
+        frame_w: u32,
+        frame_h: u32,
+    ) {
+        if !self.toggles.mask_polygons {
+            return;
+        }
+        let base = format!("/world/camera/mask_polygons/{model}");
+        rec.log(base.as_str(), &rerun::Clear::recursive()).ok();
+        let fw = frame_w.max(1) as f32;
+        let fh = frame_h.max(1) as f32;
+
+        for (index, detection) in masked.iter().enumerate() {
+            let Some(mask) = &detection.mask else {
+                continue;
+            };
+            for (p_index, poly) in mask.polygons.as_ref().iter().enumerate() {
+                let strip = frame_strip(poly, fw, fh);
+                if strip.len() < 2 {
+                    continue;
+                }
+                let color = PALETTE[index % PALETTE.len()];
+                let path = format!("{base}/{p_index}");
+                if let Err(e) = rec.log(
+                    path.as_str(),
+                    &rerun::LineStrips2D::new([strip])
+                        .with_colors([rerun::Color::from_rgb(color[0], color[1], color[2])])
+                        .with_radii([rerun::Radius::new_ui_points(2.0)]),
+                ) {
+                    log::warn!("viz mask polygon {model} failed: {e}");
+                }
+            }
+        }
+    }
+
+    /// Render the mask raster and the derived contour polygons as standalone
+    /// images in mask space (same resolution, same origin), so the contours
+    /// can be visually checked against the CompactMask they come from.
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        clippy::cast_precision_loss
+    )]
+    fn log_mask_debug(
+        &self,
+        rec: &rerun::RecordingStream,
+        model: &str,
+        masked: &[&Detection],
+        frame_w: u32,
+        frame_h: u32,
+    ) {
+        if !self.toggles.mask_debug {
+            return;
+        }
+        let Some((mask_img, poly_img, mask_w, mask_h)) =
+            render_mask_debug_images(masked, frame_w, frame_h)
+        else {
+            return;
+        };
+
+        let mask_path = format!("/world/camera/debug/{model}/mask");
+        let poly_path = format!("/world/camera/debug/{model}/polygon");
+        rec.log(mask_path.as_str(), &rerun::Clear::recursive()).ok();
+        rec.log(poly_path.as_str(), &rerun::Clear::recursive()).ok();
+
+        let mask_img = rerun::Image::from_rgb24(mask_img.as_raw().clone(), [mask_w, mask_h]);
+        if let Err(e) = rec.log(mask_path.as_str(), &mask_img) {
+            log::warn!("viz mask debug {model} failed: {e}");
+        }
+        let poly_img = rerun::Image::from_rgb24(poly_img.as_raw().clone(), [mask_w, mask_h]);
+        if let Err(e) = rec.log(poly_path.as_str(), &poly_img) {
+            log::warn!("viz polygon debug {model} failed: {e}");
+        }
+    }
 }
