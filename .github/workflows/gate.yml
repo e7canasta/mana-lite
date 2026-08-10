@@ -1,0 +1,118 @@
+name: Compuerta
+
+# Las compuertas del roadmap corrían a mano en una sola máquina. Eso dejó pasar
+# dos veces algo que nadie podía ver desde afuera: una compuerta que no
+# verificaba nada (el golden estaba sin trackear) y una red de tests que solo
+# existía en un checkout (los pesos ONNX). Acá corren en una máquina limpia.
+#
+# Dos cosas que este workflow tiene que resolver y conviene saber:
+#
+# 1. `mana-lite` NO es autocontenido: depende por path de `../inference`
+#    (repo e7canasta/mana-inference). Por eso se hacen dos checkouts al lado.
+#    Si ese repo es privado, este workflow necesita un token con acceso.
+# 2. `bootstrap_with_reader_wires_real_catalogs` construye `App` contra los
+#    catálogos reales y necesita pesos ONNX de varios GB que están
+#    gitignoreados. Se saltea acá y se corre local con MANA_MODELS_HOME.
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  # El lazo de control no necesita visualización: 264 crates en vez de 510.
+  FEATURES: --no-default-features --features ffmpeg
+  SIN_PESOS: --skip bootstrap_with_reader_wires_real_catalogs
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mana-lite
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: mana-lite
+
+      # El workspace espera este repo como hermano, no como submódulo.
+      - uses: actions/checkout@v4
+        with:
+          repository: e7canasta/mana-inference
+          path: inference
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: mana-lite
+
+      - name: Dependencias de sistema (ffmpeg para mana-media)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libavcodec-dev libavformat-dev libavutil-dev libavfilter-dev \
+            libavdevice-dev libswscale-dev libswresample-dev pkg-config clang
+
+      - name: Formato
+        run: cargo fmt --all --check
+
+      # Producción: sin --all-targets. Los tests largos son otra discusión.
+      - name: Cero funciones de producción > 80 líneas
+        run: |
+          n=$(cargo clippy --workspace $FEATURES 2>&1 | grep -c 'too many lines' || true)
+          echo "funciones de producción > 80 líneas: $n"
+          test "$n" -eq 0
+
+      - name: Ningún archivo de src/ > 600 líneas
+        run: |
+          peor=$(find src -name '*.rs' -exec wc -l {} + | sort -rn | sed -n '2p')
+          echo "archivo más grande de src/: $peor"
+          test "$(echo "$peor" | awk '{print $1}')" -le 600
+
+      # Cubre el lazo completo: los tres goldens, la transcripción de eventos y
+      # todos los tests de T2. Lo único fuera es el arranque con pesos reales.
+      - name: Tests
+        run: cargo test --workspace $FEATURES -- $SIN_PESOS
+
+      - name: Goldens byte-idénticos
+        run: git diff --exit-code -- tests/golden/
+
+  # Aparte del gate: si una versión nueva de clippy agrega una advertencia, esto
+  # se pone amarillo sin bloquear un merge que no rompió nada.
+  deuda:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    defaults:
+      run:
+        working-directory: mana-lite
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: mana-lite
+      - uses: actions/checkout@v4
+        with:
+          repository: e7canasta/mana-inference
+          path: inference
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: mana-lite
+      - name: Dependencias de sistema
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libavcodec-dev libavformat-dev libavutil-dev libavfilter-dev \
+            libavdevice-dev libswscale-dev libswresample-dev pkg-config clang
+      # Medido: 624 con estas features. El techo deja poco aire a propósito —
+      # un techo holgado no detecta nada.
+      - name: Conteo de clippy (no-regresión, techo 640)
+        run: |
+          n=$(cargo clippy --workspace --all-targets --no-default-features --features ffmpeg 2>&1 \
+            | grep -c '^warning:' || true)
+          echo "advertencias de clippy: $n (techo 640)"
+          test "$n" -le 640
