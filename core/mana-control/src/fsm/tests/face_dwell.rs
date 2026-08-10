@@ -135,7 +135,11 @@ fn edge_priority_blocks_dwell_until_face_leaves_edge() {
                         op: "==".into(),
                         value: SignalLiteral::Bool(true),
                     },
-                    FsmGuard::FaceNotAtEdge,
+                    FsmGuard::Signal {
+                        tag: "cara.en_borde".into(),
+                        op: "==".into(),
+                        value: SignalLiteral::Bool(false),
+                    },
                 ],
                 dwell: Some("1000ms".into()),
             },
@@ -158,7 +162,11 @@ fn edge_priority_blocks_dwell_until_face_leaves_edge() {
                         op: "==".into(),
                         value: SignalLiteral::Bool(false),
                     },
-                    FsmGuard::FaceNotAtEdge,
+                    FsmGuard::Signal {
+                        tag: "cara.en_borde".into(),
+                        op: "==".into(),
+                        value: SignalLiteral::Bool(false),
+                    },
                 ],
                 dwell: Some("700ms".into()),
             },
@@ -167,10 +175,17 @@ fn edge_priority_blocks_dwell_until_face_leaves_edge() {
     let start = Instant::now(); // cfg(test)
     let mut engine = engine_at(&catalog, start);
     let health = Health::new_at(10_000, 5_000, start);
-    let signals = snapshot_with_signals(&[
+    let at_edge_signals = snapshot_with_signals(&[
         ("persona.presente", SignalValue::Bool(true)),
         ("cara.presente", SignalValue::Bool(true)),
         ("cara.en_dwell", SignalValue::Bool(true)),
+        ("cara.en_borde", SignalValue::Bool(true)),
+    ]);
+    let away_signals = snapshot_with_signals(&[
+        ("persona.presente", SignalValue::Bool(true)),
+        ("cara.presente", SignalValue::Bool(true)),
+        ("cara.en_dwell", SignalValue::Bool(true)),
+        ("cara.en_borde", SignalValue::Bool(false)),
     ]);
     let at_edge = FsmSceneContext {
         person_present: true,
@@ -188,7 +203,7 @@ fn edge_priority_blocks_dwell_until_face_leaves_edge() {
                 &health,
                 &DepthRuleSnapshot::default(),
                 &at_edge,
-                &signals,
+                &at_edge_signals,
                 start,
             )
             .is_none()
@@ -207,7 +222,7 @@ fn edge_priority_blocks_dwell_until_face_leaves_edge() {
                 &health,
                 &DepthRuleSnapshot::default(),
                 &away_from_edge,
-                &signals,
+                &away_signals,
                 start + std::time::Duration::from_millis(1_000),
             )
             .is_none()
@@ -221,7 +236,7 @@ fn edge_priority_blocks_dwell_until_face_leaves_edge() {
                 &health,
                 &DepthRuleSnapshot::default(),
                 &away_from_edge,
-                &signals,
+                &away_signals,
                 start + std::time::Duration::from_millis(2_000),
             )
             .expect("dwell should complete after leaving edge")

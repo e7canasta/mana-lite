@@ -211,10 +211,16 @@ mod tests {
                 .find(|transition| transition.from == from && transition.to == to)
                 .unwrap_or_else(|| panic!("missing transition {from}->{to}"));
             assert!(
-                transition
-                    .guards
-                    .iter()
-                    .any(|guard| matches!(guard, FsmGuard::FaceNotAtEdge)),
+                transition.guards.iter().any(|guard| {
+                    matches!(
+                        guard,
+                        FsmGuard::Signal {
+                            tag,
+                            op,
+                            value: SignalLiteral::Bool(false),
+                        } if tag == "cara.en_borde" && op == "=="
+                    )
+                }),
                 "{from}->{to} must preserve edge priority"
             );
         }
@@ -224,12 +230,16 @@ mod tests {
             .iter()
             .find(|transition| transition.from == "edge" && transition.to == "other")
             .expect("missing transition edge->other");
-        assert!(
-            edge_to_other
-                .guards
-                .iter()
-                .any(|guard| matches!(guard, FsmGuard::FaceNotAtEdge))
-        );
+        assert!(edge_to_other.guards.iter().any(|guard| {
+            matches!(
+                guard,
+                FsmGuard::Signal {
+                    tag,
+                    op,
+                    value: SignalLiteral::Bool(false),
+                } if tag == "cara.en_borde" && op == "=="
+            )
+        }));
     }
 
     #[test]

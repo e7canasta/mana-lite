@@ -100,7 +100,7 @@ guards = [
     { type = "signal", tag = "persona.presente", op = "==", value = true },
     { type = "signal", tag = "cara.confianza", op = ">=", value = 0.10 },
     { type = "signal", tag = "cara.en_dwell", op = "==", value = false },
-    { type = "face_not_at_edge" },
+    { type = "signal", tag = "cara.en_borde", op = "==", value = false },
 ]
 
 [[fsm.transitions]]
@@ -111,7 +111,7 @@ guards = [
     { type = "signal", tag = "ocupacion.cardinalidad", op = "==", value = "single" },
     { type = "signal", tag = "persona.presente", op = "==", value = true },
     { type = "signal", tag = "cara.en_dwell", op = "==", value = true },
-    { type = "face_not_at_edge" },
+    { type = "signal", tag = "cara.en_borde", op = "==", value = false },
 ]
 
 [[fsm.transitions]]
@@ -168,7 +168,7 @@ dwell = "1000ms"
 guards = [
     { type = "signal", tag = "ocupacion.cardinalidad", op = "==", value = "single" },
     { type = "signal", tag = "cara.en_dwell", op = "==", value = true },
-    { type = "face_not_at_edge" },
+    { type = "signal", tag = "cara.en_borde", op = "==", value = false },
 ]
 
 [[fsm.transitions]]
@@ -180,7 +180,7 @@ guards = [
     { type = "signal", tag = "persona.presente", op = "==", value = true },
     { type = "signal", tag = "cara.presente", op = "==", value = false },
     { type = "signal", tag = "cara.en_dwell", op = "==", value = false },
-    { type = "face_not_at_edge" },
+    { type = "signal", tag = "cara.en_borde", op = "==", value = false },
 ]
 
 [[fsm.transitions]]
@@ -209,7 +209,7 @@ guards = [
     { type = "signal", tag = "ocupacion.cardinalidad", op = "==", value = "single" },
     { type = "signal", tag = "cara.confianza", op = ">=", value = 0.10 },
     { type = "signal", tag = "cara.en_dwell", op = "==", value = false },
-    { type = "face_not_at_edge" },
+    { type = "signal", tag = "cara.en_borde", op = "==", value = false },
 ]
 
 [[fsm.transitions]]
@@ -221,7 +221,7 @@ guards = [
     { type = "signal", tag = "persona.presente", op = "==", value = true },
     { type = "signal", tag = "cara.presente", op = "==", value = false },
     { type = "signal", tag = "cara.en_dwell", op = "==", value = false },
-    { type = "face_not_at_edge" },
+    { type = "signal", tag = "cara.en_borde", op = "==", value = false },
 ]
 
 [[fsm.transitions]]
@@ -240,7 +240,7 @@ dwell = "1000ms"
 guards = [
     { type = "signal", tag = "ocupacion.cardinalidad", op = "==", value = "single" },
     { type = "signal", tag = "cara.en_dwell", op = "==", value = true },
-    { type = "face_not_at_edge" },
+    { type = "signal", tag = "cara.en_borde", op = "==", value = false },
 ]
 
 [[fsm.transitions]]
@@ -251,7 +251,7 @@ guards = [
     { type = "signal", tag = "ocupacion.cardinalidad", op = "==", value = "single" },
     { type = "signal", tag = "cara.confianza", op = ">=", value = 0.10 },
     { type = "signal", tag = "cara.en_dwell", op = "==", value = false },
-    { type = "face_not_at_edge" },
+    { type = "signal", tag = "cara.en_borde", op = "==", value = false },
 ]
 
 [[fsm.transitions]]
@@ -263,7 +263,7 @@ guards = [
     { type = "signal", tag = "persona.presente", op = "==", value = true },
     { type = "signal", tag = "cara.presente", op = "==", value = false },
     { type = "signal", tag = "cara.en_dwell", op = "==", value = false },
-    { type = "face_not_at_edge" },
+    { type = "signal", tag = "cara.en_borde", op = "==", value = false },
 ]
 
 [[fsm.transitions]]
@@ -300,7 +300,7 @@ dwell = "1000ms"
 guards = [
     { type = "signal", tag = "ocupacion.cardinalidad", op = "==", value = "single" },
     { type = "signal", tag = "cara.en_dwell", op = "==", value = true },
-    { type = "face_not_at_edge" },
+    { type = "signal", tag = "cara.en_borde", op = "==", value = false },
 ]
 
 [[fsm.transitions]]
@@ -311,7 +311,7 @@ guards = [
     { type = "signal", tag = "ocupacion.cardinalidad", op = "==", value = "single" },
     { type = "signal", tag = "cara.confianza", op = ">=", value = 0.10 },
     { type = "signal", tag = "cara.en_dwell", op = "==", value = false },
-    { type = "face_not_at_edge" },
+    { type = "signal", tag = "cara.en_borde", op = "==", value = false },
 ]
 
 # Exit recovery. A person who returns during the exit dwell can resume any
@@ -335,7 +335,7 @@ guards = [
     { type = "signal", tag = "ocupacion.cardinalidad", op = "==", value = "single" },
     { type = "signal", tag = "persona.presente", op = "==", value = true },
     { type = "signal", tag = "cara.en_dwell", op = "==", value = true },
-    { type = "face_not_at_edge" },
+    { type = "signal", tag = "cara.en_borde", op = "==", value = false },
 ]
 
 [[fsm.transitions]]
@@ -347,7 +347,7 @@ guards = [
     { type = "signal", tag = "persona.presente", op = "==", value = true },
     { type = "signal", tag = "cara.confianza", op = ">=", value = 0.10 },
     { type = "signal", tag = "cara.en_dwell", op = "==", value = false },
-    { type = "face_not_at_edge" },
+    { type = "signal", tag = "cara.en_borde", op = "==", value = false },
 ]
 
 [[fsm.transitions]]
