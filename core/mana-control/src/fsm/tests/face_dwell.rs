@@ -211,8 +211,10 @@ fn face_dwell_and_inside_latch_drive_exiting() {
             FsmTransition {
                 from: "searching".into(),
                 to: "detected".into(),
-                guards: vec![FsmGuard::FaceDetected {
-                    min_confidence: 0.5,
+                guards: vec![FsmGuard::Signal {
+                    tag: "cara.confianza".into(),
+                    op: ">=".into(),
+                    value: SignalLiteral::Float(0.5),
                 }],
                 dwell: Some("500ms".into()),
             },
@@ -248,7 +250,13 @@ fn face_dwell_and_inside_latch_drive_exiting() {
         face_dwell: None,
     });
     let health = Health::new_at(10_000, 5_000, start);
-    let present_signals = snapshot_with_signals(&[("persona.presente", SignalValue::Bool(true))]);
+    let present_signals = snapshot_with_signals(&[
+        ("persona.presente", SignalValue::Bool(true)),
+        (
+            "cara.confianza",
+            SignalValue::Ratio(crate::signals::Ratio::new(0.9).unwrap()),
+        ),
+    ]);
     let present = FsmSceneContext {
         cardinality: Some("single".into()),
         person_present: true,

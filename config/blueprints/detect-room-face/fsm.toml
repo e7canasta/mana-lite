@@ -98,7 +98,7 @@ dwell = "500ms"
 guards = [
     { type = "signal", tag = "ocupacion.cardinalidad", op = "==", value = "single" },
     { type = "signal", tag = "persona.presente", op = "==", value = true },
-    { type = "face_detected", min_confidence = 0.10 },
+    { type = "signal", tag = "cara.confianza", op = ">=", value = 0.10 },
     { type = "face_not_in_dwell" },
     { type = "face_not_at_edge" },
 ]
@@ -121,7 +121,7 @@ dwell = "500ms"
 guards = [
     { type = "signal", tag = "ocupacion.cardinalidad", op = "==", value = "single" },
     { type = "signal", tag = "persona.presente", op = "==", value = true },
-    { type = "face_detected", min_confidence = 0.10 },
+    { type = "signal", tag = "cara.confianza", op = ">=", value = 0.10 },
     { type = "face_at_edge" },
 ]
 
@@ -207,7 +207,7 @@ to = "detected"
 dwell = "500ms"
 guards = [
     { type = "signal", tag = "ocupacion.cardinalidad", op = "==", value = "single" },
-    { type = "face_detected", min_confidence = 0.10 },
+    { type = "signal", tag = "cara.confianza", op = ">=", value = 0.10 },
     { type = "face_not_in_dwell" },
     { type = "face_not_at_edge" },
 ]
@@ -249,7 +249,7 @@ to = "detected"
 dwell = "500ms"
 guards = [
     { type = "signal", tag = "ocupacion.cardinalidad", op = "==", value = "single" },
-    { type = "face_detected", min_confidence = 0.10 },
+    { type = "signal", tag = "cara.confianza", op = ">=", value = 0.10 },
     { type = "face_not_in_dwell" },
     { type = "face_not_at_edge" },
 ]
@@ -309,7 +309,7 @@ to = "detected"
 dwell = "500ms"
 guards = [
     { type = "signal", tag = "ocupacion.cardinalidad", op = "==", value = "single" },
-    { type = "face_detected", min_confidence = 0.10 },
+    { type = "signal", tag = "cara.confianza", op = ">=", value = 0.10 },
     { type = "face_not_in_dwell" },
     { type = "face_not_at_edge" },
 ]
@@ -345,7 +345,7 @@ dwell = "500ms"
 guards = [
     { type = "signal", tag = "ocupacion.cardinalidad", op = "==", value = "single" },
     { type = "signal", tag = "persona.presente", op = "==", value = true },
-    { type = "face_detected", min_confidence = 0.10 },
+    { type = "signal", tag = "cara.confianza", op = ">=", value = 0.10 },
     { type = "face_not_in_dwell" },
     { type = "face_not_at_edge" },
 ]

@@ -6,6 +6,7 @@ use super::catalogs::*;
 use crate::DepthRuleSnapshot;
 use crate::config::{FsmCatalog, FsmRoles, FsmTransition};
 use crate::health::Health;
+use crate::signals::{Ratio, SignalValue};
 use crate::zones::ZoneEngine;
 
 #[test]
@@ -50,13 +51,17 @@ fn roles_decouple_engine_from_state_names() {
         face_confidence: Some(0.9),
         ..Default::default()
     };
+    let face_signals = snapshot_with_signals(&[(
+        "cara.confianza",
+        SignalValue::Ratio(Ratio::new(0.9).unwrap()),
+    )]);
     let reset = engine
-        .evaluate_with_context_at(&[], None, &health, &depth, &face, start)
+        .evaluate_with_signals_at(&[], None, &health, &depth, &face, &face_signals, start)
         .expect("data fresh resets to home");
     assert_eq!(reset.to, "home");
 
     let engaged = engine
-        .evaluate_with_context_at(&[], None, &health, &depth, &face, start)
+        .evaluate_with_signals_at(&[], None, &health, &depth, &face, &face_signals, start)
         .expect("face enters engaged");
     assert_eq!(engaged.to, "engaged");
     assert!(engine.face_was_inside());
@@ -123,8 +128,10 @@ fn fsm_recovers_from_blind_when_data_returns() {
             FsmTransition {
                 from: "idle".into(),
                 to: "detected".into(),
-                guards: vec![FsmGuard::FaceDetected {
-                    min_confidence: 0.5,
+                guards: vec![FsmGuard::Signal {
+                    tag: "cara.confianza".into(),
+                    op: ">=".into(),
+                    value: SignalLiteral::Float(0.5),
                 }],
                 dwell: None,
             },
@@ -155,13 +162,18 @@ fn fsm_recovers_from_blind_when_data_returns() {
         face_confidence: Some(0.9),
         ..Default::default()
     };
+    let face_signals = snapshot_with_signals(&[(
+        "cara.confianza",
+        SignalValue::Ratio(Ratio::new(0.9).unwrap()),
+    )]);
     let entered = engine
-        .evaluate_with_context_at(
+        .evaluate_with_signals_at(
             &[],
             Some(&zones),
             &health,
             &DepthRuleSnapshot::default(),
             &face,
+            &face_signals,
             start,
         )
         .expect("face enters detected");
@@ -170,12 +182,13 @@ fn fsm_recovers_from_blind_when_data_returns() {
 
     let _ = health.evaluate_at(start + std::time::Duration::from_millis(200));
     let blind = engine
-        .evaluate_with_context_at(
+        .evaluate_with_signals_at(
             &[],
             Some(&zones),
             &health,
             &DepthRuleSnapshot::default(),
             &face,
+            &face_signals,
             start + std::time::Duration::from_millis(200),
         )
         .expect("stale signal forces blind");
@@ -189,12 +202,13 @@ fn fsm_recovers_from_blind_when_data_returns() {
     let recovered_from_blind = health.touch_at(start + std::time::Duration::from_millis(300));
     assert!(recovered_from_blind, "touch reports the exit from blind");
     let result = engine
-        .evaluate_with_context_at(
+        .evaluate_with_signals_at(
             &[],
             Some(&zones),
             &health,
             &DepthRuleSnapshot::default(),
             &face,
+            &face_signals,
             start + std::time::Duration::from_millis(300),
         )
         .expect("fresh signal exits blind");
@@ -220,8 +234,10 @@ fn force_safe_state_purges_corrupted_state_and_recovers_to_idle() {
             FsmTransition {
                 from: "idle".into(),
                 to: "detected".into(),
-                guards: vec![FsmGuard::FaceDetected {
-                    min_confidence: 0.5,
+                guards: vec![FsmGuard::Signal {
+                    tag: "cara.confianza".into(),
+                    op: ">=".into(),
+                    value: SignalLiteral::Float(0.5),
                 }],
                 dwell: None,
             },
@@ -258,26 +274,32 @@ fn force_safe_state_purges_corrupted_state_and_recovers_to_idle() {
         face_in_dwell: Some(true),
         ..Default::default()
     };
+    let face_signals = snapshot_with_signals(&[(
+        "cara.confianza",
+        SignalValue::Ratio(Ratio::new(0.9).unwrap()),
+    )]);
 
     // Estado torcido: detected con latch y un timer de dwell pendiente.
     let entered = engine
-        .evaluate_with_context_at(
+        .evaluate_with_signals_at(
             &[],
             Some(&zones),
             &health,
             &DepthRuleSnapshot::default(),
             &face,
+            &face_signals,
             start,
         )
         .expect("face entra a detected");
     assert_eq!(entered.to, "detected");
     assert!(engine.face_was_inside());
-    let pending = engine.evaluate_with_context_at(
+    let pending = engine.evaluate_with_signals_at(
         &[],
         Some(&zones),
         &health,
         &DepthRuleSnapshot::default(),
         &face,
+        &face_signals,
         start + std::time::Duration::from_millis(50),
     );
     assert!(pending.is_none(), "dwell de 1s todavia no cumple");
@@ -307,12 +329,13 @@ fn force_safe_state_purges_corrupted_state_and_recovers_to_idle() {
 
     // Ciclo siguiente: data_fresh reconstruye desde idle, latch limpio.
     let recovered = engine
-        .evaluate_with_context_at(
+        .evaluate_with_signals_at(
             &[],
             Some(&zones),
             &health,
             &DepthRuleSnapshot::default(),
             &face,
+            &face_signals,
             start + std::time::Duration::from_millis(200),
         )
         .expect("data fresh sale de blind");
