@@ -114,7 +114,11 @@ pub(super) fn catalog_with_roles(roles: FsmRoles) -> FsmCatalog {
             FsmTransition {
                 from: "engaged".into(),
                 to: "home".into(),
-                guards: vec![FsmGuard::FaceAbsent],
+                guards: vec![FsmGuard::Signal {
+                    tag: "cara.presente".into(),
+                    op: "==".into(),
+                    value: SignalLiteral::Bool(false),
+                }],
                 dwell: None,
             },
         ],

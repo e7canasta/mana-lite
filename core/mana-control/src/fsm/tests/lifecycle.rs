@@ -67,12 +67,13 @@ fn roles_decouple_engine_from_state_names() {
     assert!(engine.face_was_inside());
 
     let home = engine
-        .evaluate_with_context_at(
+        .evaluate_with_signals_at(
             &[],
             None,
             &health,
             &depth,
             &FsmSceneContext::default(),
+            &snapshot_with_signals(&[("cara.presente", SignalValue::Bool(false))]),
             start,
         )
         .expect("face absence resets to home");

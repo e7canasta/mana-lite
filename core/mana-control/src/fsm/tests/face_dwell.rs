@@ -127,7 +127,11 @@ fn edge_priority_blocks_dwell_until_face_leaves_edge() {
                         op: "==".into(),
                         value: SignalLiteral::Bool(true),
                     },
-                    FsmGuard::FaceAbsent,
+                    FsmGuard::Signal {
+                        tag: "cara.presente".into(),
+                        op: "==".into(),
+                        value: SignalLiteral::Bool(false),
+                    },
                     FsmGuard::FaceNotInDwell,
                     FsmGuard::FaceNotAtEdge,
                 ],
@@ -138,7 +142,10 @@ fn edge_priority_blocks_dwell_until_face_leaves_edge() {
     let start = Instant::now(); // cfg(test)
     let mut engine = engine_at(&catalog, start);
     let health = Health::new_at(10_000, 5_000, start);
-    let signals = snapshot_with_signals(&[("persona.presente", SignalValue::Bool(true))]);
+    let signals = snapshot_with_signals(&[
+        ("persona.presente", SignalValue::Bool(true)),
+        ("cara.presente", SignalValue::Bool(true)),
+    ]);
     let at_edge = FsmSceneContext {
         person_present: true,
         face_present: true,

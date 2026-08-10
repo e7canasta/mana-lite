@@ -132,7 +132,7 @@ dwell = "3s"
 guards = [
     { type = "signal", tag = "ocupacion.cardinalidad", op = "==", value = "single" },
     { type = "signal", tag = "persona.presente", op = "==", value = true },
-    { type = "face_absent" },
+    { type = "signal", tag = "cara.presente", op = "==", value = false },
 ]
 
 [[fsm.transitions]]
@@ -178,7 +178,7 @@ dwell = "700ms"
 guards = [
     { type = "signal", tag = "ocupacion.cardinalidad", op = "==", value = "single" },
     { type = "signal", tag = "persona.presente", op = "==", value = true },
-    { type = "face_absent" },
+    { type = "signal", tag = "cara.presente", op = "==", value = false },
     { type = "face_not_in_dwell" },
     { type = "face_not_at_edge" },
 ]
@@ -219,7 +219,7 @@ dwell = "700ms"
 guards = [
     { type = "signal", tag = "ocupacion.cardinalidad", op = "==", value = "single" },
     { type = "signal", tag = "persona.presente", op = "==", value = true },
-    { type = "face_absent" },
+    { type = "signal", tag = "cara.presente", op = "==", value = false },
     { type = "face_not_in_dwell" },
     { type = "face_not_at_edge" },
 ]
@@ -261,7 +261,7 @@ dwell = "700ms"
 guards = [
     { type = "signal", tag = "ocupacion.cardinalidad", op = "==", value = "single" },
     { type = "signal", tag = "persona.presente", op = "==", value = true },
-    { type = "face_absent" },
+    { type = "signal", tag = "cara.presente", op = "==", value = false },
     { type = "face_not_in_dwell" },
     { type = "face_not_at_edge" },
 ]
@@ -357,7 +357,7 @@ dwell = "500ms"
 guards = [
     { type = "signal", tag = "ocupacion.cardinalidad", op = "==", value = "single" },
     { type = "signal", tag = "persona.presente", op = "==", value = true },
-    { type = "face_absent" },
+    { type = "signal", tag = "cara.presente", op = "==", value = false },
 ]
 
 [[fsm.transitions]]

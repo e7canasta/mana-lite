@@ -62,8 +62,6 @@ pub enum FsmGuard {
         op: String,
         value: SignalLiteral,
     },
-    #[serde(rename = "face_absent")]
-    FaceAbsent,
     #[serde(rename = "face_in_dwell")]
     FaceInDwell,
     #[serde(rename = "face_not_in_dwell")]
@@ -263,7 +261,6 @@ pub(super) fn eval_guard(guard: &ProgramGuard, ctx: &GuardCtx<'_>) -> bool {
         ProgramGuard::Signal { tag, op, value } => {
             ctx.signals.matches(tag, *op, value).unwrap_or(false)
         }
-        ProgramGuard::FaceAbsent => !ctx.scene.face_present,
         ProgramGuard::FaceInDwell => ctx.scene.face_in_dwell == Some(true),
         ProgramGuard::FaceNotInDwell => ctx.scene.face_in_dwell == Some(false),
         ProgramGuard::FaceAtEdge => ctx.scene.at_edge,

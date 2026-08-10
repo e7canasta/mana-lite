@@ -153,7 +153,11 @@ fn catalog() -> FsmCatalog {
                 FsmTransition {
                     from: "engaged".into(),
                     to: "watching".into(),
-                    guards: vec![FsmGuard::FaceAbsent],
+                    guards: vec![FsmGuard::Signal {
+                        tag: "cara.presente".into(),
+                        op: "==".into(),
+                        value: mana_lite::fsm::SignalLiteral::Bool(false),
+                    }],
                     dwell: None,
                 },
                 // Observes RoomCardinality::Multiple. Reachable from both the
