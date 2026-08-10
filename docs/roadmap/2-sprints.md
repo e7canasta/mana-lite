@@ -163,25 +163,57 @@ son un oráculo byte-exacto de su salida. Es el refactor más seguro del repo.
 `src/viz/mod.rs` ya no es el problema que era: el Sprint 4 le puso el `cfg`, así
 que la frontera entre "esto es viz" y "esto no" está dibujada por el compilador.
 
+### Son nueve funciones, no cinco
+
+Medido con `too-many-lines-threshold = 80` sobre **todo** el workspace — la
+compuerta de la Etapa A solo corría `-p mana-control` y por eso tres de estas
+nunca aparecieron:
+
+| Función | Líneas | Archivo |
+|---|--:|---|
+| `write_event` | **676** | `src/logger/serialize.rs` |
+| `bootstrap_with_reader` | **490** | `src/app/bootstrap.rs` |
+| *(main del probe)* | 134 | `src/bin/depth-image-probe.rs` |
+| `App::run_inference` | 132 | `src/app/mod.rs` |
+| `InferEngine::run` | 130 | `src/infer/mod.rs` |
+| `scene_events_to_log` | 96 | `src/logger/event.rs` |
+| *(helper del probe)* | 91 | `src/bin/depth-image-probe.rs` |
+| `load_model_catalog` | 88 | `src/config/model_loader.rs` |
+| `CascadeConfig::validate` | 85 | **`core/mana-perception/src/cascade.rs`** |
+
 ### Tareas
 
-1. Partir `logger/serialize.rs` por tipo de evento.
-2. Sacar los tests de `infer/mod.rs` y `logger/mod.rs` a módulos hermanos
-   (mismo movimiento que `fsm/tests/` en la Etapa A).
-3. Partir `viz/mod.rs`.
+1. **Sacar los tests primero** — movimiento mecánico que por sí solo resuelve
+   dos archivos: `logger/mod.rs` queda en 336 líneas de producción (de 920) e
+   `infer/mod.rs` en 580 (de 1135). No son god files: son archivos normales con
+   una montaña de tests adentro.
+2. Partir `write_event` en una función por variante de `Event` (13 brazos).
+3. Partir `scene_events_to_log` y lo que quede de `logger/`.
 4. Partir `config/model_loader.rs`.
-5. Partir `app/mod.rs` por responsabilidad (ciclo, observador, adaptadores).
-6. Red para `bootstrap_with_reader`, y recién después partirla.
+5. Partir `viz/mod.rs` (1182 de producción; el `cfg` del Sprint 4 ya le dibujó
+   la frontera).
+6. Partir `app/mod.rs` y `App::run_inference`.
+7. Las tres que la compuerta del 3A no miraba: `cascade::validate` en
+   `mana-perception` y las dos de `depth-image-probe`.
+8. Red para `bootstrap_with_reader`, y **recién después** partirla.
+
+Plan detallado con los cortes concretos:
+`.cursor/plans/sprint_3_etapa_b_c4e17b90.plan.md`.
 
 ### Compuerta
 
 ```sh
+# --workspace, no -p mana-control: el 3A no miraba perception ni el binario
 cargo clippy --workspace 2>&1 | grep -c 'too many lines'   # → 0 (producción)
+find src core std -name '*.rs' -exec wc -l {} + | sort -rn | head -5   # → nada > 600
 cargo fmt --all --check                                     # → sin salida
 git diff tests/golden/                                      # → vacío
 cargo test --workspace && cargo test --workspace --release
 cargo test --workspace --no-default-features --features ffmpeg
 ```
+
+> Verificá que el `grep` **cuente** antes de empezar: hoy debe dar 9. Una
+> compuerta que arranca en 0 porque el comando está mal escrito no detecta nada.
 
 - [ ] Cero funciones de producción > 80 líneas en todo el repo, o excepción
       declarada **en el código** con `#[allow]` y razón
