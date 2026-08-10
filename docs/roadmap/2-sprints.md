@@ -1,6 +1,7 @@
 # Roadmap de Sprints
 
-*Baseline: 2026-08-09. Contexto: [1-big-picture.md](1-big-picture.md).*
+*Baseline original: 2026-08-09. Reformulado: 2026-08-10, con los sprints 0-2, 3A
+y 4 cerrados. Contexto: [1-big-picture.md](1-big-picture.md).*
 
 Seis sprints secuenciales. El orden no es negociable: **no se refactoriza sin red
 de seguridad, y no hay red de seguridad hasta que compile.**
@@ -8,227 +9,184 @@ de seguridad, y no hay red de seguridad hasta que compile.**
 Cada sprint tiene una **compuerta mecánica** — comandos con salida esperada, no
 criterio. Un revisor externo puede verificarla sin conocer el código.
 
-| Sprint | Objetivo | ADRs |
+| Sprint | Objetivo | Estado | ADRs |
+|---|---|---|---|
+| **0** | Compilación verde | cerrado | — |
+| **1** | Red de seguridad | cerrado | — |
+| **2** | Sellar la frontera | cerrado | 027 · 029 · 030 |
+| **3A** | Legibilidad del lazo | cerrado | 003 · 027 |
+| **4** | Consolidar `std/` y apagar `rerun` | cerrado | 028 (revisa 019) |
+| **3B** | God files del binario | **pendiente** | 003 |
+| **5** | Tabla de señales *(condicional)* | pendiente | 031 |
+
+> El Sprint 4 se adelantó al 3B a propósito: `src/viz/mod.rs` era el god file más
+> grande **y** el objeto del Sprint 4. Partirlo antes de disolverle `mana-viz`
+> adentro y gatearlo habría sido diseñar una partición para después invalidarla.
+
+---
+
+## Lecciones que cambian el método
+
+Cuatro cosas aparecieron entre los sprints 2 y 4 que no estaban en el plan
+original y que conviene tener presentes en los que siguen.
+
+**1. La config declara cosas que el código no honra.** Apareció tres veces:
+
+| Dónde | Qué declaraba | Qué hacía |
 |---|---|---|
-| **0** | Compilación verde | — |
-| **1** | Red de seguridad | — |
-| **2** | Sellar la frontera | 027 · 029 · 030 |
-| **3** | Legibilidad del lazo | 003 · 027 |
-| **4** | Consolidar `std/` | 028 (revisa 019) |
-| **5** | Tabla de señales *(condicional)* | 031 |
+| `compile_with_references(models: &impl Sized)` | validar modelos del FSM | nada — parámetro fantasma |
+| `zone_vacated { min_confidence }` | umbral de confianza | nada — `Vacated` no lleva confianza |
+| `features = ["rerun"]` | build opcional | nada — `src/viz` no estaba gateado |
+
+No es coincidencia: es el patrón de un sistema donde la config creció más rápido
+que su validación. **En cada sprint, revisar si lo que se agrega a un catálogo
+tiene alguien que lo lea.** Un knob que se acepta y se ignora es peor que uno que
+no existe: miente en la revisión.
+
+**2. Las compuertas pueden pasar en vacío.** `git diff tests/golden/` pasó dos
+sprints enteros sin verificar nada, porque el fixture estaba atrapado por `*.jsonl`
+en `.gitignore` y git no reporta archivos sin trackear. Antes de confiar en una
+compuerta, **verificar que falle cuando debe fallar.**
+
+**3. El golden JSONL no ve todo.** `scene_events_to_log` descarta
+`SceneEvent::Occupancy` y `SceneEvent::FsmState`, así que reordenarlos deja el
+golden verde. El detector de orden real es
+`tests/golden/multi_actor_cycle.events.txt`, que fija la secuencia cruda de
+`SceneEvent` por tick. Cualquier sprint que toque `scan()` se verifica contra
+**ese** archivo, no contra el JSONL.
+
+**4. Un warning no prueba ausencia de `cfg`.** Durante la revisión del Sprint 4 se
+concluyó que el gating de `rerun` no estaba hecho porque `src/viz/mod.rs` seguía
+tirando warnings y sus tests seguían corriendo. Ambas cosas pasan igual con el
+feature **encendido**. La verificación correcta es
+`cargo check --no-default-features`, no leer la salida del build por defecto.
+**Medir la condición, no un síntoma que la acompaña.**
 
 ---
 
-## Sprint 0 — Compilación verde
+## Sprints cerrados
 
-**Objetivo:** cerrar la migración en vuelo sin tomar una sola decisión de diseño.
-Es el único sprint donde la regla es *no pensar*: arreglar imports, nada más.
+### Sprint 0 — Compilación verde · cerrado 2026-08-09
 
-**Status (2026-08-09): cerrado.** `91af4e8` cerró la migración (compilación
-verde, suite verde). El residual reconectó depth → `ProcessImage`, desforkeó
-`DomStr`, y marcó las violaciones restantes con `FIXME(ADR-027|029)`.
+`91af4e8` cerró la migración en vuelo. El residual reconectó depth →
+`ProcessImage`, desforkeó `DomStr`, y dejó las violaciones marcadas con
+`FIXME(ADR-027|029)` en vez de arregladas — sin red, no se toca.
+
+### Sprint 1 — Red de seguridad · cerrado
+
+Golden JSONL de un ciclo completo (`synthetic_cycle.jsonl`), tests de
+caracterización por componente de T2 con reloj inyectado, cadencia bajo stall, y
+compilación de todos los catálogos TOML del repo.
+
+### Sprint 2 — Sellar la frontera · cerrado 2026-08-10
+
+`mana-id` (T0) con `DomStr` + `domain_id!`; corte `cascade → kalman/track` vía
+`GateObservation`; `logger` fuera de `mana-control`; `ScanInstant` solo nace de
+`ScanTimeline`; newtypes en `SceneObservation` y `Track`; shim `depth` eliminado.
+`LoopId` en `ControlState` y `ScanTimeline` para la portabilidad a mana-os
+multistream, con `N=1` en el binario.
+
+**Lo que el pulido encontró después de la compuerta:**
+
+- El corte de cascade había borrado en silencio la validación de modelos del FSM.
+  Un estado que nombraba un modelo inexistente compilaba y corría **sin detector**.
+- `ZoneEngine` iteraba un `HashMap`: con dos zonas cambiando en el mismo tick, el
+  orden de eventos que alimenta la FSM no era reproducible. Ahora `BTreeMap`.
+- La política de lints vivía bajo `[package]`, así que gobernaba solo el binario;
+  los crates de tier —los que tienen la lógica determinista— eran los que se
+  escapaban. Ahora `[workspace.lints]`.
+
+### Sprint 3 Etapa A — Legibilidad del lazo · cerrado 2026-08-10
+
+`scan()` es ocho pasos nombrados (`predict → age_input → update_presence →
+update_tracking → update_occupancy → update_zones → evaluate_fsm →
+evaluate_health`); tests de `fsm/` fuera de `mod.rs` repartidos por tema;
+`PresenceFilter::update_at` partido; `hungarian_min` entera con
+`#[allow(clippy::too_many_lines)]` — excepción declarada en el código, no solo en
+el plan.
+
+Compuerta verificada: `length>120` en `core/` → 0 · `cargo fmt --all --check` sin
+salida · `too many lines` en producción de `mana-control` → 0 · goldens sin diff ·
+**370 tests debug / 369 release** (la diferencia es el test `cfg(debug_assertions)`
+del sello de `LoopId`).
+
+### Sprint 4 — Consolidar `std/` y apagar `rerun` · cerrado 2026-08-10
+
+De **9 paquetes a 6**: `mana-lite`, `mana-control`, `mana-perception`, `mana-id`,
+`mana-geometry`, `mana-media`.
+
+- `mana-media` absorbe `mana-video` + `mana-rtsp` + los tipos de frame
+  (`PixelFormat`, `RawFrameV1`), que **no** eran residuo de iceoryx2 sino tipos
+  vivos con 31 usos: se mudaron, no se borraron.
+- `mana-viz` disuelto en `src/viz/`, gateado detrás del feature `rerun`.
+- Tipos `*V1` de escena sin consumidor, borrados.
+- `rerun` apagado compila y corre el lazo completo, sin stub de `VizBridge`.
+
+**El payoff medido:** `rerun` arrastraba **246 de los 510 crates** del build y su
+feature flag no funcionaba (73 errores al intentar apagarlo, 69 en
+`src/viz/mod.rs`). Con el gating puesto, `--no-default-features --features ffmpeg`
+compila **264**.
+
+Compuerta: 6 paquetes · `cargo check --no-default-features --features ffmpeg` sin
+errores · cero `*V1` de escena · goldens sin diff.
+
+---
+
+## Sprint 3 Etapa B — God files del binario *(pendiente)*
+
+**Objetivo:** que los archivos de T3 se puedan leer. Es el mismo objetivo que la
+Etapa A, un tier más afuera.
+
+### Orden por cobertura, no por tamaño
+
+La red de los sprints 1-3 cubre **T2**. Estos archivos son **T3** y su cobertura
+es despareja — el orden sale de ahí, no del número de líneas:
+
+| Orden | Archivo | Líneas | Tests directos | Red real |
+|:-:|---|--:|--:|---|
+| 1 | `src/logger/serialize.rs` | 826 | 0 | **byte-exacta** vía los tres goldens: es lo que los renderiza |
+| 2 | `src/infer/mod.rs` | 1135 | 27 | buena |
+| 3 | `src/logger/mod.rs` | 920 | 23 | buena |
+| 4 | `src/viz/mod.rs` | 1541 | 11 | media; ahora gateado, la frontera ya está dibujada |
+| 5 | `src/config/model_loader.rs` | 719 | 3 | fina; `fsm_catalogs_compile` cubre carga de catálogos |
+| 6 | `src/app/mod.rs` | 1088 | 4 | fina |
+| 7 | `src/app/bootstrap.rs` | 570 | **0** | **ninguna** |
+
+`bootstrap_with_reader` (la función más larga del repo) va **última**, no primera.
+Es la pieza menos cubierta: abrir con ella es el movimiento más riesgoso con la
+red más fina. Antes de tocarla hay que construirle red, igual que se hizo con
+`scan()`.
+
+`serialize.rs` va primera por lo contrario: cero tests propios pero los goldens
+son un oráculo byte-exacto de su salida. Es el refactor más seguro del repo.
+
+`src/viz/mod.rs` ya no es el problema que era: el Sprint 4 le puso el `cfg`, así
+que la frontera entre "esto es viz" y "esto no" está dibujada por el compilador.
 
 ### Tareas
 
-1. ~~Reescribir `src/lib.rs`: eliminar los 13 `pub mod` de archivos borrados.~~
-2. ~~Resolver `crate::config` — mover a `mana-control::config` las structs de política.~~
-3. ~~Resolver `crate::depth` usando el shim `pub mod depth` (conservado).~~
-4. ~~Restaurar `mana-control/src/domain.rs` con `DomStr` completo — copia fiel.~~ Residual: mecanismo en `mana-control`, `ModelId`/`ClassName` en el binario.
-5. ~~Arreglar los imports de los tests a las rutas nuevas.~~
-6. Dejar las violaciones marcadas: `#[path]` de cascade → `FIXME(ADR-027)`;
-   `ScanInstant::now()` / `Health::{new,touch,evaluate}` → `FIXME(ADR-029)`.
-7. **Residual:** reconectar `evaluate_depth_rules` → `set_depth` (había quedado
-   en `reset_depth`); test de caracterización `depth_evidence_reaches_fsm`.
+1. Partir `logger/serialize.rs` por tipo de evento.
+2. Sacar los tests de `infer/mod.rs` y `logger/mod.rs` a módulos hermanos
+   (mismo movimiento que `fsm/tests/` en la Etapa A).
+3. Partir `viz/mod.rs`.
+4. Partir `config/model_loader.rs`.
+5. Partir `app/mod.rs` por responsabilidad (ciclo, observador, adaptadores).
+6. Red para `bootstrap_with_reader`, y recién después partirla.
 
 ### Compuerta
 
 ```sh
-cargo check --workspace --all-targets     # → 0 errores
-cargo test --workspace                    # → verde (incluye depth_evidence_reaches_fsm)
-git diff tests/golden/synthetic_cycle.jsonl   # → vacío
+cargo clippy --workspace 2>&1 | grep -c 'too many lines'   # → 0 (producción)
+cargo fmt --all --check                                     # → sin salida
+git diff tests/golden/                                      # → vacío
+cargo test --workspace && cargo test --workspace --release
+cargo test --workspace --no-default-features --features ffmpeg
 ```
 
-- [x] Cero tipos nuevos de diseño, cero traits nuevos; `project_depth_results` es
-      mapeo 1:1 entre forks temporales, no un tipo nuevo
-
-### Trampa
-
-Este sprint invita a *"ya que estoy, arreglo esto otro"*. **No.** Cualquier
-mejora que se cuele acá viaja sin red de seguridad. Las violaciones de frontera
-se dejan marcadas, no arregladas — excepto el cable de depth, que era
-comportamiento clínico perdido, no una mejora.
-
----
-
-## Sprint 1 — Red de seguridad
-
-**Objetivo:** 5 tests no alcanzan para refactorizar un lazo de control clínico.
-Antes de mover una línea de diseño, congelar el comportamiento observable.
-
-### Tareas
-
-1. Congelar el contrato JSONL: golden de un ciclo completo con transiciones de
-   ocupación, entrada/salida de zona y al menos un ciclo
-   `blind → data_fresh → recuperado`.
-2. Tests de caracterización por componente de T2, con reloj inyectado:
-   histéresis de presencia, cada transición de `OccupancyStateMachine`, guards de
-   dwell del FSM, reglas de profundidad.
-3. Test de cadencia bajo stall: N ticks sin frame nuevo deben producir N scans y
-   la secuencia de health esperada.
-4. Test que compile **todos** los catálogos TOML del repo con
-   `FsmProgram::compile()` y espere cero errores.
-5. **Depth end-to-end vía `App`:** el residual del Sprint 0 cubrió el contrato
-   de control (`ProcessImage` → `scan` → guard) y el mapeo
-   `project_depth_results`. Falta un test que pase por
-   `App::evaluate_depth_rules` con un `DepthFrame` sintético y afirme que
-   `control_image.depth_snapshot().is_triggered(...)` es `Some(true)`. Es la
-   clase de agujero que dejó pasar la regresión `reset_depth`.
-
-### Compuerta
-
-- [ ] Cada componente de T2 tiene **≥ 1 test de transición y ≥ 1 de no-transición**
-- [ ] El golden JSONL cubre **ocupación, zona, FSM y health** en una corrida
-- [ ] Todo test de T2 construye su propia `ScanTimeline` — cero `Instant::now()` en tests nuevos
-- [ ] Los tests pasan con `--release` y con `-- --test-threads=1` por igual
-- [ ] Existe un test que ejercita depth **a través del adaptador de `App`**, no solo del port de control
-
-### Por qué es un sprint propio
-
-La suite ya pasa, pero cubría 5 casos de integración y ninguno tocaba depth
-end-to-end vía `App`. El residual del Sprint 0 lo demostró: `scan()` funcionaba
-con evidencia, y el adaptador la tiraba. No se puede verificar "comportamiento
-preservado" en los sprints 2-4 sin congelar primero esos caminos.
-
----
-
-## Sprint 2 — Sellar la frontera
-
-**Objetivo:** hacer que las violaciones de tier sean imposibles de compilar.
-Preservando comportamiento — la red del Sprint 1 lo verifica.
-
-### Tareas
-
-1. Crear `mana-id` (T0) con `DomStr` + `domain_id!`. Cada crate declara sus
-   propias instancias ([ADR-030](../adrs/030-shared-mechanism-owned-vocabulary.md)).
-2. Cortar `cascade → kalman/track`: percepción no lee estado del programa. Es
-   realimentar la salida al sensor sin pasar por la imagen de proceso.
-3. Sacar `logger::Event` de `scan.rs`. `scan()` ya devuelve `Vec<SceneEvent>`;
-   el mapeo a JSONL se muda al binario (T3).
-4. Eliminar `ScanInstant::now()` y todos los wrappers sin `_at`. `ScanInstant`
-   solo nace de `ScanTimeline` ([ADR-029](../adrs/029-injected-clock.md)).
-5. Migrar `SceneObservation.class` y `source_models` de `String` a newtypes.
-6. Eliminar el shim `pub mod depth`: medición → `mana-perception`, reglas
-   clínicas → `mana-control`.
-
-### Compuerta
-
-```sh
-grep -rn 'kalman\|track' core/mana-perception/src            # → 0
-grep -rn 'logger' core/mana-control/src                      # → 0
-grep -rn 'Instant::now' core/mana-control/src | grep -v 'cfg(test)'   # → 0
-git diff tests/golden/                                       # → vacío
-```
-
-- [ ] `mana-control/Cargo.toml` = `mana-id` + `mana-geometry` + `serde`. Nada más.
-
-### Decisión a tomar acá
-
-**Multi-cámara.** Si está en el roadmap a 12 meses, parametrizar `ControlState` y
-`ScanTimeline` por lazo es barato ahora y caro después de 20 reglas más. Es el
-único riesgo que ningún sprint cubre por defecto.
-
----
-
-## Sprint 3 — Legibilidad del lazo
-
-**Objetivo:** que un revisor externo pueda auditar el lazo de control. Empieza
-por `scan.rs`, **no** por `viz/mod.rs`.
-
-**Status (2026-08-10): Etapa A cerrada.** `scan()` es ocho pasos nombrados; tests
-de `fsm/` fuera de `mod.rs`; `PresenceFilter::update_at` partido;
-`hungarian_min` queda entera con `#[allow(clippy::too_many_lines)]` (excepción
-declarada). Detector de orden: `tests/golden/multi_actor_cycle.events.txt`
-(el JSONL no ve `Occupancy`/`FsmState` — `scene_events_to_log` los descarta).
-
-**Etapa B (pendiente):** partir god files del binario y sacar tests de
-`logger/mod.rs` / `infer/mod.rs`. Números reales hoy: `viz/mod.rs` 1539,
-`infer/mod.rs` 1135, `app/mod.rs` 1045, `logger/mod.rs` 920,
-`logger/serialize.rs` 830, `config/model_loader.rs` 719. Candidato a abrir:
-`bootstrap_with_reader` (~469 líneas de código).
-
-### Tareas
-
-1. ~~`rustfmt` sobre el workspace~~ (Etapa A)
-2. ~~Partir `scan()` en los ocho pasos del ciclo~~ (Etapa A)
-
-   ```
-   predict → age_input → update_presence → update_tracking
-           → update_occupancy → update_zones → evaluate_fsm → evaluate_health
-   ```
-
-   No es descomposición estética: es el ciclo de scan hecho explícito.
-3. Partir los god files reales por líneas de *producción* (Etapa B):
-   `viz/mod.rs` (1539), `logger/serialize.rs` (830), `app/mod.rs` (1045),
-   `config/model_loader.rs` (719); también `infer/mod.rs` (1135) y
-   `logger/mod.rs` (920) al mover tests.
-4. ~~Mover tests fuera de `fsm/mod.rs`~~ (Etapa A). Queda Etapa B:
-   `logger/mod.rs` e `infer/mod.rs`.
-
-### Compuerta (Etapa A)
-
-```sh
-awk 'length > 120 {c++} END {print c+0}' $(find core -name '*.rs')   # → 0
-cargo fmt --all --check                                              # → sin salida
-cargo clippy -p mana-control 2>&1 | grep -c 'too many lines'         # → 0
-cargo clippy --workspace --all-targets 2>&1 | grep -c '^warning:'    # → ≤ 768
-# (748 era el baseline con umbral 100; clippy.toml a 80 suma avisos en T3
-#  que son Etapa B — no regresiones de Etapa A)
-git diff tests/golden/                                               # → vacío
-```
-
-- [x] Cero funciones de producción > **80 líneas** en `mana-control`
-      (`hungarian_min` exceptuada en código)
-- [x] `scan()` lee como **ocho llamadas nombradas** en el orden del ciclo
-- [x] Transcripción de `SceneEvent` en `multi_actor_cycle.events.txt` intacta
-
-### Por qué este orden
-
-El archivo con más líneas de producción (`viz/mod.rs`) no es el más urgente. El
-ilegible sí — y es el que implementa el lazo clínico.
-
----
-
-## Sprint 4 — Consolidar `std/` y apagar `rerun`
-
-**Objetivo:** de 9 paquetes a 6, y que el feature `rerun` apague de verdad la
-visualización.
-
-**Status (2026-08-10): cerrado.** `mana-media` absorbe video/rtsp/frame types;
-`mana-viz` disuelto en `src/viz/`; tipos iceoryx de escena borrados; build sin
-`rerun` compila el lazo completo.
-
-### Tareas
-
-1. ~~Gatear `rerun` en el binario (sin stub de VizBridge).~~
-2. ~~Borrar helpers muertos de mana-viz; borrar `*V1` de escena sin consumidor.~~
-3. ~~Fusionar `mana-video` + `mana-rtsp` + (`PixelFormat`, `RawFrameV1`) en
-   `mana-media`.~~
-4. ~~Disolver `mana-viz` en `src/viz/`.~~
-5. ~~Actualizar `docs/ARCHITECTURE.md` y `docs/ROADMAP.md`.~~
-
-### Compuerta
-
-```sh
-cargo metadata --no-deps --format-version 1 | jq '.packages | length'   # → 6
-cargo check --workspace --no-default-features --features ffmpeg         # → 0 errores
-grep -rn 'DetectionV1\|SceneMsgV1\|SceneEntityV1\|ZoneV1\|RoiCommandV1\|DetectionBatchV1' \
-  --include='*.rs' .                                                    # → 0
-git diff tests/golden/                                                  # → vacío
-```
-
-- [x] Feature `rerun` apagado compila y corre sin visualización
-- [x] `mana-media` no depende de control ni perception
-- [x] Seis paquetes en el workspace
+- [ ] Cero funciones de producción > 80 líneas en todo el repo, o excepción
+      declarada **en el código** con `#[allow]` y razón
+- [ ] Ningún archivo de `src/` supera las 600 líneas
+- [ ] `bootstrap_with_reader` tiene test antes de que la toquen
 
 ---
 
@@ -241,7 +199,7 @@ git diff tests/golden/                                                  # → va
 | Disparador | Hoy | Umbral |
 |---|:-:|:-:|
 | Variantes de `FsmGuard` | 18 | 25 |
-| Campos de `FsmSceneContext` | **7** | 12 |
+| Campos de `FsmSceneContext` | 7 | 12 |
 | Reglas definidas por despliegue | no | sí |
 
 Mientras tanto, la decisión inmediata que cambia: **cada booleano plano que se
@@ -259,6 +217,24 @@ Detalle completo en [ADR-031](../adrs/031-scene-signal-table.md).
 
 ---
 
+## Deuda registrada, sin sprint asignado
+
+Cosas medidas que no entran en ningún sprint actual. Se anotan para que la
+decisión de no hacerlas sea explícita.
+
+| Deuda | Tamaño | Nota |
+|---|---|---|
+| Casts numéricos sin auditar | ~412 avisos | precisión `u32→f32`, truncación `u128→u64` / `f64→u64`, pérdida de signo. Concentrados en `mana-geometry` y `mana-control`. Cada sitio necesita criterio propio: saturar, clamp, o `#[allow]` documentado |
+| Comparación exacta de floats | 26 avisos | en un lazo de control, cada una merece una mirada |
+| `SceneEvent::FsmState(String)` | — | debería ser `StateId` |
+| `ProgramState.models: Vec<String>` | — | debería ser `Vec<ModelId>` |
+| `current_models() -> Vec<String>` | — | aloca un `Vec` por scan |
+| Helpers muertos en `logger/serialize.rs` | 5 fns | `write_bool`, `write_optional_*`; se resuelven al partir el archivo en 3B |
+
+El conteo global de clippy es compuerta de **no-regresión**, no de cero.
+
+---
+
 ## Fases del sprint
 
 Ernesto implementa, Claude revisa y pule. Cada sprint corre el mismo ciclo de
@@ -266,7 +242,7 @@ cinco fases.
 
 | # | Fase | Qué | Quién |
 |---|---|---|---|
-| 1 | **Congelar** | Antes de tocar nada: correr la suite, guardar el golden, anotar qué no puede cambiar. Si el sprint no puede nombrar su invariante, no está listo para empezar. | Ernesto |
+| 1 | **Congelar** | Antes de tocar nada: correr la suite, guardar los goldens, anotar qué no puede cambiar. Si el sprint no puede nombrar su invariante, no está listo para empezar. | Ernesto |
 | 2 | **Ejecutar** | Implementación, commits chicos y temáticos. Un commit no mezcla *mover* código con *cambiar* código — esa mezcla es lo que hace irrevisable un refactor. | Ernesto |
 | 3 | **Verificar** | Correr la compuerta del sprint. Es mecánica: comandos con salida esperada. Si una falla, el sprint no está listo para revisión. | Ernesto |
 | 4 | **Revisar** | Paso de revisión sobre el diff completo: fronteras, invariantes de tier, comportamiento preservado, legibilidad para un tercero. | Claude |
@@ -285,12 +261,36 @@ cosas:
 ### Orden de revisión
 
 1. La **frontera de tier** no se rompió.
-2. El **golden** es idéntico, o la diferencia está justificada.
+2. Los **goldens** son idénticos, o la diferencia está justificada.
 3. El código nuevo lo puede **leer alguien que no lo escribió**.
 4. **Reuso y simplificación.**
 
 En ese orden: un cleanup elegante que rompe una frontera se rechaza antes de
 mirarle el estilo.
+
+### Antes de confiar en una compuerta
+
+Verificar que **falle cuando debe fallar**. Dos de las compuertas de este roadmap
+pasaron en vacío durante sprints enteros: `git diff tests/golden/` sobre un
+fixture sin trackear, y el golden JSONL como detector de orden de eventos.
+
+---
+
+## Nota operativa: tiempo de build
+
+Cada worktree tiene su propio `target/`, y `cargo clippy` no comparte artefactos
+con `cargo test`. Para no recompilar el workspace por worktree:
+
+```sh
+export CARGO_TARGET_DIR=$HOME/.cache/mana-lite-target
+```
+
+No va en el repo: compartir requiere ruta absoluta, que no es portable entre
+máquinas. `debug` y `release` son dos perfiles, o sea dos compilaciones completas
+— eso es inherente a correr las dos compuertas.
+
+Desde el Sprint 4, `--no-default-features --features ffmpeg` compila 264 crates en
+vez de 510. Para iterar sobre T2, es la forma rápida.
 
 ---
 
