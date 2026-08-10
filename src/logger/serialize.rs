@@ -572,11 +572,7 @@ pub fn write_event(event: &Event, ts: &str, buf: &mut Vec<u8>) {
             buf.extend_from_slice(b",\"at_edge\":");
             buf.extend_from_slice(if *at_edge { b"true" } else { b"false" });
             buf.extend_from_slice(b",\"face_was_inside\":");
-            buf.extend_from_slice(if *face_was_inside {
-                b"true"
-            } else {
-                b"false"
-            });
+            buf.extend_from_slice(if *face_was_inside { b"true" } else { b"false" });
             buf.extend_from_slice(b",\"face_model_ran\":");
             buf.extend_from_slice(if *face_model_ran { b"true" } else { b"false" });
             buf.extend_from_slice(b",\"active_timers\":[");

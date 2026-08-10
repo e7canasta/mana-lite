@@ -3,7 +3,9 @@
 use std::collections::HashSet;
 use std::path::Path;
 
-use mana_lite::config::{load_depth_rules, load_fsm_catalog, load_model_catalog, load_zone_catalog};
+use mana_lite::config::{
+    load_depth_rules, load_fsm_catalog, load_model_catalog, load_zone_catalog,
+};
 use mana_lite::fsm::FsmProgram;
 
 const FSM_PATHS: &[&str] = &[

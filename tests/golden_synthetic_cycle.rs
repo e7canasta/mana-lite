@@ -16,7 +16,9 @@ use mana_control::config::{
 use mana_control::domain::LoopId;
 use mana_lite::fsm::{FsmEngine, FsmGuard, FsmProgram};
 use mana_lite::health::Health;
-use mana_lite::logger::{Event, LogSink, RecordingSink, render_events_fixed_ts, scene_events_to_log};
+use mana_lite::logger::{
+    Event, LogSink, RecordingSink, render_events_fixed_ts, scene_events_to_log,
+};
 use mana_lite::occupancy::OccupancyStateMachine;
 use mana_lite::presence::PresenceFilter;
 use mana_lite::scan::{
@@ -258,7 +260,10 @@ fn synthetic_cycle_matches_golden_jsonl() {
 
     // Contract assertions independent of golden content: areas the sprint demands.
     let jsonl = actual.as_str();
-    assert!(jsonl.contains(r#""type":"presence""#), "presence events required");
+    assert!(
+        jsonl.contains(r#""type":"presence""#),
+        "presence events required"
+    );
     assert!(jsonl.contains(r#""type":"zone""#), "zone events required");
     assert!(jsonl.contains(r#""type":"fsm""#), "fsm transition required");
     assert!(

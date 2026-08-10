@@ -693,10 +693,7 @@ mod tests {
             rules: test_rules(),
             regions: HashMap::new(),
         };
-        let models = HashMap::from([
-            ("detect-fast".into(), true),
-            ("pose-standard".into(), true),
-        ]);
+        let models = HashMap::from([("detect-fast".into(), true), ("pose-standard".into(), true)]);
         assert!(config.validate(&models, "detect-fast").is_empty());
     }
 
@@ -708,11 +705,7 @@ mod tests {
         };
         let models = HashMap::from([("detect-fast".into(), true)]);
         let errors = config.validate(&models, "pose-standard");
-        assert!(
-            errors
-                .iter()
-                .any(|e| e.contains("must be a cascade root"))
-        );
+        assert!(errors.iter().any(|e| e.contains("must be a cascade root")));
         assert!(
             errors
                 .iter()

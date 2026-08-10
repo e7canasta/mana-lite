@@ -11,6 +11,7 @@ mod observability;
 mod validation;
 mod zones;
 
+pub use crate::fsm::FsmGuard;
 pub use app::{
     AppConfig, DetectionConfig, HealthConfig, InferenceConfig, IngestConfig,
     MANA_TOML_SCHEMA_VERSION, OccupancyPolicy, OutputConfig, PipelineConfig, PresenceConfig,
@@ -21,7 +22,6 @@ pub use blueprint::{
     BlueprintConfig, BlueprintMetadata, CascadeConfig, CascadeRule, SemanticRegion,
 };
 pub use fsm::{FsmCatalog, FsmRoles, FsmRoot, FsmState, FsmTransition};
-pub use crate::fsm::FsmGuard;
 pub use loader::{
     load_app_config, load_config, load_depth_rules, load_fsm_catalog, load_metrics_log,
     load_rerun_blueprint, load_viz_data, load_zone_catalog,
@@ -125,8 +125,7 @@ mod tests {
 
     #[test]
     fn configured_cascade_has_valid_pose_rule() {
-        let config: CascadeConfig =
-            load_config(Path::new("config/cascade.toml")).unwrap();
+        let config: CascadeConfig = load_config(Path::new("config/cascade.toml")).unwrap();
         let models = load_model_catalog(Path::new("config/models.toml")).unwrap();
         assert!(
             config
@@ -153,8 +152,7 @@ mod tests {
             "config/blueprints/detect-room-raw/blueprint.toml",
             "config/blueprints/detect-room-face/blueprint.toml",
         ] {
-            let blueprint: BlueprintConfig =
-                load_config(Path::new(path)).unwrap();
+            let blueprint: BlueprintConfig = load_config(Path::new(path)).unwrap();
             let config = CascadeConfig {
                 rules: blueprint.rules.clone(),
                 regions: blueprint.regions.clone(),

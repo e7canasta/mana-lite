@@ -285,10 +285,13 @@ pub fn track_event_to_log(event: &TrackEvent, stamp: ControlStamp) -> Event {
         TrackEvent::Created { id, class, bbox } => Event::Meta {
             event: "track_created".into(),
             detail: format!("track{id}"),
-            attrs: control_stamp_attrs(stamp, vec![
-                ("class".into(), class.to_string()),
-                ("bbox".into(), format_bbox(bbox)),
-            ]),
+            attrs: control_stamp_attrs(
+                stamp,
+                vec![
+                    ("class".into(), class.to_string()),
+                    ("bbox".into(), format_bbox(bbox)),
+                ],
+            ),
         },
         TrackEvent::Updated { id, bbox } => Event::Meta {
             event: "track_updated".into(),

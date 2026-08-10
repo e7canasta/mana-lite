@@ -7,19 +7,19 @@
 use std::collections::HashMap;
 use std::time::Instant;
 
-use mana_control::{DepthMetric, DepthRuleResult, DepthRuleSnapshot};
+use mana_control::config::{OccupancyPolicy, PresencePoiPolicy};
 use mana_control::domain::LoopId;
+use mana_control::{DepthMetric, DepthRuleResult, DepthRuleSnapshot};
 use mana_lite::config::{
     FsmCatalog, FsmGuard, FsmRoles, FsmRoot, FsmState, FsmTransition, ZoneCatalog,
 };
 use mana_lite::fsm::{FsmEngine, FsmProgram};
 use mana_lite::health::Health;
+use mana_lite::occupancy::OccupancyStateMachine;
 use mana_lite::presence::PresenceFilter;
 use mana_lite::scan::{
     AgedEvidence, ControlPolicy, ControlState, ProcessImage, ScanTimeline, SceneEvent, SceneSample,
 };
-use mana_lite::occupancy::OccupancyStateMachine;
-use mana_control::config::{OccupancyPolicy, PresencePoiPolicy};
 
 fn depth_catalog() -> FsmCatalog {
     let mut states = HashMap::new();

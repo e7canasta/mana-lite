@@ -130,8 +130,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     if let Some(region) = opts.region {
         let roi_array = result.roi.map(|(x1, y1, x2, y2)| [x1, y1, x2, y2]);
         if let Some(roi_array) = roi_array {
-            let depth_frame =
-                mana_lite::depth_map::DepthFrame::from_ultralytics(depth.clone());
+            let depth_frame = mana_lite::depth_map::DepthFrame::from_ultralytics(depth.clone());
             match mana_lite::region_stats(&depth_frame, roi_array, region) {
                 Some(stats) => {
                     let (map_width, map_height) = depth_frame.dims();

@@ -10,7 +10,10 @@ domain_id!(StateId, "FSM state identifier from the catalog.");
 domain_id!(ZoneId, "Spatial zone identifier from the catalog.");
 domain_id!(ClassName, "Detection class label on the control port.");
 domain_id!(ModelId, "Model catalog key on the control port.");
-domain_id!(LoopId, "Control-loop identity for multi-stream portability.");
+domain_id!(
+    LoopId,
+    "Control-loop identity for multi-stream portability."
+);
 
 impl StateId {
     /// Structural safe state used after panics / data loss.

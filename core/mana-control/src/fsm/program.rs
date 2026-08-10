@@ -5,7 +5,7 @@ use std::collections::{HashMap, HashSet};
 use crate::config::{FsmCatalog, FsmState, ZoneCatalog, ZoneSpec};
 use crate::domain::{StateId, ZoneId};
 
-use super::guard::{parse_dwell, FsmGuard};
+use super::guard::{FsmGuard, parse_dwell};
 
 fn synthesize_zones_from_guards(catalog: &FsmCatalog) -> ZoneCatalog {
     let mut zones = HashMap::new();
@@ -17,15 +17,13 @@ fn synthesize_zones_from_guards(catalog: &FsmCatalog) -> ZoneCatalog {
                 | FsmGuard::ZoneVacated { zone, .. } => zone,
                 _ => continue,
             };
-            zones.entry(zone.clone()).or_insert_with(|| {
-                ZoneSpec {
-                    x1: 0,
-                    y1: 0,
-                    x2: 1,
-                    y2: 1,
-                    label: None,
-                    hysteresis_ms: 0,
-                }
+            zones.entry(zone.clone()).or_insert_with(|| ZoneSpec {
+                x1: 0,
+                y1: 0,
+                x2: 1,
+                y2: 1,
+                label: None,
+                hysteresis_ms: 0,
             });
         }
     }
@@ -95,7 +93,9 @@ impl ProgramTransition {
 
 #[derive(Debug, Clone)]
 pub enum ProgramGuard {
-    ZonePresent { zone: ZoneId },
+    ZonePresent {
+        zone: ZoneId,
+    },
     ZoneOccupied {
         zone: ZoneId,
         min_confidence: f32,
@@ -105,14 +105,23 @@ pub enum ProgramGuard {
         zone: ZoneId,
         min_duration_ms: Option<u64>,
     },
-    AllZonesVacant { min_duration_ms: Option<u64> },
+    AllZonesVacant {
+        min_duration_ms: Option<u64>,
+    },
     DataStale,
     DataFresh,
-    DepthRule { rule: String, triggered: bool },
-    Cardinality { value: String },
+    DepthRule {
+        rule: String,
+        triggered: bool,
+    },
+    Cardinality {
+        value: String,
+    },
     PersonPresent,
     PersonAbsent,
-    FaceDetected { min_confidence: f32 },
+    FaceDetected {
+        min_confidence: f32,
+    },
     FaceAbsent,
     FaceInDwell,
     FaceNotInDwell,
@@ -186,13 +195,7 @@ impl FsmProgram {
                 .guards
                 .iter()
                 .filter_map(|guard| {
-                    Self::resolve_guard(
-                        guard,
-                        zones,
-                        &transition.from,
-                        &transition.to,
-                        &mut errors,
-                    )
+                    Self::resolve_guard(guard, zones, &transition.from, &transition.to, &mut errors)
                 })
                 .collect();
             if let (Some(from), Some(to)) = (from, to) {

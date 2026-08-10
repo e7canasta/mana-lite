@@ -222,7 +222,9 @@ pub(super) fn try_transition(
 
 pub(super) fn eval_guard(guard: &ProgramGuard, ctx: &GuardCtx<'_>) -> bool {
     match guard {
-        ProgramGuard::ZonePresent { zone } => ctx.zones.is_some_and(|engine| engine.is_occupied(zone)),
+        ProgramGuard::ZonePresent { zone } => {
+            ctx.zones.is_some_and(|engine| engine.is_occupied(zone))
+        }
         ProgramGuard::ZoneOccupied {
             zone,
             min_confidence,
@@ -242,8 +244,12 @@ pub(super) fn eval_guard(guard: &ProgramGuard, ctx: &GuardCtx<'_>) -> bool {
         ProgramGuard::AllZonesVacant { .. } => ctx.zones.is_some_and(ZoneEngine::all_vacant),
         ProgramGuard::DataStale => ctx.health.is_blind(),
         ProgramGuard::DataFresh => !ctx.health.is_blind(),
-        ProgramGuard::DepthRule { rule, triggered } => ctx.depth.is_triggered(rule) == Some(*triggered),
-        ProgramGuard::Cardinality { value } => ctx.scene.cardinality.as_deref() == Some(value.as_str()),
+        ProgramGuard::DepthRule { rule, triggered } => {
+            ctx.depth.is_triggered(rule) == Some(*triggered)
+        }
+        ProgramGuard::Cardinality { value } => {
+            ctx.scene.cardinality.as_deref() == Some(value.as_str())
+        }
         ProgramGuard::PersonPresent => ctx.scene.person_present,
         ProgramGuard::PersonAbsent => !ctx.scene.person_present,
         ProgramGuard::FaceDetected { min_confidence } => {

@@ -1,15 +1,15 @@
 use std::collections::HashMap;
 use std::time::Instant;
 
-use crate::domain::StateId;
 use crate::DepthRuleSnapshot;
+use crate::domain::StateId;
 use crate::health::Health;
 use crate::zones::{ZoneEngine, ZoneEvent};
 
+use super::FsmProgram;
 use super::guard::{
     GuardCtx, state_label, transition_min_dwell, transition_trigger, try_transition,
 };
-use super::FsmProgram;
 
 /// Per-frame scene evidence consumed by blueprint-specific FSM guards.
 /// Optional values distinguish unavailable evidence from a negative signal.

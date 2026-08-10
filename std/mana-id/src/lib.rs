@@ -192,7 +192,10 @@ mod tests {
     use std::collections::{HashMap, HashSet};
 
     domain_id!(TestId, "Identifier used only by this crate's tests.");
-    domain_id!(OtherId, "A second identifier, to check the types stay distinct.");
+    domain_id!(
+        OtherId,
+        "A second identifier, to check the types stay distinct."
+    );
 
     fn hash_of<T: Hash>(value: &T) -> u64 {
         let mut hasher = DefaultHasher::new();
@@ -205,8 +208,14 @@ mod tests {
     /// FSM states and zones would resolve to `None` instead of failing loudly.
     #[test]
     fn borrowed_lookup_hashes_like_the_owned_id() {
-        assert_eq!(hash_of(&TestId::new("bed-approach")), hash_of(&"bed-approach"));
-        assert_eq!(hash_of(&DomStr::new("bed-approach")), hash_of(&"bed-approach"));
+        assert_eq!(
+            hash_of(&TestId::new("bed-approach")),
+            hash_of(&"bed-approach")
+        );
+        assert_eq!(
+            hash_of(&DomStr::new("bed-approach")),
+            hash_of(&"bed-approach")
+        );
 
         let mut map = HashMap::new();
         map.insert(TestId::new("in_bed"), 7u8);

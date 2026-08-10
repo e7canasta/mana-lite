@@ -19,7 +19,9 @@ fn detection(class: &str, bbox: [f32; 4], confidence: f32) -> Detection {
     }
 }
 
-fn to_scene(observations: &[mana_lite::detection::ConsolidatedObservation]) -> Vec<SceneObservation> {
+fn to_scene(
+    observations: &[mana_lite::detection::ConsolidatedObservation],
+) -> Vec<SceneObservation> {
     observations
         .iter()
         .map(|observation| SceneObservation {

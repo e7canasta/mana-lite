@@ -16,10 +16,10 @@ mod tests {
     use std::collections::HashMap;
     use std::time::Instant;
 
+    use crate::DepthRuleSnapshot;
     use crate::config::{
         FsmCatalog, FsmRoles, FsmRoot, FsmState, FsmTransition, ZoneCatalog, ZoneSpec,
     };
-    use crate::DepthRuleSnapshot;
     use crate::health::Health;
     use crate::zones::{ZoneEngine, ZoneEvent};
 
@@ -332,7 +332,14 @@ mod tests {
         let mut health = Health::new_at(100, 50, start); // 100ms stale
         let _ = health.evaluate_at(start + std::time::Duration::from_millis(200)); // trigger blind
 
-        let result = engine.evaluate_with_context_at(&[], Some(&zones), &health, &DepthRuleSnapshot::default(), &FsmSceneContext::default(), start);
+        let result = engine.evaluate_with_context_at(
+            &[],
+            Some(&zones),
+            &health,
+            &DepthRuleSnapshot::default(),
+            &FsmSceneContext::default(),
+            start,
+        );
         assert!(result.is_some());
         assert_eq!(result.unwrap().to, "blind");
         assert_eq!(engine.current_state(), "blind");
@@ -629,7 +636,14 @@ mod tests {
             class: "person".into(),
             confidence: 0.9,
         }];
-        let result = engine.evaluate_with_context_at(&events, Some(&zones), &health, &DepthRuleSnapshot::default(), &FsmSceneContext::default(), start);
+        let result = engine.evaluate_with_context_at(
+            &events,
+            Some(&zones),
+            &health,
+            &DepthRuleSnapshot::default(),
+            &FsmSceneContext::default(),
+            start,
+        );
 
         assert!(result.is_some());
         assert_eq!(result.unwrap().to, "watching");
@@ -667,7 +681,14 @@ mod tests {
             class: "person".into(),
             confidence: 0.6,
         }];
-        let result = engine.evaluate_with_context_at(&events, Some(&zones), &health, &DepthRuleSnapshot::default(), &FsmSceneContext::default(), start);
+        let result = engine.evaluate_with_context_at(
+            &events,
+            Some(&zones),
+            &health,
+            &DepthRuleSnapshot::default(),
+            &FsmSceneContext::default(),
+            start,
+        );
         assert!(result.is_none());
         assert_eq!(engine.current_state(), "idle");
     }
@@ -710,7 +731,14 @@ mod tests {
             class: "person".into(),
             confidence: 0.9,
         }];
-        let result = engine.evaluate_with_context_at(&events, Some(&zones), &health, &DepthRuleSnapshot::default(), &FsmSceneContext::default(), start);
+        let result = engine.evaluate_with_context_at(
+            &events,
+            Some(&zones),
+            &health,
+            &DepthRuleSnapshot::default(),
+            &FsmSceneContext::default(),
+            start,
+        );
         assert!(result.is_none());
         assert_eq!(engine.current_state(), "idle");
     }
@@ -837,7 +865,14 @@ mod tests {
         let health = Health::new_at(10_000, 5_000, start);
 
         let triggered = make_snapshot("bed-approach", true);
-        let result = engine.evaluate_with_context_at(&[], Some(&zones), &health, &triggered, &FsmSceneContext::default(), start);
+        let result = engine.evaluate_with_context_at(
+            &[],
+            Some(&zones),
+            &health,
+            &triggered,
+            &FsmSceneContext::default(),
+            start,
+        );
         assert!(result.is_some());
         assert_eq!(engine.current_state(), "approaching");
     }
@@ -867,13 +902,31 @@ mod tests {
 
         // Sin evidencia de la regla (mapa, ROI o cobertura) -> guard falso.
         let empty = DepthRuleSnapshot::default();
-        assert!(engine.evaluate_with_context_at(&[], Some(&zones), &health, &empty, &FsmSceneContext::default(), start).is_none());
+        assert!(
+            engine
+                .evaluate_with_context_at(
+                    &[],
+                    Some(&zones),
+                    &health,
+                    &empty,
+                    &FsmSceneContext::default(),
+                    start
+                )
+                .is_none()
+        );
         assert_eq!(engine.current_state(), "idle");
 
         let not_triggered = make_snapshot("bed-approach", false);
         assert!(
             engine
-                .evaluate_with_context_at(&[], Some(&zones), &health, &not_triggered, &FsmSceneContext::default(), start)
+                .evaluate_with_context_at(
+                    &[],
+                    Some(&zones),
+                    &health,
+                    &not_triggered,
+                    &FsmSceneContext::default(),
+                    start
+                )
                 .is_none()
         );
         assert_eq!(engine.current_state(), "idle");
@@ -904,12 +957,26 @@ mod tests {
 
         assert!(
             engine
-                .evaluate_with_context_at(&[], Some(&zones), &health, &make_snapshot("bed-approach", true), &FsmSceneContext::default(), start)
+                .evaluate_with_context_at(
+                    &[],
+                    Some(&zones),
+                    &health,
+                    &make_snapshot("bed-approach", true),
+                    &FsmSceneContext::default(),
+                    start
+                )
                 .is_none()
         );
         assert!(
             engine
-                .evaluate_with_context_at(&[], Some(&zones), &health, &make_snapshot("bed-approach", false), &FsmSceneContext::default(), start)
+                .evaluate_with_context_at(
+                    &[],
+                    Some(&zones),
+                    &health,
+                    &make_snapshot("bed-approach", false),
+                    &FsmSceneContext::default(),
+                    start
+                )
                 .is_some()
         );
         assert_eq!(engine.current_state(), "idle");
@@ -1303,9 +1370,7 @@ mod tests {
             vec![FsmTransition {
                 from: "idle".into(),
                 to: "watching".into(),
-                guards: vec![FsmGuard::ZonePresent {
-                    zone: "bed".into(),
-                }],
+                guards: vec![FsmGuard::ZonePresent { zone: "bed".into() }],
                 dwell: None,
             }],
         );
@@ -1335,9 +1400,7 @@ mod tests {
             vec![FsmTransition {
                 from: "idle".into(),
                 to: "watching".into(),
-                guards: vec![FsmGuard::ZonePresent {
-                    zone: "bed".into(),
-                }],
+                guards: vec![FsmGuard::ZonePresent { zone: "bed".into() }],
                 dwell: None,
             }],
         );

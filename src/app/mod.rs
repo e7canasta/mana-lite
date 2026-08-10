@@ -8,10 +8,11 @@ pub use cycle::CycleContext;
 pub use observer::{FanoutObserver, NullObserver, PipelineObserver};
 
 use crate::cascade::{CascadeScheduler, CascadeTarget, GateObservation};
-use mana_perception::domain::{ClassName, ModelId};
 use crate::config::{AppConfig, CropType};
 use crate::detection::CropRect;
-use crate::detection::{ConsolidatedObservation, DetectionConsolidator, DetectionRole, ModelDetections};
+use crate::detection::{
+    ConsolidatedObservation, DetectionConsolidator, DetectionRole, ModelDetections,
+};
 use crate::domain::ModelRegistry;
 use crate::error::Result;
 use crate::face_dwell::FaceDwellLogStrategy;
@@ -20,8 +21,9 @@ use crate::ingest::{FrameReader, IngestEngine, RawKeyframe, RetinaReader};
 use crate::logger::{DetRecord, Event, scene_events_to_log};
 use crate::metrics::{MetricsEngine, PerClassFrameStats};
 use crate::pipeline::PipelineState;
-use crate::scan::{ControlStamp, ControlState, SceneEvent, ScanTimeline};
+use crate::scan::{ControlStamp, ControlState, ScanTimeline, SceneEvent};
 use crate::snapshot::{FrameBuffer, FrameDecoder, SnapshotSaver};
+use mana_perception::domain::{ClassName, ModelId};
 use mana_types::RawFrameV1;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::time::Instant;
@@ -30,7 +32,13 @@ use tokio::signal::unix::{SignalKind, signal};
 pub(crate) static VERSION: &str = env!("CARGO_PKG_VERSION");
 
 #[derive(Debug, Clone)]
-struct ClinicalSample { observations: Vec<ConsolidatedObservation>, signal_valid: bool, raw_person_count: usize, frame_number: u64, face_model_ran: bool }
+struct ClinicalSample {
+    observations: Vec<ConsolidatedObservation>,
+    signal_valid: bool,
+    raw_person_count: usize,
+    frame_number: u64,
+    face_model_ran: bool,
+}
 
 pub struct App<R: FrameReader = RetinaReader> {
     pub(crate) infer: InferEngine,
@@ -208,11 +216,8 @@ impl<R: FrameReader> App<R> {
         if self.control.scan_seq != 0 {
             self.scan_timeline.advance();
         }
-        let scene_events = crate::scan::scan(
-            &mut self.control,
-            &self.control_image,
-            &self.scan_timeline,
-        );
+        let scene_events =
+            crate::scan::scan(&mut self.control, &self.control_image, &self.scan_timeline);
         self.control_image.measurement_pending = false;
 
         let mut last_stamp: Option<ControlStamp> = None;
@@ -831,8 +836,6 @@ fn frame_timestamp_ns(
 mod tests {
     use super::*;
     use crate::config::{MetricsTextConfig, ModelCatalog};
-    use mana_control::domain::LoopId;
-    use mana_control::{DepthCalibration, DepthMetric, DepthOp, DepthRegionRule, DepthRules, DepthRuleResult};
     use crate::ingest::SyntheticReader;
     use crate::logger::{JsonlLevel, LogManager};
     use crate::occupancy::OccupancyStateMachine;
@@ -840,6 +843,10 @@ mod tests {
     use crate::scan::ControlPolicy;
     use crate::viz::VizBridge;
     use mana_control::config::{OccupancyPolicy, PresencePoiPolicy};
+    use mana_control::domain::LoopId;
+    use mana_control::{
+        DepthCalibration, DepthMetric, DepthOp, DepthRegionRule, DepthRuleResult, DepthRules,
+    };
     use ndarray::Array2;
     use std::collections::HashMap;
     use ultralytics_inference::DepthMap;
@@ -900,7 +907,10 @@ mod tests {
         ))
     }
 
-    fn app_for_depth_rules(rules: DepthRules, context_roi: Option<CropRect>) -> App<SyntheticReader> {
+    fn app_for_depth_rules(
+        rules: DepthRules,
+        context_roi: Option<CropRect>,
+    ) -> App<SyntheticReader> {
         let start = Instant::now();
         let empty_catalog = ModelCatalog {
             models: HashMap::new(),

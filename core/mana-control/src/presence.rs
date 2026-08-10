@@ -1,5 +1,5 @@
-use crate::config::PresencePoiPolicy;
 use crate::SceneObservation;
+use crate::config::PresencePoiPolicy;
 use crate::timing::Debouncer;
 use std::time::Instant;
 

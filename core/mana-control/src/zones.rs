@@ -270,8 +270,7 @@ mod tests {
             early.is_empty(),
             "vacate must wait for hysteresis; got {early:?}"
         );
-        let still_early =
-            engine.evaluate_at(&[], start + std::time::Duration::from_millis(499));
+        let still_early = engine.evaluate_at(&[], start + std::time::Duration::from_millis(499));
         assert!(
             still_early.is_empty(),
             "vacate must wait full hysteresis; got {still_early:?}"

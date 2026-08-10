@@ -505,10 +505,22 @@ impl<R: FrameReader> App<R> {
                 presence: crate::presence::PresenceFilter::new(
                     config.presence.enabled,
                     config.presence.class.clone(),
-                    mana_control::config::PresencePoiPolicy { on_ms: config.presence.poi.on_ms, off_ms: config.presence.poi.off_ms },
+                    mana_control::config::PresencePoiPolicy {
+                        on_ms: config.presence.poi.on_ms,
+                        off_ms: config.presence.poi.off_ms,
+                    },
                 ),
                 occupancy: crate::occupancy::OccupancyStateMachine::new(
-                    mana_control::config::OccupancyPolicy { single_confirm_ms: config.presence.occupancy.single_confirm_ms, empty_confirm_ms: config.presence.occupancy.empty_confirm_ms, multiple_confirm_ms: config.presence.occupancy.multiple_confirm_ms, multiple_exit_ms: config.presence.occupancy.multiple_exit_ms, require_confirmed_tracks: config.presence.occupancy.require_confirmed_tracks },
+                    mana_control::config::OccupancyPolicy {
+                        single_confirm_ms: config.presence.occupancy.single_confirm_ms,
+                        empty_confirm_ms: config.presence.occupancy.empty_confirm_ms,
+                        multiple_confirm_ms: config.presence.occupancy.multiple_confirm_ms,
+                        multiple_exit_ms: config.presence.occupancy.multiple_exit_ms,
+                        require_confirmed_tracks: config
+                            .presence
+                            .occupancy
+                            .require_confirmed_tracks,
+                    },
                 ),
                 fsm_context: FsmSceneContext::default(),
                 last_scan_at: boot_instant,

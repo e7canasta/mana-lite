@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 
+use crate::SceneObservation;
 use crate::assignment::hungarian_min;
 use crate::domain::{ClassName, ModelId};
-use crate::SceneObservation;
 use crate::kalman::{Kalman7, KalmanConfig};
 use mana_geometry::iou::{OverlapMetric, box_overlap};
 

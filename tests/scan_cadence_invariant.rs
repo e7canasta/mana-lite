@@ -75,10 +75,7 @@ fn single_at(start: Instant, period_ms: u64) -> Instant {
     loop {
         let now = timeline.now();
         for event in scan(&mut state, &process_image, &timeline) {
-            if let SceneEvent::Presence {
-                state: room,
-                ..
-            } = event
+            if let SceneEvent::Presence { state: room, .. } = event
                 && room == RoomCardinality::Single
             {
                 return now.as_instant();

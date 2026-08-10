@@ -9,8 +9,8 @@ pub mod depth_map;
 pub mod detection;
 pub mod domain;
 
-pub use domain::{ClassName, DomStr, ModelId};
 pub use depth_map::DepthFrame;
+pub use domain::{ClassName, DomStr, ModelId};
 
 /// Raw, policy-free depth statistics for a region.
 #[derive(Debug, Clone, PartialEq)]
