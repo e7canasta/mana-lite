@@ -425,6 +425,9 @@ impl ScanTimeline {
     pub fn loop_id(&self) -> &LoopId {
         &self.loop_id
     }
+    pub fn period_ms(&self) -> u64 {
+        self.period_ms
+    }
     pub fn now(&self) -> ScanInstant {
         ScanInstant::from_instant(self.start + Duration::from_millis(self.tick * self.period_ms))
     }

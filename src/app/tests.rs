@@ -1,6 +1,7 @@
 use super::record::wire_depth_evidence;
 use super::*;
-use crate::config::{MetricsTextConfig, ModelCatalog};
+use crate::config::{MetricsTextConfig, ModelCatalog, load_app_config};
+use crate::health::HealthTransition;
 use crate::infer::InferenceResult;
 use crate::ingest::SyntheticReader;
 use crate::logger::{JsonlLevel, LogManager};
@@ -16,8 +17,108 @@ use mana_control::{
 };
 use ndarray::Array2;
 use std::collections::HashMap;
-use std::time::Instant;
+use std::path::Path;
+use std::time::{Duration, Instant};
 use ultralytics_inference::DepthMap;
+
+#[tokio::test]
+async fn bootstrap_with_reader_wires_real_catalogs() {
+    let config_path = Path::new("config/mana.toml");
+    let mut config = load_app_config(config_path).expect("mana.toml loads");
+    // Avoid side effects from real deployment paths while keeping catalogs real.
+    config.viz.enabled = false;
+    config.output.save_dir = None;
+    config.output.snapshot_dir = None;
+
+    let mut app = App::bootstrap_with_reader(&config, config_path, SyntheticReader::empty())
+        .await
+        .expect("bootstrap_with_reader against real catalogs");
+
+    assert!(
+        config.pipeline.track,
+        "mana.toml enables tracking; pre-condition for engine presence"
+    );
+    assert!(config.pipeline.zones);
+    assert!(config.pipeline.fsm);
+    assert!(app.control.tracker.is_some(), "pipeline.track=true wires tracker");
+    assert!(
+        app.control.zone_engine.is_some(),
+        "pipeline.zones=true with zones.toml wires zone_engine"
+    );
+    assert!(
+        app.control.fsm_engine.is_some(),
+        "pipeline.fsm=true with compiled FSM wires fsm_engine"
+    );
+    assert_eq!(
+        app.control
+            .fsm_engine
+            .as_ref()
+            .map(|fsm| fsm.current_state()),
+        Some("idle"),
+        "compiled program starts at catalog initial state"
+    );
+
+    assert_eq!(app.control.policy.person_class.as_str(), "person");
+    assert_eq!(app.control.policy.data_stale_ms, config.health.data_stale_ms);
+    assert_eq!(app.control.policy.scan_period_ms, config.scan.period_ms);
+    assert_eq!(
+        app.control.policy.face_dwell_roi,
+        Some([760, 0, 1160, 300]),
+        "face_dwell ROI from zones.toml"
+    );
+    // person_detection_roi = first Boxes model ∩ static crop map.
+    // detect-fast owns [420,0,1500,1080]; face-yolo is Boxes but dynamic-only.
+    // HashMap iteration can surface either first, so None is valid today.
+    let expected_person_roi = match app
+        .models
+        .first_with_role(crate::domain::ModelRole::Boxes)
+        .map(|id| id.as_str())
+    {
+        Some("detect-fast") => Some([420, 0, 1500, 1080]),
+        _ => None,
+    };
+    assert_eq!(
+        app.control.policy.person_detection_roi, expected_person_roi,
+        "person_detection ROI follows first Boxes model with a static crop"
+    );
+
+    assert_eq!(app.scan_timeline.period_ms(), config.scan.period_ms);
+    assert_eq!(
+        app.scan_timeline.loop_id().as_str(),
+        LoopId::DEFAULT,
+        "scan timeline uses the default loop id"
+    );
+    assert_eq!(app.control.loop_id.as_str(), LoopId::DEFAULT);
+
+    assert!(
+        !app.depth_rules.rules.is_empty(),
+        "depth-rules.toml has rules and bootstrap keeps them"
+    );
+
+    // Health thresholds come from config.health; assert via policy + behavior.
+    assert_eq!(app.control.policy.data_stale_ms, 10_000);
+    let boot = app.boot_instant;
+    let at = |ms: u64| boot + Duration::from_millis(ms);
+    assert_eq!(
+        app.control.health.evaluate_at(at(5_000)),
+        HealthTransition::None
+    );
+    assert_eq!(
+        app.control.health.evaluate_at(at(5_001)),
+        HealthTransition::Stale {
+            component: "ingest",
+            ms_since_frame: 5_001,
+        },
+        "stale_warn_ms from config (5_000) gates the Stale transition"
+    );
+    assert_eq!(
+        app.control.health.evaluate_at(at(10_001)),
+        HealthTransition::Blind {
+            ms_since_frame: 10_001,
+        },
+        "data_stale_ms from config (10_000) gates Blind"
+    );
+}
 
 #[test]
 fn frame_timestamp_ns_es_monotona_en_el_instante() {
