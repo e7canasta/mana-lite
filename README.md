@@ -67,12 +67,31 @@ cargo run -- --config config/mana.toml
 metricas, visualizacion y blueprint. No guardar credenciales reales en archivos
 versionados.
 
+### Donde viven los pesos ONNX
+
+Los catalogos traen rutas relativas a la raiz del repo
+(`tools/model-tools/artifacts/...`), y esos archivos estan gitignoreados: un
+clone nuevo, un worktree o un job de CI no los tiene.
+
+`MANA_MODELS_HOME` reancla las rutas **relativas** del catalogo; las absolutas
+las fija el despliegue y no se tocan. Sin la variable, el comportamiento por
+defecto no cambia.
+
+```bash
+export MANA_MODELS_HOME=/ruta/al/checkout-con-artifacts
+```
+
 ## Verificacion
 
 ```bash
-cargo test
+cargo test --workspace
 git diff --check
 ```
+
+La suite completa necesita los pesos ONNX: un test de arranque
+(`bootstrap_with_reader_wires_real_catalogs`) construye `App` contra los
+catalogos reales. Si no los tenes en la raiz del checkout, apuntalos con
+`MANA_MODELS_HOME`.
 
 El tracker actual es un prototipo de prediccion lineal y matching greedy por
 IoU. Kalman/Hungarian y TTL de evidencias quedan para una etapa posterior,
