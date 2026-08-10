@@ -198,31 +198,37 @@ ilegible sí — y es el que implementa el lazo clínico.
 
 ---
 
-## Sprint 4 — Consolidar `std/`
+## Sprint 4 — Consolidar `std/` y apagar `rerun`
 
-**Objetivo:** de 7 crates a 5. Eliminar las fronteras que no previenen ninguna
-dependencia.
+**Objetivo:** de 9 paquetes a 6, y que el feature `rerun` apague de verdad la
+visualización.
+
+**Status (2026-08-10): cerrado.** `mana-media` absorbe video/rtsp/frame types;
+`mana-viz` disuelto en `src/viz/`; tipos iceoryx de escena borrados; build sin
+`rerun` compila el lazo completo.
 
 ### Tareas
 
-1. Fusionar `mana-video` + `mana-rtsp` + (`PixelFormat`, `RawFrameV1`) en
-   `mana-media`.
-2. Disolver `mana-viz` en `src/viz/`, conservando las 2 funciones vivas y
-   borrando las 6 muertas.
-3. Borrar los tipos `*V1` de iceoryx2. Registrar en el repo de Full Mana OS que
-   ahí viven.
-4. Actualizar `docs/ARCHITECTURE.md` y `docs/ROADMAP.md` a la estructura de
-   tiers.
+1. ~~Gatear `rerun` en el binario (sin stub de VizBridge).~~
+2. ~~Borrar helpers muertos de mana-viz; borrar `*V1` de escena sin consumidor.~~
+3. ~~Fusionar `mana-video` + `mana-rtsp` + (`PixelFormat`, `RawFrameV1`) en
+   `mana-media`.~~
+4. ~~Disolver `mana-viz` en `src/viz/`.~~
+5. ~~Actualizar `docs/ARCHITECTURE.md` y `docs/ROADMAP.md`.~~
 
 ### Compuerta
 
 ```sh
 cargo metadata --no-deps --format-version 1 | jq '.packages | length'   # → 6
-grep -rn 'DetectionV1\|SceneMsgV1\|SceneEntityV1\|ZoneV1' --include='*.rs' .   # → 0
+cargo check --workspace --no-default-features --features ffmpeg         # → 0 errores
+grep -rn 'DetectionV1\|SceneMsgV1\|SceneEntityV1\|ZoneV1\|RoiCommandV1\|DetectionBatchV1' \
+  --include='*.rs' .                                                    # → 0
 git diff tests/golden/                                                  # → vacío
 ```
 
-- [ ] Cero funciones públicas sin consumidor en los crates `std/` restantes
+- [x] Feature `rerun` apagado compila y corre sin visualización
+- [x] `mana-media` no depende de control ni perception
+- [x] Seis paquetes en el workspace
 
 ---
 
@@ -235,7 +241,7 @@ git diff tests/golden/                                                  # → va
 | Disparador | Hoy | Umbral |
 |---|:-:|:-:|
 | Variantes de `FsmGuard` | 18 | 25 |
-| Campos de `FsmSceneContext` | 7 | 12 |
+| Campos de `FsmSceneContext` | **7** | 12 |
 | Reglas definidas por despliegue | no | sí |
 
 Mientras tanto, la decisión inmediata que cambia: **cada booleano plano que se

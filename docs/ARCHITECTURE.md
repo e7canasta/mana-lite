@@ -1,8 +1,28 @@
 # Mana Lite Architecture
 
-*Última actualización: 2026-08-07 — depth ROI-local + pose + máscaras*
+*Última actualización: 2026-08-10 — workspace de 6 paquetes (Sprint 4)*
 
 ---
+
+## Workspace por tiers (ADR-027 · ADR-028)
+
+```
+T0  mana-id, mana-geometry          mecanismos compartidos, cero política
+T1  mana-media                      transporte/formato (video, H.264 Annex-B,
+                                    PixelFormat, RawFrameV1)
+T2  mana-control, mana-perception   lazo clínico y percepción
+T3  mana-lite (binario)             adaptadores: ingest, infer, logger, viz
+```
+
+Seis paquetes: `mana-lite`, `mana-control`, `mana-perception`, `mana-id`,
+`mana-geometry`, `mana-media`.
+
+- **`rerun` es un feature real:** sin él el binario compila y corre el lazo sin
+  visualización (`src/viz/` entero detrás de `#[cfg(feature = "rerun")]`). No hay
+  stub de `VizBridge`.
+- **`mana-media`** no depende de `mana-control` ni de `mana-perception`.
+- Tipos iceoryx de escena (`DetectionV1`, `SceneMsgV1`, …) **no viven aquí**;
+  pertenecen a Full Mana OS. Solo quedan tipos de frame en `mana-media`.
 
 ## Big Picture
 
@@ -129,22 +149,14 @@ src/
 │   └── blueprint.rs      Blueprint and cascade schemas
 ├── ingest.rs             Retina RTSP + keyframe drain + reconnect ✅
 ├── snapshot.rs           H.264 decode + RGB buffer + PNG saver ✅
-├── infer.rs              Model execution + filters + NMS + masks ✅
-├── detection.rs          Stateless cross-model consolidation       ✅
-├── presence.rs           POI signal debounce + dropout hold         ✅
-├── occupancy.rs          Room cardinality state machine              ✅
-├── track.rs              Linear prediction + greedy IoU tracker    🧪 optional
-├── zones.rs              Spatial zone evaluation + hysteresis      ✅
-├── fsm.rs                Clinical FSM engine + guard evaluation    ✅
-├── cascade.rs            Model scheduler + track crop eligibility  ✅
-├── pipeline.rs           PipelineState runtime                    ✅
-├── metrics.rs            MetricsEngine + Health + PerClassFrameStats ✅
-├── viz.rs                VizBridge + Rerun blueprint              ✅
-├── logger/
-│   ├── mod.rs            Buffered JSONL emitter + file rotation   ✅
-│   ├── event.rs          Event type definitions                   ✅
-│   └── serialize.rs      Manual JSON serializer                   ✅
-└── error.rs              Typed error enums                        ✅
+├── infer/                Model execution + filters + NMS + masks ✅
+├── app/                  Superloop, bootstrap, observers ✅
+├── viz/                  VizBridge + Rerun (feature `rerun` only) ✅
+├── logger/               JSONL emitter + serialize ✅
+└── ...                   config, metrics, pipeline, depth adapters ✅
+
+Control/perception live in workspace crates (`core/mana-control`,
+`core/mana-perception`), not as top-level `src/*.rs` forks.
 ```
 
 ### Config TOML files
@@ -167,34 +179,14 @@ src/
 ## Dependency Graph
 
 ```
-main.rs
- ├── config/ ──────────────── serde, toml, model composition
- ├── ingest.rs ────────────── retina, mana-rtsp, url
- │    └── RetinaReader (async RTSP + reconnect)
- ├── snapshot.rs ──────────── ffmpeg-next, image, mana-video
- │    └── FrameDecoder, SnapshotSaver
-  ├── infer.rs ─────────────── ultralytics inference + NMS      ✅
-  │    └── InferEngine
-  ├── detection.rs ─────────── pure spatial consolidation        ✅
-  │    └── DetectionConsolidator
-  ├── track.rs ─────────────── linear prediction + greedy IoU    🧪 optional
-  │    └── Tracker
-  ├── zones.rs ──────────────── (pure math: AABB intersection)   ✅ optional
- │    └── ZoneEngine
-  ├── fsm.rs ────────────────── config::FsmCatalog               ✅ optional
- │    └── FsmEngine
-  ├── cascade.rs ────────────── config::ModelCatalog             ✅
- │    └── CascadeScheduler
- ├── pipeline.rs ──────────── logger, metrics, health            ✅
- │    └── PipelineState
-  ├── metrics.rs ────────────── (pure Rust: counters + timers + per-frame class stats)    ✅
-  │    └── MetricsEngine, Health, MetricsReport, PerClassFrameStats
- ├── viz.rs ────────────────── rerun, mana-viz, mana-types       ✅
- │    └── VizBridge
- ├── logger/ ───────────────── chrono, std::io, std::fs          ✅
- │    └── Logger, Event, serialize
- └── error.rs ──────────────── thiserror                          ✅
-     └── ManaError, ConfigError, Result<T>
+mana-lite (T3 binary)
+ ├── mana-media (T1) ──────── ffmpeg optional, H.264 helpers, RawFrameV1
+ ├── mana-perception (T2) ─── cascade, depth maps, detections
+ ├── mana-control (T2) ────── scan, FSM, presence, occupancy, zones, track
+ │    ├── mana-id (T0)
+ │    └── mana-geometry (T0)
+ ├── ingest / snapshot / infer / logger / app  (binary adapters)
+ └── viz/ ─────────────────── optional feature `rerun` only
 ```
 
 ## Cascade model branches
