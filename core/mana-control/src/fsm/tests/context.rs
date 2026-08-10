@@ -105,7 +105,11 @@ fn face_at_edge_guard_requires_at_edge() {
         vec![FsmTransition {
             from: "idle".into(),
             to: "edge".into(),
-            guards: vec![FsmGuard::FaceAtEdge],
+            guards: vec![FsmGuard::Signal {
+                tag: "cara.en_borde".into(),
+                op: "==".into(),
+                value: SignalLiteral::Bool(true),
+            }],
             dwell: None,
         }],
     );
@@ -117,12 +121,14 @@ fn face_at_edge_guard_requires_at_edge() {
         ..Default::default()
     };
 
-    let result = engine.evaluate_with_context_at(
+    let signals = snapshot_with_signals(&[("cara.en_borde", SignalValue::Bool(true))]);
+    let result = engine.evaluate_with_signals_at(
         &[],
         None,
         &health,
         &DepthRuleSnapshot::default(),
         &at_edge,
+        &signals,
         start,
     );
     assert_eq!(result.expect("at edge").to, "edge");
@@ -136,7 +142,11 @@ fn face_at_edge_guard_rejects_when_not_at_edge() {
         vec![FsmTransition {
             from: "idle".into(),
             to: "edge".into(),
-            guards: vec![FsmGuard::FaceAtEdge],
+            guards: vec![FsmGuard::Signal {
+                tag: "cara.en_borde".into(),
+                op: "==".into(),
+                value: SignalLiteral::Bool(true),
+            }],
             dwell: None,
         }],
     );
@@ -150,12 +160,13 @@ fn face_at_edge_guard_rejects_when_not_at_edge() {
 
     assert!(
         engine
-            .evaluate_with_context_at(
+            .evaluate_with_signals_at(
                 &[],
                 None,
                 &health,
                 &DepthRuleSnapshot::default(),
                 &not_at_edge,
+                &snapshot_with_signals(&[("cara.en_borde", SignalValue::Bool(false))]),
                 start,
             )
             .is_none()

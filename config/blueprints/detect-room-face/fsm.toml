@@ -122,7 +122,7 @@ guards = [
     { type = "signal", tag = "ocupacion.cardinalidad", op = "==", value = "single" },
     { type = "signal", tag = "persona.presente", op = "==", value = true },
     { type = "signal", tag = "cara.confianza", op = ">=", value = 0.10 },
-    { type = "face_at_edge" },
+    { type = "signal", tag = "cara.en_borde", op = "==", value = true },
 ]
 
 [[fsm.transitions]]
@@ -158,7 +158,7 @@ to = "edge"
 dwell = "300ms"
 guards = [
     { type = "signal", tag = "ocupacion.cardinalidad", op = "==", value = "single" },
-    { type = "face_at_edge" },
+    { type = "signal", tag = "cara.en_borde", op = "==", value = true },
 ]
 
 [[fsm.transitions]]
@@ -198,7 +198,7 @@ to = "edge"
 dwell = "300ms"
 guards = [
     { type = "signal", tag = "ocupacion.cardinalidad", op = "==", value = "single" },
-    { type = "face_at_edge" },
+    { type = "signal", tag = "cara.en_borde", op = "==", value = true },
 ]
 
 [[fsm.transitions]]
@@ -290,7 +290,7 @@ to = "edge"
 dwell = "300ms"
 guards = [
     { type = "signal", tag = "ocupacion.cardinalidad", op = "==", value = "single" },
-    { type = "face_at_edge" },
+    { type = "signal", tag = "cara.en_borde", op = "==", value = true },
 ]
 
 [[fsm.transitions]]
@@ -324,7 +324,7 @@ dwell = "300ms"
 guards = [
     { type = "signal", tag = "ocupacion.cardinalidad", op = "==", value = "single" },
     { type = "signal", tag = "persona.presente", op = "==", value = true },
-    { type = "face_at_edge" },
+    { type = "signal", tag = "cara.en_borde", op = "==", value = true },
 ]
 
 [[fsm.transitions]]
