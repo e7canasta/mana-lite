@@ -13,3 +13,6 @@ mana-types = { path = "../mana-types" }
 log = "0.4"
 anyhow = "1"
 ffmpeg-next = { version = "8", optional = true }
+
+[lints]
+workspace = true

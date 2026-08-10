@@ -19,3 +19,6 @@ imageproc = { version = "0.25", optional = true }
 proptest = "1"
 image = "0.25"
 imageproc = "0.25"
+
+[lints]
+workspace = true

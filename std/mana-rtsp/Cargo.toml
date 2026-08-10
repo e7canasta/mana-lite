@@ -5,3 +5,6 @@ edition = "2024"
 description = "RTSP video source — H.264 Annex-B utilities"
 
 [dependencies]
+
+[lints]
+workspace = true

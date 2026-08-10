@@ -70,10 +70,36 @@ strip = true
 [profile.dev]
 opt-level = 1
 
-[lints.clippy]
-all = "warn"
-pedantic = "warn"
-nursery = "warn"
+[lints]
+workspace = true
 
-[lints.rust]
+# Shared by every member crate (each opts in with `[lints] workspace = true`).
+# Previously this table lived under `[package]`, so it governed only the
+# binary — the tier crates that hold the determinism-critical logic were the
+# ones escaping it.
+[workspace.lints.clippy]
+# priority = -1 so the specific `allow`s below win over the group `warn`s;
+# without it Cargo applies them in an unspecified order and the group wins.
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+nursery = { level = "warn", priority = -1 }
+
+# Stylistic families, silenced so the remaining warnings stay actionable.
+# A warning set nobody can act on is a warning set everybody ignores.
+must_use_candidate = "allow"
+missing_const_for_fn = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+module_name_repetitions = "allow"
+doc_markdown = "allow"
+similar_names = "allow"
+unreadable_literal = "allow"
+suboptimal_flops = "allow"
+redundant_closure_for_method_calls = "allow"
+
+# Deliberately NOT silenced: the numeric-cast family and float comparison.
+# This is a vision/control pipeline — truncation, precision loss and exact
+# float equality are where its bugs live, not in missing backticks.
+
+[workspace.lints.rust]
 unsafe_code = "warn"
