@@ -3,10 +3,10 @@ El componente **mana-control** actúa como el núcleo de toma de decisiones de
 
 Relevant source files
 
-- [](https://github.com/kerrvisiona-sudo/endeli/blob/ad24740d/core/mana-control/src/fsm/engine.rs)
-- [](https://github.com/kerrvisiona-sudo/endeli/blob/ad24740d/core/mana-control/src/lib.rs)
-- [](https://github.com/kerrvisiona-sudo/endeli/blob/ad24740d/core/mana-control/src/scan.rs)
-- [](https://github.com/kerrvisiona-sudo/endeli/blob/ad24740d/pipeline.rs)
+- [](core/mana-control/src/fsm/engine.rs)
+- [](core/mana-control/src/lib.rs)
+- [](core/mana-control/src/scan.rs)
+- [](src/pipeline.rs)
 
 The `mana-control` crate serves as the decision-making core of the application. It operates on a fixed-cadence control loop, consuming "frozen" process images from the perception system to drive entity tracking, occupancy logic, spatial zone evaluation, and a Finite State Machine (FSM) engine.
 
@@ -87,7 +87,7 @@ flowchart TB
 
     style PIPELINE fill:#FFFAF0,stroke:#F0B429,stroke-width:2px,color:#222;
 ```
-**Sources:** [core/mana-control/src/scan.rs123-154](https://github.com/kerrvisiona-sudo/endeli/blob/ad24740d/core/mana-control/src/scan.rs#L123-L154) [core/mana-control/src/lib.rs86-131](https://github.com/kerrvisiona-sudo/endeli/blob/ad24740d/core/mana-control/src/lib.rs#L86-L131)
+**Sources:** [core/mana-control/src/scan.rs123-154](core/mana-control/src/scan.rs#L123-L154) [core/mana-control/src/lib.rs86-131](core/mana-control/src/lib.rs#L86-L131)
 
 ---
 
@@ -97,33 +97,33 @@ flowchart TB
 
 The `scan()` function is the entry point for every control tick. It utilizes a `ScanTimeline` to ensure that all time-based decisions (dwells, aging, Kalman prediction) are based on a monotonic clock specific to the control loop, rather than the system wall clock. It manages the `ControlState`, which holds the long-lived state for all sub-engines.
 
-For details, see [Scan Loop and Control State](https://deepwiki.com/kerrvisiona-sudo/endeli/4.1-scan-loop-and-control-state).
+For details, see [Scan Loop and Control State](4.1-scan-loop-and-control-state).
 
-**Sources:** [core/mana-control/src/scan.rs63-76](https://github.com/kerrvisiona-sudo/endeli/blob/ad24740d/core/mana-control/src/scan.rs#L63-L76) [core/mana-control/src/scan.rs123-154](https://github.com/kerrvisiona-sudo/endeli/blob/ad24740d/core/mana-control/src/scan.rs#L123-L154)
+**Sources:** [core/mana-control/src/scan.rs63-76](core/mana-control/src/scan.rs#L63-L76) [core/mana-control/src/scan.rs123-154](core/mana-control/src/scan.rs#L123-L154)
 
 #### 2. Entity Tracking and Occupancy
 
 This subsystem converts raw `SceneObservation` data into stable `Track` entities. It uses a Kalman-filter-based `Tracker` to handle occlusions and noisy detections. The `OccupancyStateMachine` then evaluates these tracks to determine the `RoomCardinality` (e.g., `Empty`, `SingleOccupancy`, `MultipleOccupancy`).
 
-For details, see [Entity Tracking and Occupancy](https://deepwiki.com/kerrvisiona-sudo/endeli/4.2-entity-tracking-and-occupancy).
+For details, see [Entity Tracking and Occupancy](4.2-entity-tracking-and-occupancy).
 
-**Sources:** [core/mana-control/src/track.rs1-20](https://github.com/kerrvisiona-sudo/endeli/blob/ad24740d/core/mana-control/src/track.rs#L1-L20) [core/mana-control/src/occupancy.rs1-30](https://github.com/kerrvisiona-sudo/endeli/blob/ad24740d/core/mana-control/src/occupancy.rs#L1-L30)
+**Sources:** [core/mana-control/src/track.rs1-20](core/mana-control/src/track.rs#L1-L20) [core/mana-control/src/occupancy.rs1-30](core/mana-control/src/occupancy.rs#L1-L30)
 
 #### 3. Finite State Machine (FSM) Engine
 
 The `FsmEngine` executes the logic defined in the deployment's FSM program. It evaluates `FsmGuard` conditions—such as zone occupancy, signal values, or depth rules—to trigger state transitions. It supports dwell timers to prevent rapid "flickering" between states and features a `face_was_inside` latch for specific clinical workflows.
 
-For details, see [Finite State Machine Engine](https://deepwiki.com/kerrvisiona-sudo/endeli/4.3-finite-state-machine-engine).
+For details, see [Finite State Machine Engine](4.3-finite-state-machine-engine).
 
-**Sources:** [core/mana-control/src/fsm/engine.rs55-61](https://github.com/kerrvisiona-sudo/endeli/blob/ad24740d/core/mana-control/src/fsm/engine.rs#L55-L61) [core/mana-control/src/fsm/engine.rs214-250](https://github.com/kerrvisiona-sudo/endeli/blob/ad24740d/core/mana-control/src/fsm/engine.rs#L214-L250)
+**Sources:** [core/mana-control/src/fsm/engine.rs55-61](core/mana-control/src/fsm/engine.rs#L55-L61) [core/mana-control/src/fsm/engine.rs214-250](core/mana-control/src/fsm/engine.rs#L214-L250)
 
 #### 4. Zone Engine and Spatial Signals
 
 The `ZoneEngine` tracks entities relative to geometric regions defined in the configuration. It handles hysteresis for `Occupied` and `Vacated` events. Parallel to this, the `SceneSignals` system aggregates various boolean and numeric metrics (e.g., person counts, signal validity) into a `SignalTable` used by the FSM and logging systems.
 
-For details, see [Zone Engine and Spatial Signals](https://deepwiki.com/kerrvisiona-sudo/endeli/4.4-zone-engine-and-spatial-signals).
+For details, see [Zone Engine and Spatial Signals](4.4-zone-engine-and-spatial-signals).
 
-**Sources:** [core/mana-control/src/zones.rs1-20](https://github.com/kerrvisiona-sudo/endeli/blob/ad24740d/core/mana-control/src/zones.rs#L1-L20) [core/mana-control/src/signals.rs1-30](https://github.com/kerrvisiona-sudo/endeli/blob/ad24740d/core/mana-control/src/signals.rs#L1-L30)
+**Sources:** [core/mana-control/src/zones.rs1-20](core/mana-control/src/zones.rs#L1-L20) [core/mana-control/src/signals/mod.rs1-20](core/mana-control/src/signals/mod.rs#L1-L20)
 
 ---
 
@@ -137,9 +137,9 @@ The following table associates high-level control concepts with their correspond
 |**Observation**|`SceneObservation`|Normalized detection data (BBox, Class, Confidence).|
 |**Control Tick**|`scan()`|The main execution function for the control logic.|
 |**State Stamp**|`ControlStamp`|Metadata linking a control decision to a specific frame and age.|
-|**Health**|`Health`|Tracks system vitals like "Blind" (no data) or "Panic" states.|
+|**Health**|`Health`|Tracks system vitals like "Stale" (laggy data) or "Blind" (no data) states. Panics are tracked separately by the app-level `ErrorWindow` and lead to shutdown, not `HealthTransition`.|
 
-**Sources:** [core/mana-control/src/lib.rs86-91](https://github.com/kerrvisiona-sudo/endeli/blob/ad24740d/core/mana-control/src/lib.rs#L86-L91) [core/mana-control/src/lib.rs27-34](https://github.com/kerrvisiona-sudo/endeli/blob/ad24740d/core/mana-control/src/lib.rs#L27-L34) [core/mana-control/src/scan.rs32-38](https://github.com/kerrvisiona-sudo/endeli/blob/ad24740d/core/mana-control/src/scan.rs#L32-L38)
+**Sources:** [core/mana-control/src/lib.rs86-91](core/mana-control/src/lib.rs#L86-L91) [core/mana-control/src/lib.rs27-34](core/mana-control/src/lib.rs#L27-L34) [core/mana-control/src/scan.rs32-38](core/mana-control/src/scan.rs#L32-L38)
 
 ### Bridge: Natural Language to Code Space
 
@@ -219,7 +219,7 @@ flowchart LR
     linkStyle 2,3 stroke:#65B86B,stroke-width:1.5px
 
 ```
-**Sources:** [core/mana-control/src/lib.rs86-91](https://github.com/kerrvisiona-sudo/endeli/blob/ad24740d/core/mana-control/src/lib.rs#L86-L91) [core/mana-control/src/lib.rs45-52](https://github.com/kerrvisiona-sudo/endeli/blob/ad24740d/core/mana-control/src/lib.rs#L45-L52)
+**Sources:** [core/mana-control/src/lib.rs86-91](core/mana-control/src/lib.rs#L86-L91) [core/mana-control/src/lib.rs45-52](core/mana-control/src/lib.rs#L45-L52)
 
 #### FSM Evaluation Mapping
 
@@ -309,20 +309,20 @@ flowchart LR
     linkStyle 3,4,5 stroke:#F0B429,stroke-width:1.5px
 
 ```
-**Sources:** [core/mana-control/src/fsm/engine.rs55-61](https://github.com/kerrvisiona-sudo/endeli/blob/ad24740d/core/mana-control/src/fsm/engine.rs#L55-L61) [core/mana-control/src/fsm/engine.rs29-36](https://github.com/kerrvisiona-sudo/endeli/blob/ad24740d/core/mana-control/src/fsm/engine.rs#L29-L36)
+**Sources:** [core/mana-control/src/fsm/engine.rs55-61](core/mana-control/src/fsm/engine.rs#L55-L61) [core/mana-control/src/fsm/engine.rs29-36](core/mana-control/src/fsm/engine.rs#L29-L36)
 
 
 ### On this page
 
-- [Control System (mana-control)](https://deepwiki.com/kerrvisiona-sudo/endeli/4-control-system-\(mana-control\)#control-system-mana-control)
-- [System Architecture](https://deepwiki.com/kerrvisiona-sudo/endeli/4-control-system-\(mana-control\)#system-architecture)
-- [Control System Flow](https://deepwiki.com/kerrvisiona-sudo/endeli/4-control-system-\(mana-control\)#control-system-flow)
-- [Key Subsystems](https://deepwiki.com/kerrvisiona-sudo/endeli/4-control-system-\(mana-control\)#key-subsystems)
-- [1. Scan Loop and Control State](https://deepwiki.com/kerrvisiona-sudo/endeli/4-control-system-\(mana-control\)#1-scan-loop-and-control-state)
-- [2. Entity Tracking and Occupancy](https://deepwiki.com/kerrvisiona-sudo/endeli/4-control-system-\(mana-control\)#2-entity-tracking-and-occupancy)
-- [3. Finite State Machine (FSM) Engine](https://deepwiki.com/kerrvisiona-sudo/endeli/4-control-system-\(mana-control\)#3-finite-state-machine-fsm-engine)
-- [4. Zone Engine and Spatial Signals](https://deepwiki.com/kerrvisiona-sudo/endeli/4-control-system-\(mana-control\)#4-zone-engine-and-spatial-signals)
-- [Data Structures](https://deepwiki.com/kerrvisiona-sudo/endeli/4-control-system-\(mana-control\)#data-structures)
-- [Bridge: Natural Language to Code Space](https://deepwiki.com/kerrvisiona-sudo/endeli/4-control-system-\(mana-control\)#bridge-natural-language-to-code-space)
-- [Control Input Mapping](https://deepwiki.com/kerrvisiona-sudo/endeli/4-control-system-\(mana-control\)#control-input-mapping)
-- [FSM Evaluation Mapping](https://deepwiki.com/kerrvisiona-sudo/endeli/4-control-system-\(mana-control\)#fsm-evaluation-mapping)
+- [Control System (mana-control)](4-control-system-\(mana-control\)#control-system-mana-control)
+- [System Architecture](4-control-system-\(mana-control\)#system-architecture)
+- [Control System Flow](4-control-system-\(mana-control\)#control-system-flow)
+- [Key Subsystems](4-control-system-\(mana-control\)#key-subsystems)
+- [1. Scan Loop and Control State](4-control-system-\(mana-control\)#1-scan-loop-and-control-state)
+- [2. Entity Tracking and Occupancy](4-control-system-\(mana-control\)#2-entity-tracking-and-occupancy)
+- [3. Finite State Machine (FSM) Engine](4-control-system-\(mana-control\)#3-finite-state-machine-fsm-engine)
+- [4. Zone Engine and Spatial Signals](4-control-system-\(mana-control\)#4-zone-engine-and-spatial-signals)
+- [Data Structures](4-control-system-\(mana-control\)#data-structures)
+- [Bridge: Natural Language to Code Space](4-control-system-\(mana-control\)#bridge-natural-language-to-code-space)
+- [Control Input Mapping](4-control-system-\(mana-control\)#control-input-mapping)
+- [FSM Evaluation Mapping](4-control-system-\(mana-control\)#fsm-evaluation-mapping)

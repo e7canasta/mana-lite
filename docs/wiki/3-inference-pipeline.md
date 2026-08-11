@@ -4,19 +4,19 @@ El sistema mana-lite utiliza un **pipeline de inferencia** que actúa como un 
 
 Relevant source files
 
-- [](https://github.com/kerrvisiona-sudo/endeli/blob/ad24740d/app/inference.rs)
-- [](https://github.com/kerrvisiona-sudo/endeli/blob/ad24740d/app/mod.rs)
-- [](https://github.com/kerrvisiona-sudo/endeli/blob/ad24740d/core/mana-perception/src/detection.rs)
-- [](https://github.com/kerrvisiona-sudo/endeli/blob/ad24740d/infer/mod.rs)
-- [](https://github.com/kerrvisiona-sudo/endeli/blob/ad24740d/ingest.rs)
-- [](https://github.com/kerrvisiona-sudo/endeli/blob/ad24740d/snapshot.rs)
-- [](https://github.com/kerrvisiona-sudo/endeli/blob/ad24740d/std/mana-media/src/decoder.rs)
+- [](src/app/inference.rs)
+- [](src/app/mod.rs)
+- [](core/mana-perception/src/detection.rs)
+- [](src/infer/mod.rs)
+- [](src/ingest.rs)
+- [](src/snapshot.rs)
+- [](std/mana-media/src/decoder.rs)
 
 The Inference Pipeline is the perception engine of `mana-lite`. It is responsible for transforming raw RTSP network packets into high-level semantic observations (e.g., "a person is at these coordinates"). The pipeline operates as a multi-stage process triggered by the arrival of video keyframes.
 
 ## Pipeline Architecture
 
-The pipeline follows a strict linear execution flow for every processed keyframe. It is managed by the `App::run` loop [app/mod.rs73-139](https://github.com/kerrvisiona-sudo/endeli/blob/ad24740d/app/mod.rs#L73-L139) which coordinates the `IngestEngine`, `FrameDecoder`, and `InferEngine`.
+The pipeline follows a strict linear execution flow for every processed keyframe. It is managed by the `App::run` loop [src/app/mod.rs73-139](src/app/mod.rs#L73-L139) which coordinates the `IngestEngine`, `FrameDecoder`, and `InferEngine`.
 
 ### Data Flow Overview
 
@@ -144,33 +144,33 @@ flowchart TB
     ConsolidatedObservation --> ClinicalSample
 ```
 
-Sources: [app/mod.rs34-57](https://github.com/kerrvisiona-sudo/endeli/blob/ad24740d/app/mod.rs#L34-L57) [app/inference.rs35-69](https://github.com/kerrvisiona-sudo/endeli/blob/ad24740d/app/inference.rs#L35-L69) [ingest.rs50-60](https://github.com/kerrvisiona-sudo/endeli/blob/ad24740d/ingest.rs#L50-L60)
+Sources: [src/app/mod.rs34-57](src/app/mod.rs#L34-L57) [src/app/inference.rs35-69](src/app/inference.rs#L35-L69) [src/ingest.rs50-60](src/ingest.rs#L50-L60)
 
 ## Key Stages
 
 ### 1. Video Ingest and Decoding
 
-The `IngestEngine` polls the `RetinaReader` to retrieve the freshest IDR keyframe while dropping intermediate P-frames to minimize latency [ingest.rs80-127](https://github.com/kerrvisiona-sudo/endeli/blob/ad24740d/ingest.rs#L80-L127) Once a keyframe is obtained, the `FrameDecoder` uses `ffmpeg-next` to perform a low-delay decode into a raw RGB `FrameBuffer` [snapshot.rs23-58](https://github.com/kerrvisiona-sudo/endeli/blob/ad24740d/snapshot.rs#L23-L58)
+The `IngestEngine` polls the `RetinaReader` to retrieve the freshest IDR keyframe while dropping intermediate P-frames to minimize latency [src/ingest.rs80-127](src/ingest.rs#L80-L127) Once a keyframe is obtained, the `FrameDecoder` uses `ffmpeg-next` to perform a low-delay decode into a raw RGB `FrameBuffer` [src/snapshot.rs23-58](src/snapshot.rs#L23-L58)
 
 - **Key Components**: `RetinaReader`, `IngestEngine`, `SoftwareDecoder`.
-- **For details, see [Video Ingest and Decoding](https://deepwiki.com/kerrvisiona-sudo/endeli/3.1-video-ingest-and-decoding)**.
+- **For details, see [Video Ingest and Decoding](3.1-video-ingest-and-decoding)**.
 
 ### 2. Model Execution and Cascade Scheduling
 
-The `InferEngine` manages the lifecycle of multiple YOLO models [infer/mod.rs47-49](https://github.com/kerrvisiona-sudo/endeli/blob/ad24740d/infer/mod.rs#L47-L49) Execution is ordered by the `CascadeScheduler`:
+The `InferEngine` manages the lifecycle of multiple YOLO models [src/infer/mod.rs47-49](src/infer/mod.rs#L47-L49) Execution is ordered by the `CascadeScheduler`:
 
-1. **Root Models**: Executed first on the full frame (e.g., a general "person" detector) [app/inference.rs72-91](https://github.com/kerrvisiona-sudo/endeli/blob/ad24740d/app/inference.rs#L72-L91)
-2. **Child Models**: Executed on dynamic crops based on root detections (e.g., a "face" or "pose" model running only on the detected person's bounding box) [app/inference.rs94-118](https://github.com/kerrvisiona-sudo/endeli/blob/ad24740d/app/inference.rs#L94-L118)
+1. **Root Models**: Executed first on the full frame — or on the model's configured static ROI (e.g., `detect-fast` in `config/models/detect.toml:36-40` restricts inference to `[420, 0, 1500, 1080]`) — e.g., a general "person" detector [src/app/inference.rs72-91](src/app/inference.rs#L72-L91)
+2. **Child Models**: Executed on dynamic crops based on root detections (e.g., a "face" or "pose" model running only on the detected person's bounding box) — note children only run when exactly one track of the presence class exists [src/app/inference.rs94-118](src/app/inference.rs#L94-L118) [src/app/inference.rs107-110](src/app/inference.rs#L107-L110)
 
 - **Key Components**: `InferEngine`, `YOLOModel`, `CascadeScheduler`, `CropRect`.
-- **For details, see [Model Execution and Cascade Scheduling](https://deepwiki.com/kerrvisiona-sudo/endeli/3.2-model-execution-and-cascade-scheduling)**.
+- **For details, see [Model Execution and Cascade Scheduling](3.2-model-execution-and-cascade-scheduling)**.
 
 ### 3. Detection Consolidation
 
-Because multiple models might detect the same physical object (e.g., a root model and a specialized child model), the `DetectionConsolidator` fuses these results [detection.rs113-117](https://github.com/kerrvisiona-sudo/endeli/blob/ad24740d/detection.rs#L113-L117) It uses Intersection-over-Union (IoU) to merge overlapping detections of the same class and attaches sub-components (like faces) to parent objects (like persons) [detection.rs132-200](https://github.com/kerrvisiona-sudo/endeli/blob/ad24740d/detection.rs#L132-L200)
+Because multiple models might detect the same physical object (e.g., a root model and a specialized child model), the `DetectionConsolidator` fuses these results [detection.rs113-117](detection.rs#L113-L117) It uses Intersection-over-Union (IoU) to merge overlapping detections of the same class and attaches sub-components (like faces) to parent objects (like persons) [detection.rs132-200](detection.rs#L132-L200)
 
 - **Key Components**: `DetectionConsolidator`, `ConsolidatedObservation`, `DetectionEvidence`.
-- **For details, see [Detection Consolidation and Perception Output](https://deepwiki.com/kerrvisiona-sudo/endeli/3.3-detection-consolidation-and-perception-output)**.
+- **For details, see [Detection Consolidation and Perception Output](3.3-detection-consolidation-and-perception-output)**.
 
 ## Entity Mapping: Code to Logic
 
@@ -178,16 +178,16 @@ The following diagram maps the logical perception stages to the specific Rust en
 
 **Perception Entity Mapping**
 
-Sources: [ingest.rs152-164](https://github.com/kerrvisiona-sudo/endeli/blob/ad24740d/ingest.rs#L152-L164) [app/mod.rs20-25](https://github.com/kerrvisiona-sudo/endeli/blob/ad24740d/app/mod.rs#L20-L25) [app/inference.rs17-31](https://github.com/kerrvisiona-sudo/endeli/blob/ad24740d/app/inference.rs#L17-L31) [detection.rs89-97](https://github.com/kerrvisiona-sudo/endeli/blob/ad24740d/detection.rs#L89-L97)
+Sources: [src/ingest.rs152-164](src/ingest.rs#L152-L164) [src/app/mod.rs20-25](src/app/mod.rs#L20-L25) [src/app/inference.rs17-31](src/app/inference.rs#L17-L31) [detection.rs89-97](core/mana-perception/src/detection.rs#L89-L97)
 
 ## Performance and Monitoring
 
 The pipeline is instrumented via the `MetricsEngine` to track:
 
-- **Decode Latency**: Time spent in `FrameDecoder` [app/mod.rs147-162](https://github.com/kerrvisiona-sudo/endeli/blob/ad24740d/app/mod.rs#L147-L162)
-- **Inference Latency**: Time spent per model in `YOLOModel::predict_image` [infer/mod.rs100-104](https://github.com/kerrvisiona-sudo/endeli/blob/ad24740d/infer/mod.rs#L100-L104)
-- **Pipeline Overruns**: Cycles where processing exceeds the configured `ScanConfig` period [app/mod.rs110-135](https://github.com/kerrvisiona-sudo/endeli/blob/ad24740d/app/mod.rs#L110-L135)
+- **Decode Latency**: Time spent in `FrameDecoder`, measured as `decode_us` in the `MetricsEngine` pipeline counters [src/app/mod.rs147-162](src/app/mod.rs#L147-L162)
+- **Inference Latency**: The per-model time reported by the inference backend (`results.speed.inference`), exposed as `infer_ms`; the actual wall-clock cost of the call is tracked separately as `pipeline_us` [src/infer/mod.rs98-137](src/infer/mod.rs#L98-L137)
+- **Pipeline Overruns**: Cycles whose processing exceeded the cycle budget (`health.cycle_budget_ms`, 500 ms in `config/mana.toml`) — the `MetricsEngine::tick_cycle_at` gate; a cycle that only waited on the poll never declares an overrun [src/metrics/mod.rs339-343](src/metrics/mod.rs#L339-L343)
 
-Inference results and frames can be optionally visualized using the `Rerun` integration or saved as local snapshots via the `SnapshotSaver` [snapshot.rs112-129](https://github.com/kerrvisiona-sudo/endeli/blob/ad24740d/snapshot.rs#L112-L129)
+Inference results and frames can be optionally visualized using the `Rerun` integration or saved as local snapshots via the `SnapshotSaver` [src/snapshot.rs112-129](src/snapshot.rs#L112-L129)
 
-Sources: [app/mod.rs43-47](https://github.com/kerrvisiona-sudo/endeli/blob/ad24740d/app/mod.rs#L43-L47) [app/inference.rs108-117](https://github.com/kerrvisiona-sudo/endeli/blob/ad24740d/app/inference.rs#L108-L117) [snapshot.rs129-146](https://github.com/kerrvisiona-sudo/endeli/blob/ad24740d/snapshot.rs#L129-L146)
+Sources: [src/app/mod.rs43-47](src/app/mod.rs#L43-L47) [src/app/inference.rs108-117](src/app/inference.rs#L108-L117) [src/snapshot.rs129-146](src/snapshot.rs#L129-L146)

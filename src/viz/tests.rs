@@ -88,8 +88,11 @@ fn occupancy_state_has_sequence_timestamp_and_log_time_timelines() {
         inner: Inner::Connected {
             rec,
             last_flush_warn: Instant::now(),
+            flush_timeouts: 0,
         },
         addr: String::new(),
+        retry_backoff_ms: INITIAL_BACKOFF_MS,
+        stream_proven: true,
         toggles: VizSendToggles::default(),
         fixed_rois: Vec::new(),
         roles: HashMap::new(),

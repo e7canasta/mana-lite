@@ -3,15 +3,15 @@ Esta documentación técnica describe el **VizBridge**, un componente esencial 
 
 Relevant source files
 
-- [](https://github.com/kerrvisiona-sudo/endeli/blob/ad24740d/app/bootstrap/perception.rs)
-- [](https://github.com/kerrvisiona-sudo/endeli/blob/ad24740d/viz/boxes.rs)
-- [](https://github.com/kerrvisiona-sudo/endeli/blob/ad24740d/viz/connection.rs)
-- [](https://github.com/kerrvisiona-sudo/endeli/blob/ad24740d/viz/frame.rs)
-- [](https://github.com/kerrvisiona-sudo/endeli/blob/ad24740d/viz/masks.rs)
-- [](https://github.com/kerrvisiona-sudo/endeli/blob/ad24740d/viz/mod.rs)
-- [](https://github.com/kerrvisiona-sudo/endeli/blob/ad24740d/viz/rois.rs)
-- [](https://github.com/kerrvisiona-sudo/endeli/blob/ad24740d/viz/state.rs)
-- [](https://github.com/kerrvisiona-sudo/endeli/blob/ad24740d/viz/tests.rs)
+- [](src/app/bootstrap/observers.rs)
+- [](src/viz/boxes.rs)
+- [](src/viz/connection.rs)
+- [](src/viz/frame.rs)
+- [](src/viz/masks.rs)
+- [](src/viz/mod.rs)
+- [](src/viz/rois.rs)
+- [](src/viz/state.rs)
+- [](src/viz/tests.rs)
 
 The visualization layer provides a real-time, feature-gated observation window into the inference pipeline and control system using the [Rerun](https://rerun.io/) SDK. It allows developers to inspect raw frames, model crops, detection outputs (bounding boxes, masks, poses), and the internal state transitions of the Finite State Machine (FSM).
 
@@ -19,11 +19,11 @@ The core of this system is the `VizBridge`, which manages the connection to a R
 
 ### Connection Management
 
-`VizBridge` implements an asynchronous connection strategy with exponential backoff to ensure that the main inference pipeline is not blocked if the Rerun server is unavailable [viz/mod.rs27-38](https://github.com/kerrvisiona-sudo/endeli/blob/ad24740d/viz/mod.rs#L27-L38)
+`VizBridge` implements an asynchronous connection strategy with exponential backoff to ensure that the main inference pipeline is not blocked if the Rerun server is unavailable; `try_connect` (attempt + backoff doubling) lives in `src/viz/connection.rs` [src/viz/connection.rs:8-60](src/viz/connection.rs#L8-L60)
 
-- **Backoff Logic**: Connections start with a 1-second delay (`INITIAL_BACKOFF_MS`), doubling on failure up to a maximum of 30 seconds (`MAX_BACKOFF_MS`) [viz/mod.rs64-65](https://github.com/kerrvisiona-sudo/endeli/blob/ad24740d/viz/mod.rs#L64-L65)
-- **State Configuration**: Upon a successful connection, the bridge initializes the Rerun viewer with a default blueprint and pre-configured state categories for room occupancy and face dwell states [viz/connection.rs148-175](https://github.com/kerrvisiona-sudo/endeli/blob/ad24740d/viz/connection.rs#L148-L175)
-- **Toggles**: Data emission is strictly controlled by `VizSendToggles`, allowing specific streams (e.g., depth, masks, or latency) to be enabled or disabled via configuration [viz/mod.rs43](https://github.com/kerrvisiona-sudo/endeli/blob/ad24740d/viz/mod.rs#L43-L43)
+- **Backoff Logic**: Connections start with a 1-second delay (`INITIAL_BACKOFF_MS`), doubling on failure up to a maximum of 30 seconds (`MAX_BACKOFF_MS`) [src/viz/mod.rs:64-65](src/viz/mod.rs#L64-L65)
+- **State Configuration**: Upon a successful connection, the bridge initializes the Rerun viewer with a default blueprint and pre-configured state categories for room occupancy and face dwell states [src/viz/connection.rs:148-175](src/viz/connection.rs#L148-L175)
+- **Toggles**: Data emission is strictly controlled by `VizSendToggles`, allowing specific streams (e.g., depth, masks, or latency) to be enabled or disabled via configuration [src/config/observability.rs:44](src/config/observability.rs#L44-L44)
 
 ### Data Stream Architecture
 
@@ -31,11 +31,11 @@ The visualization system organizes data into two primary entity paths: `/world/
 
 |Entity Path|Data Type|Description|
 |---|---|---|
-|`/world/camera/bgr`|`rerun::Image`|The full-resolution raw video frame [viz/frame.rs92](https://github.com/kerrvisiona-sudo/endeli/blob/ad24740d/viz/frame.rs#L92-L92)|
-|`/world/camera/crops/{model}/bgr`|`rerun::Image`|Sub-regions extracted for cascaded model inference [viz/frame.rs106](https://github.com/kerrvisiona-sudo/endeli/blob/ad24740d/viz/frame.rs#L106-L106)|
-|`/world/camera/entities/{id}`|`rerun::Boxes2D`|Tracked entities with unique IDs and color-coded status [viz/boxes.rs104](https://github.com/kerrvisiona-sudo/endeli/blob/ad24740d/viz/boxes.rs#L104-L104)|
-|`/pipeline/state/room/*`|`rerun::StateChange`|Occupancy, second person, and signal validity states [viz/state.rs31-49](https://github.com/kerrvisiona-sudo/endeli/blob/ad24740d/viz/state.rs#L31-L49)|
-|`/pipeline/infer/{model}/hz`|`rerun::Scalars`|Real-time inference frequency per model [viz/state.rs99](https://github.com/kerrvisiona-sudo/endeli/blob/ad24740d/viz/state.rs#L99-L99)|
+|`/world/camera/bgr`|`rerun::Image`|The full-resolution raw video frame [src/viz/frame.rs:92](src/viz/frame.rs#L92-L92)|
+|`/world/camera/crops/{model}/bgr`|`rerun::Image`|Sub-regions extracted for cascaded model inference [src/viz/frame.rs:106](src/viz/frame.rs#L106-L106)|
+|`/world/camera/entities`|`rerun::Boxes2D`|Tracked entities with color-coded boxes and labels [src/viz/boxes.rs:92](src/viz/boxes.rs#L92-L92)|
+|`/pipeline/state/room/*`|`rerun::StateChange`|Occupancy, second person, and signal validity states [src/viz/state.rs:31-45](src/viz/state.rs#L31-L45)|
+|`/pipeline/infer/{model}/hz`|`rerun::Scalars`|Real-time inference frequency per model [src/viz/state.rs:99](src/viz/state.rs#L99-L99)|
 
 #### Visualization Entity Mapping
 
@@ -127,7 +127,7 @@ flowchart LR
 |Model Regions (ROI)|`CropRect`|`log_roi_boxes()`|`/world/camera/rois/{model}`|
 |Detections|`Detection`|`log_model_detections()`|`/world/camera/detections/{model}`|
 |Room Status|`RoomCardinality`|`log_occupancy_state()`|`/pipeline/state/room/cardinality`|
-Sources: [viz/frame.rs87-96](https://github.com/kerrvisiona-sudo/endeli/blob/ad24740d/viz/frame.rs#L87-L96) [viz/rois.rs26-55](https://github.com/kerrvisiona-sudo/endeli/blob/ad24740d/viz/rois.rs#L26-L55) [viz/boxes.rs152-202](https://github.com/kerrvisiona-sudo/endeli/blob/ad24740d/viz/boxes.rs#L152-L202) [viz/state.rs19-51](https://github.com/kerrvisiona-sudo/endeli/blob/ad24740d/viz/state.rs#L19-L51)
+Sources: [src/viz/frame.rs:87-96](src/viz/frame.rs#L87-L96) [src/viz/rois.rs:26-55](src/viz/rois.rs#L26-L55) [src/viz/boxes.rs:152-202](src/viz/boxes.rs#L152-L202) [src/viz/state.rs:19-51](src/viz/state.rs#L19-L51)
 
 ### VizBridge Initialization
 
@@ -209,22 +209,22 @@ flowchart LR
 
 ```
 
-Sources: [viz/mod.rs92-123](https://github.com/kerrvisiona-sudo/endeli/blob/ad24740d/viz/mod.rs#L92-L123) [viz/connection.rs8-51](https://github.com/kerrvisiona-sudo/endeli/blob/ad24740d/viz/connection.rs#L8-L51) [app/bootstrap/perception.rs18-29](https://github.com/kerrvisiona-sudo/endeli/blob/ad24740d/app/bootstrap/perception.rs#L18-L29)
+Sources: [src/viz/mod.rs:92-123](src/viz/mod.rs#L92-L123) [src/viz/connection.rs:8-51](src/viz/connection.rs#L8-L51) [src/app/bootstrap/observers.rs:89-101](src/app/bootstrap/observers.rs#L89-L101)
 
 ---
 
 ## Child Pages
 
-- **[Frame and Detection Rendering](https://deepwiki.com/kerrvisiona-sudo/endeli/6.1-frame-and-detection-rendering)**: Details on how pixels are logged, how bounding boxes are translated from crop-space to frame-space, and the generation of segmentation mask overlays.
-- **[Pipeline State Visualization](https://deepwiki.com/kerrvisiona-sudo/endeli/6.2-pipeline-state-visualization)**: Details on tracking FSM states, keyframe selection logic, and performance metrics like decode latency and inference rate.
+- **[Frame and Detection Rendering](6.1-frame-and-detection-rendering)**: Details on how pixels are logged, how bounding boxes are translated from crop-space to frame-space, and the generation of segmentation mask overlays.
+- **[Pipeline State Visualization](6.2-pipeline-state-visualization)**: Details on tracking FSM states, keyframe selection logic, and performance metrics like decode latency and inference rate.
 
 
 ### On this page
 
-- [Visualization (Rerun Integration)](https://deepwiki.com/kerrvisiona-sudo/endeli/6-visualization-\(rerun-integration\)#visualization-rerun-integration)
-- [Connection Management](https://deepwiki.com/kerrvisiona-sudo/endeli/6-visualization-\(rerun-integration\)#connection-management)
-- [Data Stream Architecture](https://deepwiki.com/kerrvisiona-sudo/endeli/6-visualization-\(rerun-integration\)#data-stream-architecture)
-- [Visualization Entity Mapping](https://deepwiki.com/kerrvisiona-sudo/endeli/6-visualization-\(rerun-integration\)#visualization-entity-mapping)
-- [VizBridge Initialization](https://deepwiki.com/kerrvisiona-sudo/endeli/6-visualization-\(rerun-integration\)#vizbridge-initialization)
-- [Child Pages](https://deepwiki.com/kerrvisiona-sudo/endeli/6-visualization-\(rerun-integration\)#child-pages)
+- [Visualization (Rerun Integration)](6-visualization-\(rerun-integration\)#visualization-rerun-integration)
+- [Connection Management](6-visualization-\(rerun-integration\)#connection-management)
+- [Data Stream Architecture](6-visualization-\(rerun-integration\)#data-stream-architecture)
+- [Visualization Entity Mapping](6-visualization-\(rerun-integration\)#visualization-entity-mapping)
+- [VizBridge Initialization](6-visualization-\(rerun-integration\)#vizbridge-initialization)
+- [Child Pages](6-visualization-\(rerun-integration\)#child-pages)
 

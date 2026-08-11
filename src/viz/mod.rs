@@ -25,13 +25,19 @@ use image::Rgb;
 use masks::{build_mask_overlay, frame_strip, render_mask_debug_images};
 
 enum Inner {
+    /// A sink exists. This is *not* proof that a viewer is listening: the gRPC
+    /// sink connects lazily, so `Connected` only means "we have somewhere to
+    /// write". Liveness is established by the first flush that returns `Ok`.
     Connected {
         rec: rerun::RecordingStream,
         last_flush_warn: Instant,
+        /// Run of consecutive [`rerun::SinkFlushError::Timeout`] results.
+        /// A timeout is backpressure, not a disconnect, so it takes a
+        /// sustained run of them to justify dropping the sink.
+        flush_timeouts: u32,
     },
     Disconnected {
         next_retry: Instant,
-        backoff_ms: u64,
         last_warn: Instant,
     },
     Disabled,
@@ -40,6 +46,13 @@ enum Inner {
 pub struct VizBridge {
     inner: Inner,
     addr: String,
+    /// Retry delay, owned by the bridge rather than by [`Inner::Disconnected`].
+    /// Creating a sink always succeeds, so a backoff scoped to the disconnected
+    /// state would be reset on every retry and never grow. It is reset only by
+    /// a flush that actually reaches a viewer.
+    retry_backoff_ms: u64,
+    /// Whether any flush has succeeded on the current sink.
+    stream_proven: bool,
     toggles: VizSendToggles,
     fixed_rois: Vec<FixedRoi>,
     roles: HashMap<String, ModelRole>,
@@ -63,6 +76,12 @@ const FRAME_NUMBER_TIMELINE: &str = "frame_nr";
 const FRAME_TIME_TIMELINE: &str = "frame_time";
 const INITIAL_BACKOFF_MS: u64 = 1_000;
 const MAX_BACKOFF_MS: u64 = 30_000;
+/// How long a liveness probe waits for the batcher to drain.
+const FLUSH_TIMEOUT_MS: u64 = 100;
+/// Sustained backpressure tolerated before the sink is dropped. At scan
+/// cadence this is a couple of seconds, long enough to ride out a large frame
+/// on a slow link but short enough to bound the batcher backlog.
+const MAX_FLUSH_TIMEOUTS: u32 = 10;
 
 /// Instance-mask palette, keyed by (class-id − 1) mod len (ADR-022).
 pub(super) const PALETTE: [[u8; 3]; 8] = [
@@ -99,10 +118,11 @@ impl VizBridge {
         Self {
             inner: Inner::Disconnected {
                 next_retry: Instant::now(),
-                backoff_ms: INITIAL_BACKOFF_MS,
                 last_warn: Instant::now(),
             },
             addr: rerun_addr.to_string(),
+            retry_backoff_ms: INITIAL_BACKOFF_MS,
+            stream_proven: false,
             toggles: toggles.clone(),
             fixed_rois,
             roles: models

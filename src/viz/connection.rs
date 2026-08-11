@@ -2,7 +2,9 @@
 
 use std::time::{Duration, Instant};
 
-use super::{INITIAL_BACKOFF_MS, Inner, MAX_BACKOFF_MS, VizBridge};
+use super::{
+    FLUSH_TIMEOUT_MS, INITIAL_BACKOFF_MS, Inner, MAX_BACKOFF_MS, MAX_FLUSH_TIMEOUTS, VizBridge,
+};
 
 impl VizBridge {
     pub(super) fn try_connect(&mut self) {
@@ -24,30 +26,50 @@ impl VizBridge {
                 self.last_second_person_state = None;
                 self.last_signal_state = None;
                 self.last_face_state = None;
-                log::info!("viz: connected to {}", self.addr);
+                // Deliberately not logged as "connected": `connect_grpc_opts`
+                // is lazy and returns `Ok` even with no viewer listening, so
+                // announcing a connection here would be a claim we have not
+                // verified. The info-level line is emitted by `tick` once a
+                // flush proves a viewer is on the other end.
+                log::debug!("viz: sink created for {}", self.addr);
+                self.stream_proven = false;
                 self.inner = Inner::Connected {
                     rec,
                     last_flush_warn: Instant::now(),
+                    flush_timeouts: 0,
                 };
             }
             Err(e) => {
                 if let Inner::Disconnected {
-                    ref mut backoff_ms,
-                    ref mut last_warn,
-                    ..
+                    ref mut last_warn, ..
                 } = self.inner
                 {
                     if last_warn.elapsed().as_secs() >= 30 {
                         log::warn!(
-                            "viz: connect failed (retry in {}s): {e}",
-                            *backoff_ms / 1000
+                            "viz: sink creation failed (retry in {}s): {e}",
+                            self.retry_backoff_ms / 1000
                         );
                         *last_warn = Instant::now();
                     }
-                    *backoff_ms = (*backoff_ms * 2).min(MAX_BACKOFF_MS);
                 }
             }
         }
+    }
+
+    /// Drop the current sink and schedule a retry with an escalating delay.
+    fn disconnect(&mut self, reason: &str) {
+        let delay = self.retry_backoff_ms;
+        self.retry_backoff_ms = self.retry_backoff_ms.saturating_mul(2).min(MAX_BACKOFF_MS);
+        if self.stream_proven {
+            log::warn!("viz: {reason} — retrying in {}ms", delay);
+        } else {
+            log::debug!("viz: {reason} — retrying in {}ms", delay);
+        }
+        self.stream_proven = false;
+        self.inner = Inner::Disconnected {
+            next_retry: Instant::now() + Duration::from_millis(delay),
+            last_warn: Instant::now(),
+        };
     }
 
     fn camera_blueprint_tab() -> rerun::blueprint::Horizontal {
@@ -203,29 +225,54 @@ impl VizBridge {
     }
 
     pub fn tick(&mut self) {
+        let mut drop_reason: Option<String> = None;
+        let mut reconnect = false;
+
         match &mut self.inner {
             Inner::Connected {
                 rec,
                 last_flush_warn,
-            } => {
-                if let Err(e) = rec.flush_with_timeout(Duration::from_millis(100)) {
-                    if last_flush_warn.elapsed().as_secs() >= 30 {
-                        log::warn!("viz disconnected — viewer may be offline: {e}");
+                flush_timeouts,
+            } => match rec.flush_with_timeout(Duration::from_millis(FLUSH_TIMEOUT_MS)) {
+                Ok(()) => {
+                    *flush_timeouts = 0;
+                    // A completed flush is the only evidence that a viewer is
+                    // actually consuming the stream.
+                    if !self.stream_proven {
+                        self.stream_proven = true;
+                        log::info!("viz: connected to {}", self.addr);
+                    }
+                    self.retry_backoff_ms = INITIAL_BACKOFF_MS;
+                }
+                // Backpressure, not a disconnect. A 1080p frame can take longer
+                // than the probe window to drain over the network; treating that
+                // as a drop would resend the viewer blueprint and reset the
+                // state-dedup caches on every slow frame.
+                Err(rerun::SinkFlushError::Timeout) => {
+                    *flush_timeouts += 1;
+                    if *flush_timeouts >= MAX_FLUSH_TIMEOUTS {
+                        drop_reason = Some(format!(
+                            "sink backlogged ({MAX_FLUSH_TIMEOUTS} consecutive flush timeouts)"
+                        ));
+                    } else if last_flush_warn.elapsed().as_secs() >= 30 {
+                        log::debug!("viz: flush timed out ({} in a row)", *flush_timeouts);
                         *last_flush_warn = Instant::now();
                     }
-                    self.inner = Inner::Disconnected {
-                        next_retry: Instant::now() + Duration::from_millis(INITIAL_BACKOFF_MS),
-                        backoff_ms: INITIAL_BACKOFF_MS * 2,
-                        last_warn: Instant::now(),
-                    };
                 }
-            }
+                Err(e) => drop_reason = Some(format!("viewer unreachable: {e}")),
+            },
             Inner::Disconnected { next_retry, .. } => {
                 if Instant::now() >= *next_retry {
-                    self.try_connect();
+                    reconnect = true;
                 }
             }
             Inner::Disabled => {}
+        }
+
+        if let Some(reason) = drop_reason {
+            self.disconnect(&reason);
+        } else if reconnect {
+            self.try_connect();
         }
     }
 }
