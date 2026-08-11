@@ -170,7 +170,14 @@ fn log_ingest_line(report: &MetricsReport, config: &MetricsTextConfig) {
         "ingest: {:.1} Hz — {} keyframes processed ({} seen) in {}s | decode {}ms avg{} | cycles {}{}",
         hz(report.keyframes, report.window_s),
         report.keyframes,
-        report.keyframes_seen.max(report.keyframes),
+        // Sin `.max(keyframes)`: `processed > seen` en una ventana es un estado
+        // real y no una anomalía de conteo — significa que un keyframe drenado
+        // al final de la ventana anterior quedó staged y se emitió en esta.
+        // Enmascararlo hacía que el par dejara de conservarse a lo largo de la
+        // corrida, y con eso `seen` vs `processed` no servía para detectar
+        // pérdidas: cada straddle sumaba deriva permanente sin que se hubiera
+        // perdido nada.
+        report.keyframes_seen,
         report.window_s,
         decode_avg,
         gap_str,
