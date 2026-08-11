@@ -136,9 +136,22 @@ usara no permitiría sustituir la implementación.
 Consecuencia directa y medida: **la visualización corre en el hilo del control y
 puede frenarlo.** rerun aplica contrapresión al productor cuando su batcher se
 llena (`max_bytes_in_flight`, y `re_chunk` no ofrece política de descarte), de
-modo que un enlace saturado bloquea el `log()` del pipeline. Observado: un scan
-de **8,2 segundos** drenando frames de 6,2 MB, con 8 keyframes descartados
-durante la parada.
+modo que un enlace saturado bloquea el `log()` del pipeline.
+
+Y el daño no se detiene en el control. Medido en una corrida de 180 s con frames
+sin comprimir (`workshop/scenarios/02-ingest-viz`, variante `a-raw-native`):
+
+```
+enlace de viz saturado
+  └─ el flush bloquea el hilo del pipeline ............ 41 segundos
+     └─ retina no se poletea, el socket RTP se llena
+        └─ los errores RTP superan el umbral
+           └─ 147 reconexiones RTSP
+              └─ 24% de los keyframes perdidos
+```
+
+**La visualización de depuración tira la ingesta de video.** El bloqueo se
+propaga hasta la capa de red, que reacciona reconectando.
 
 > **Regla.** Un subsistema sin puerto declarado termina cableado inline. La
 > ausencia de puerto para Observabilidad no es una omisión cosmética: es la causa
@@ -204,7 +217,8 @@ para delatar.
 > podía subir nunca y todo `0 overruns` impreso era una tautología. La exención
 > tapaba justamente el caso importante: un scan bloqueado en la visualización no
 > procesa keyframes, así que quedaba exento. Fijado por
-> `metrics::tests::a_stalled_cycle_without_work_still_trips_the_budget`.
+> `metrics::tests::a_stalled_cycle_without_work_still_trips_the_budget`, y
+confirmado en campo contra un scan real de 41 s.
 
 ### 5.2 El bridge de Rerun
 

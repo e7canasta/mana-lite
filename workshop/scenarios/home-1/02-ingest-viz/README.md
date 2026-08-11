@@ -43,33 +43,39 @@ registro de qué se corrió exactamente— y al terminar imprime las compuertas.
    criterio recién es verificable: hasta el 2026-08-11 el contador estaba
    estructuralmente muerto (ver más abajo) y ese `0` no medía nada.
 
-## Resultados medidos (2026-08-11)
+## Resultados medidos (2026-08-11, corridas de 180 s)
 
-|Variante|Conexiones|Keyframes|Overruns|Veredicto|
-|---|---|---|---|---|
-|`a-raw-native` corrida 1|**2**|36/45 (**deriva 9**)|0 (contador muerto)|degradado|
-|`a-raw-native` corrida 2|1|46/46|0|limpio|
-|`b-jpeg-native`|1|41/42 (straddle)|0|limpio|
+|Variante|Conexiones|Reconexiones RTSP|Keyframes|Overruns|Veredicto|
+|---|---|---|---|---|---|
+|`b-jpeg-native`|1|0|179/179|0|**verde**|
+|`a-raw-native`|2|**370**|68/89 (24% perdido)|**1**|degradado|
 
-**Raw nativo no está roto: está al filo.** Dos corridas consecutivas de la misma
-variante, sin cambios en ese camino de código, dieron resultados opuestos. Es el
-comportamiento esperable de una saturación de enlace que vive cerca del umbral,
-y significa que una sola corrida no alcanza para homologar esta variante:
-necesita repetición o una corrida larga.
+`b-jpeg-native` es la compuerta y pasa limpio. `a-raw-native` no es compuerta:
+satura el enlace a propósito y existe para medir el contraste. Es la línea base
+contra la que se mide la Fase 2 del roadmap, que debe volverla inofensiva.
 
-En la corrida degradada el mecanismo quedó completo en el log:
+### La cadena causal completa
+
+En `a-raw-native` el log muestra el mecanismo entero:
 
 ```
-20:21:16 WARN viz: sink backlogged (10 consecutive flush timeouts) — retrying in 1000ms
-cycle: 2.0 Hz — 26 scans in 13s | p95 201ms max 8203ms | 0 overruns (budget 500ms)
-ingest: ... pframes:65, kf_dropped:8, timeouts:56
+cycle: ... max 41081ms | 1 overruns (budget 500ms)
+viz: sink backlogged (10 consecutive flush timeouts) — retrying in 1000ms
+rtp errors exceeded threshold — reconnecting        (x147)
 ```
 
-Un scan tardó **8,2 s** con el hilo del pipeline bloqueado en `flush_with_timeout`
-drenando frames de 6,2 MB. Durante la parada los keyframes se apilaron y el
-drenaje descartó 8 —- ahí están los 9 perdidos. La guarda de contrapresión
-detectó la saturación y soltó el sink para acotar el backlog, que es exactamente
-para lo que se diseñó.
+```
+enlace de viz saturado
+  └─ el flush bloquea el hilo del pipeline ............ 41 segundos
+     └─ retina no se poletea, el socket RTP se llena
+        └─ los errores RTP superan el umbral
+           └─ 147 reconexiones RTSP
+              └─ 24% de los keyframes perdidos
+```
+
+**La visualización de depuración tira la ingesta de video.** No es una analogía:
+el hilo bloqueado en el sink de Rerun deja de drenar el socket RTP, y la capa de
+red reacciona reconectando. Es la justificación medida de ADR-033 y ADR-035.
 
 ### El contador de overruns estaba muerto
 
@@ -87,8 +93,9 @@ es procesamiento de keyframes, que es justo lo que produce un sink lento.
 
 Corregido: el presupuesto mide el **periodo**, no el trabajo. Fijado por
 `metrics::tests::a_stalled_cycle_without_work_still_trips_the_budget`.
-**Pendiente de confirmación en campo**: la parada no se repitió en corridas
-posteriores, así que todavía no se lo vio dispararse contra un stall real.
+**Confirmado en campo** el 2026-08-11: en la corrida de 180 s de `a-raw-native`
+el contador marcó 1 overrun contra un scan de 41 s. La corrección detecta el
+stall real que la condición anterior dejaba pasar.
 
 ## Verificación en el viewer
 
