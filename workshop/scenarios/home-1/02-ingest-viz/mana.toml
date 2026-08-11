@@ -90,24 +90,20 @@ fsm = false
 # ----------------------------------------------------------------------------
 # La capa bajo prueba.
 #
-# `image_max_res` e `image_format` son ortogonales y se combinan.
+# `image_format` decide el encoding del frame en el cable.
 #
-# `image_max_res` acota el **lado mayor**: para 1920x1080 el factor sale de
-# 1920, no de 1080. Payload por frame de 1080p, medido sobre un patrón
-# sintético de alta frecuencia (`viz::frame::tests`), el peor caso para JPEG:
+# Un frame 1080p RGB24 son 6.220.800 B; a un keyframe por segundo eso es
+# ~50 Mbit/s sostenidos, que es lo que satura el enlace hacia el visor.
+# Medido sobre un patrón sintético de alta frecuencia (`viz::frame::tests`),
+# el peor caso para JPEG:
 #
-#   max_res=0,   raw    → 6.220.800 B  1920x1080  (referencia)
-#   max_res=960, raw    → 1.555.200 B   960x540    4,0x   0,89 ms
-#   max_res=720, raw    →   691.200 B   640x360    9,0x   0,37 ms
-#   max_res=0,   jpeg75 →   195.373 B  1920x1080  31,8x  40 ms
+#   raw     → 6.220.800 B  1920x1080  (referencia)
+#   jpeg 75 →   195.373 B  1920x1080  31,8x   40 ms
 #
-# `jpeg` con `image_max_res = 0` es el modo preferido: reduce el bitrate sin
-# tocar la escala, así que los overlays conservan sus coordenadas nativas y no
-# hace falta compensación de ningún tipo. Cualquier `image_max_res` que achique
-# de verdad exige verificación visual antes de confiar en él.
+# JPEG baja el bitrate sin tocar la resolución, así que los overlays conservan
+# sus coordenadas nativas y no hace falta compensar geometría.
 [viz]
 enabled = true
 rerun_addr = "192.168.1.20:9876"
-image_max_res = 0
 image_format = "jpeg"
 image_quality = 75

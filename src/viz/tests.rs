@@ -93,7 +93,6 @@ fn occupancy_state_has_sequence_timestamp_and_log_time_timelines() {
         addr: String::new(),
         retry_backoff_ms: INITIAL_BACKOFF_MS,
         stream_proven: true,
-        image_max_res: 0,
         image_format: VizImageFormat::Raw,
         toggles: VizSendToggles::default(),
         fixed_rois: Vec::new(),

@@ -15,14 +15,12 @@ pertenece al bridge.
 ## Cómo correr
 
 Abrir el viewer en `192.168.1.20:9876` **antes** de arrancar. Cada variante es
-una invocación, no la edición de un campo — dejar un `image_max_res` flipeado de
-la corrida anterior invalida la comparación sin que nada lo avise:
+una invocación, no la edición de un campo: dejar un `image_format` flipeado de la
+corrida anterior invalida la comparación sin que nada lo avise.
 
 ```sh
-./run-variant.sh a-raw-native      90   # referencia: 6,2 MB/frame
-./run-variant.sh b-jpeg-native     90   # nativo comprimido: ~195 KB/frame
-./run-variant.sh c-raw-downscaled  90   # 960x540 sin comprimir
-./run-variant.sh d-jpeg-downscaled 90   # ambas palancas
+./run-variant.sh a-raw-native  180   # referencia sin comprimir: 6,2 MB/frame
+./run-variant.sh b-jpeg-native 180   # comprimido: ~195 KB/frame
 ```
 
 El script materializa la config efectiva completa en
@@ -94,22 +92,17 @@ posteriores, así que todavía no se lo vio dispararse contra un stall real.
 
 ## Verificación en el viewer
 
-Las compuertas 1, 3 y 4 salen del log y las mide `run-variant.sh`. La 2 y la
-alineación de overlays requieren mirar el viewer.
+Las compuertas 1, 3 y 4 salen del log y las mide `run-variant.sh`. La 2 —- que el
+layout del viewer no se reconstruya solo— requiere mirar la pantalla.
 
 Con `pipeline.infer = false` no hay detecciones, pero **sí hay un ROI fijo**:
 `detect-fast` declara `static ROI [420,0 1500,1080]` y `send_fixed_rois` lo
-loguea en coordenadas nativas al conectar. Ese rectángulo sobre la imagen es el
-testigo de alineación, sin necesidad de encender inferencia.
+loguea al conectar. Ese rectángulo es el control: debe caer sobre la imagen en su
+posición correcta y quedarse quieto toda la corrida. Si parpadea o se
+reconstruye, el bridge está recreando el sink.
 
-- **`b-jpeg-native`**: el ROI debe caer donde corresponde. La imagen conserva
-  1920x1080, así que no hay nada que compensar.
-- **`c-raw-downscaled`**: la imagen pasa a 960x540 mientras el ROI sigue en
-  coordenadas de resolución completa. **Si el rectángulo aparece desplazado o
-  fuera de cuadro, queda demostrado que `image_max_res > 0` desalinea** y el modo
-  no debe recomendarse sin compensar geometría.
-
-Esa comparación es la pregunta abierta del escenario.
+Ambas variantes conservan resolución nativa, así que el ROI —- logueado en
+coordenadas de píxel— no necesita compensación en ninguna de las dos.
 
 ## Qué se está verificando en el fondo
 
@@ -138,24 +131,18 @@ los caches de dedup de estado, cada dos segundos.
 ### El costo del enlace
 
 Un frame 1080p RGB24 son 6.220.800 B. A un keyframe por segundo son ~50 Mbit/s
-sostenidos, que es lo que volvía irreal una ventana de flush de 100 ms. Este escenario corre con `image_format = "jpeg"`, que baja el payload ~32× sin tocar
-la resolución.
+sostenidos, que es lo que volvía irreal una ventana de flush de 100 ms.
 
-Para aislar la contribución del encoding, correr el mismo escenario variando un
-solo eje. `image_max_res` acota el **lado mayor**, así que para 1920x1080 el
-factor sale de 1920:
+El escenario corre en `b-jpeg-native`; `a-raw-native` existe para medir el
+contraste, y es la que satura el enlace a propósito:
 
-|Modo|`image_max_res`|`image_format`|Resultado|Payload|
-|---|---|---|---|---|
-|Referencia|`0`|`raw`|1920x1080|6.220.800 B|
-|Decimado|`960`|`raw`|960x540|1.555.200 B|
-|Decimado|`720`|`raw`|640x360|691.200 B|
-|Comprimido|`0`|`jpeg`|1920x1080|~195.000 B|
-|Ambos|`960`|`jpeg`|960x540|~50.000 B|
+|Variante|`image_format`|Resultado|Payload|
+|---|---|---|---|
+|`a-raw-native`|`raw`|1920x1080|6.220.800 B|
+|`b-jpeg-native`|`jpeg`|1920x1080|~195.000 B|
 
-`jpeg` con `image_max_res = 0` es el modo preferido: las cajas, ROIs y máscaras se loguean
-en coordenadas de píxel nativas, y como la imagen conserva sus dimensiones no
-hace falta compensar nada. Con cualquier `image_max_res` que achique de verdad, la imagen se reduce pero los
-overlays siguen en coordenadas de resolución completa — **ese modo todavía no
-está verificado visualmente y puede desalinear**. Es lo primero que este
-escenario debe comprobar antes de recomendarlo.
+JPEG es el modo preferido y el único que reduce el enlace: las cajas, ROIs y
+máscaras se loguean en coordenadas de píxel nativas, y como la imagen conserva
+sus dimensiones no hace falta compensar geometría en ningún lado. Reducir la
+escala sería la otra palanca posible, pero desalinea los overlays a cambio de
+menos beneficio, así que se descartó (Fase 0 del roadmap).

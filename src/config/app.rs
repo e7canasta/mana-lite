@@ -65,29 +65,6 @@ pub struct VizConfig {
     pub enabled: bool,
     #[serde(default = "default_rerun_addr")]
     pub rerun_addr: String,
-    /// Longest side, in pixels, that a frame may have on the wire. `0` sends
-    /// native resolution.
-    ///
-    /// Expressed as a target resolution rather than a divisor: the operator
-    /// says how large the image should arrive, and the code derives the integer
-    /// subsampling factor. This is self-limiting — a source already at or below
-    /// the target yields factor 1 and is passed through untouched — and it does
-    /// not have to be revisited when the camera resolution changes.
-    ///
-    /// The bound is on the **longest side**, so for 1920x1080 the factor comes
-    /// from 1920, not from 1080. A 1080p RGB24 frame is 6.2 MB:
-    ///
-    /// | `image_max_res` | factor | result | payload |
-    /// |---|---|---|---|
-    /// | `0` | 1 | 1920x1080 | 6,220,800 B |
-    /// | `960` | 2 | 960x540 | 1,555,200 B |
-    /// | `720` | 3 | 640x360 | 691,200 B |
-    ///
-    /// Note that overlays are logged in native pixel coordinates, so any value
-    /// that actually shrinks the image needs visual verification before it is
-    /// trusted. `image_format = "jpeg"` reduces payload without that caveat.
-    #[serde(default = "default_viz_image_max_res")]
-    pub image_max_res: u32,
     /// Wire encoding for frames: `"raw"` or `"jpeg"`.
     ///
     /// `"jpeg"` is the way to cut the link budget *without* giving up native
@@ -106,15 +83,10 @@ impl Default for VizConfig {
         Self {
             enabled: false,
             rerun_addr: default_rerun_addr(),
-            image_max_res: default_viz_image_max_res(),
             image_format: default_viz_image_format(),
             image_quality: default_viz_image_quality(),
         }
     }
-}
-
-fn default_viz_image_max_res() -> u32 {
-    0
 }
 
 fn default_viz_image_format() -> String {

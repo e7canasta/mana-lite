@@ -96,47 +96,6 @@ pub(super) fn encode_jpeg(rgb: &[u8], w: u32, h: u32, quality: u8) -> Result<Vec
     Ok(bytes)
 }
 
-/// Integer subsampling factor that brings the longest side to `max_res`.
-///
-/// Integer rather than fractional on purpose: point subsampling by an integer
-/// factor is exact and needs no filter kernel. `max_res = 0` — and any source
-/// already within the target — yields 1, so the frame passes through untouched.
-pub(super) fn downscale_factor(w: u32, h: u32, max_res: u32) -> u32 {
-    if max_res == 0 {
-        return 1;
-    }
-    w.max(h).div_ceil(max_res).max(1)
-}
-
-/// Nearest-neighbour decimation of an RGB24 buffer by an integer factor.
-///
-/// Deliberately unfiltered. A box filter would look better on thin structures,
-/// but this path exists to relieve the Rerun link, and decimation is
-/// memory-bound rather than compute-bound: one strided copy of
-/// `3·(w/k)·(h/k)` bytes with no per-pixel arithmetic. It also *replaces* the
-/// full-frame copy the caller made anyway, so for `k > 1` this allocates and
-/// copies strictly less than sending native resolution did.
-///
-/// A short source fills black instead of panicking: this runs on the pipeline
-/// thread, and a visualization path must never be able to take the run down.
-pub(super) fn decimate_rgb24(src: &[u8], w: u32, h: u32, k: u32) -> (Vec<u8>, u32, u32) {
-    let dw = (w / k).max(1);
-    let dh = (h / k).max(1);
-    let row_stride = w as usize * 3;
-    let mut out = Vec::with_capacity(dw as usize * dh as usize * 3);
-    for y in 0..dh {
-        let row = (y * k) as usize * row_stride;
-        for x in 0..dw {
-            let i = row + (x * k) as usize * 3;
-            match src.get(i..i + 3) {
-                Some(px) => out.extend_from_slice(px),
-                None => out.extend_from_slice(&[0, 0, 0]),
-            }
-        }
-    }
-    (out, dw, dh)
-}
-
 impl VizBridge {
     pub fn log_frame(&self, header: &RawFrameV1, rgb: &[u8]) {
         if !self.toggles.frames {
@@ -144,26 +103,13 @@ impl VizBridge {
         }
         let path = "/world/camera/bgr";
         if let Inner::Connected { ref rec, .. } = self.inner {
-            let k = downscale_factor(header.width, header.height, self.image_max_res);
-            let expected = (header.width * header.height * 3) as usize;
-            // Short buffers fall through to the native path, which pads and
-            // warns. Decimating or encoding a truncated frame would read out of
-            // bounds.
-            let complete = rgb.len() >= expected;
-
-            let scaled = if k > 1 && complete {
-                Some(decimate_rgb24(rgb, header.width, header.height, k))
-            } else {
-                None
-            };
-            let (pixels, width, height) = match &scaled {
-                Some((data, w, h)) => (data.as_slice(), *w, *h),
-                None => (rgb, header.width, header.height),
-            };
+            // A truncated buffer falls through to the raw path, which pads and
+            // warns; encoding one would read past its end.
+            let complete = rgb.len() >= (header.width * header.height * 3) as usize;
 
             let result = match self.image_format {
                 VizImageFormat::Jpeg { quality } if complete => {
-                    match encode_jpeg(pixels, width, height, quality) {
+                    match encode_jpeg(rgb, header.width, header.height, quality) {
                         Ok(bytes) => log_at(
                             rec,
                             path,
@@ -173,29 +119,10 @@ impl VizBridge {
                         ),
                         Err(e) => {
                             log::warn!("viz: jpeg encode failed, sending raw: {e}");
-                            log_frame_rgb24_owned(
-                                rec,
-                                path,
-                                &RawFrameV1 {
-                                    width,
-                                    height,
-                                    ..header.clone()
-                                },
-                                pixels.to_vec(),
-                            )
+                            log_frame_rgb24(rec, path, header, rgb)
                         }
                     }
                 }
-                _ if scaled.is_some() => log_frame_rgb24_owned(
-                    rec,
-                    path,
-                    &RawFrameV1 {
-                        width,
-                        height,
-                        ..header.clone()
-                    },
-                    pixels.to_vec(),
-                ),
                 _ => log_frame_rgb24(rec, path, header, rgb),
             };
             if let Err(e) = result {
@@ -315,46 +242,6 @@ mod tests {
             }
         }
         buf
-    }
-
-    #[test]
-    fn factor_is_derived_from_target_resolution() {
-        // 1080p to a 720 target: longest side 1920 / 720 rounds up to 3.
-        assert_eq!(downscale_factor(1920, 1080, 720), 3);
-        assert_eq!(downscale_factor(1920, 1080, 960), 2);
-        // Self-limiting: a source already within the target is untouched.
-        assert_eq!(downscale_factor(1280, 720, 1280), 1);
-        assert_eq!(downscale_factor(640, 480, 1920), 1);
-        // `0` disables the lever entirely.
-        assert_eq!(downscale_factor(1920, 1080, 0), 1);
-    }
-
-    #[test]
-    fn decimation_of_short_source_fills_black_instead_of_panicking() {
-        // The visualization path runs on the pipeline thread; it must not be
-        // able to take the run down over a truncated buffer.
-        let (out, w, h) = decimate_rgb24(&[255u8; 12], 100, 100, 2);
-        assert_eq!((w, h), (50, 50));
-        assert_eq!(out.len(), 50 * 50 * 3);
-    }
-
-    #[test]
-    fn decimation_divides_dimensions_and_payload() {
-        let src = synthetic_1080p();
-        for k in [2u32, 3, 4] {
-            let t = std::time::Instant::now();
-            let (out, w, h) = decimate_rgb24(&src, 1920, 1080, k);
-            let elapsed = t.elapsed();
-            assert_eq!((w, h), (1920 / k, 1080 / k));
-            assert_eq!(out.len(), (w * h * 3) as usize);
-            eprintln!(
-                "decimate k={k}: {} -> {} bytes ({:.1}x) in {:?}",
-                src.len(),
-                out.len(),
-                src.len() as f64 / out.len() as f64,
-                elapsed
-            );
-        }
     }
 
     #[test]

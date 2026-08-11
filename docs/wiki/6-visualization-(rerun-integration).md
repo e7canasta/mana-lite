@@ -31,18 +31,14 @@ The core of this system is the `VizBridge`, which manages the connection to a R
 
 A 1080p RGB24 frame is 6,220,800 bytes. At one keyframe per second the bridge sustains ~50 Mbit/s, which is what makes a 100 ms flush probe unrealistic. Two orthogonal knobs under `[viz]` reduce it, and they compose:
 
-|Mode|`image_max_res`|`image_format`|Result|Payload|Cost|
-|---|---|---|---|---|---|
-|Native (default)|`0`|`raw`|1920x1080|6,220,800 B|—|
-|Decimated|`960`|`raw`|960x540|1,555,200 B|0.9 ms|
-|Decimated|`720`|`raw`|640x360|691,200 B|0.4 ms|
-|**Compressed**|`0`|`jpeg`|1920x1080|~195,000 B|~40 ms|
-
-`image_max_res` bounds the **longest side**, so for 1920x1080 the factor is derived from 1920, not from 1080. The factor is an integer (`w.max(h).div_ceil(max_res)`) because point subsampling by an integer factor is exact and needs no filter kernel, and it is self-limiting: a source already within the target passes through untouched.
+|Mode|`image_format`|Result|Payload|Cost|
+|---|---|---|---|---|
+|Native (default)|`raw`|1920x1080|6,220,800 B|—|
+|**Compressed**|`jpeg`|1920x1080|~195,000 B|~40 ms|
 
 Measured on a high-frequency synthetic pattern — the worst case for JPEG — by `viz::frame::tests`.
 
-`jpeg` at `image_max_res = 0` is the preferred mode: it cuts the payload ~32× **without changing resolution**, so boxes, ROIs and masks logged in native pixel coordinates stay aligned with no compensation. Any `image_max_res` that actually shrinks the image leaves overlays in full-resolution coordinates, so that mode requires visual verification before use — it is the open question in `workshop/scenarios/02-ingest-viz`.
+Compression is the only lever offered, and that is a deliberate choice. Downscaling the frame would cut the payload too, but boxes, ROIs and masks are logged in **native pixel coordinates**: shrinking the image while leaving overlays at full resolution misaligns them. JPEG keeps the pixel dimensions, so nothing needs compensating — and it reduces more than decimation would.
 
 Encoding runs on the pipeline thread, so the ~40 ms JPEG cost is charged against the scan cycle budget; at one keyframe per second that is well inside the 500 ms budget.
 
@@ -52,7 +48,7 @@ The visualization system organizes data into two primary entity paths: `/world/
 
 |Entity Path|Data Type|Description|
 |---|---|---|
-|`/world/camera/bgr`|`rerun::Image` or `rerun::EncodedImage`|The main video frame. Wire encoding is set by `[viz] image_format` (`raw`/`jpeg`) and `image_max_res`; see Frame Encoding below [src/viz/frame.rs:92](src/viz/frame.rs#L92-L92)|
+|`/world/camera/bgr`|`rerun::Image` or `rerun::EncodedImage`|The main video frame. Wire encoding is set by `[viz] image_format` (`raw`/`jpeg`); see Frame Encoding below [src/viz/frame.rs:92](src/viz/frame.rs#L92-L92)|
 |`/world/camera/crops/{model}/bgr`|`rerun::Image`|Sub-regions extracted for cascaded model inference [src/viz/frame.rs:106](src/viz/frame.rs#L106-L106)|
 |`/world/camera/entities`|`rerun::Boxes2D`|Tracked entities with color-coded boxes and labels [src/viz/boxes.rs:92](src/viz/boxes.rs#L92-L92)|
 |`/pipeline/state/room/*`|`rerun::StateChange`|Occupancy, second person, and signal validity states [src/viz/state.rs:31-45](src/viz/state.rs#L31-L45)|

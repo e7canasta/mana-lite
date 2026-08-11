@@ -2,24 +2,20 @@
 # Corre el escenario 02 con una de sus variantes de transporte.
 #
 # Existe para que una corrida sea una invocación y no la edición manual de un
-# campo: dejar un `image_max_res` flipeado de la corrida anterior invalida la
+# campo: dejar un `image_format` flipeado de la corrida anterior invalida la
 # comparación sin que nada lo avise. El único bloque que cambia entre variantes
 # es `[viz]`; el resto del escenario se toma de `mana.toml` sin tocarlo.
 #
-#   ./run-variant.sh a-raw-native      referencia, 6,2 MB/frame
-#   ./run-variant.sh b-jpeg-native     resolución nativa, ~195 KB/frame
-#   ./run-variant.sh c-raw-downscaled  960x540, overlays sin compensar
-#   ./run-variant.sh d-jpeg-downscaled ambas palancas
+#   ./run-variant.sh a-raw-native   referencia sin comprimir, 6,2 MB/frame
+#   ./run-variant.sh b-jpeg-native  comprimido, ~195 KB/frame
 set -euo pipefail
 
 VARIANT="${1:-b-jpeg-native}"
 DURATION="${2:-90}"
 
 case "$VARIANT" in
-  a-raw-native)      MAX_RES=0   ; FORMAT=raw  ;;
-  b-jpeg-native)     MAX_RES=0   ; FORMAT=jpeg ;;
-  c-raw-downscaled)  MAX_RES=960 ; FORMAT=raw  ;;
-  d-jpeg-downscaled) MAX_RES=960 ; FORMAT=jpeg ;;
+  a-raw-native)  FORMAT=raw  ;;
+  b-jpeg-native) FORMAT=jpeg ;;
   *) echo "variante desconocida: $VARIANT" >&2; exit 2 ;;
 esac
 
@@ -31,11 +27,10 @@ mkdir -p "$RUN_DIR"
 # La config efectiva de la corrida se materializa completa, no por diferencias:
 # queda junto a su salida como registro de qué se corrió exactamente.
 CONFIG="$RUN_DIR/mana.toml"
-python3 - "$SCENARIO_DIR/mana.toml" "$CONFIG" "$MAX_RES" "$FORMAT" "$VARIANT" <<'PY'
+python3 - "$SCENARIO_DIR/mana.toml" "$CONFIG" "$FORMAT" "$VARIANT" <<'PY'
 import sys
-src, dst, max_res, fmt, variant = sys.argv[1:6]
+src, dst, fmt, variant = sys.argv[1:5]
 s = open(src, encoding='utf-8').read()
-s = s.replace('image_max_res = 0', f'image_max_res = {max_res}')
 s = s.replace('image_format = "jpeg"', f'image_format = "{fmt}"')
 s = s.replace(
     'save_dir = "workshop/runs/02-ingest-viz"',
@@ -46,7 +41,7 @@ s = s.replace(
 open(dst, 'w', encoding='utf-8').write(s)
 PY
 
-echo "== variante $VARIANT — image_max_res=$MAX_RES image_format=$FORMAT — ${DURATION}s"
+echo "== variante $VARIANT — image_format=$FORMAT — ${DURATION}s"
 echo "== config efectiva: $CONFIG"
 cd "$REPO_ROOT"
 timeout "$DURATION" cargo run --release -q -- --config "$CONFIG" 2>&1 \

@@ -53,9 +53,6 @@ pub struct VizBridge {
     retry_backoff_ms: u64,
     /// Whether any flush has succeeded on the current sink.
     stream_proven: bool,
-    /// Longest side allowed on the wire; `0` means native. See
-    /// [`crate::config::VizConfig::image_max_res`].
-    image_max_res: u32,
     /// Wire encoding for the main frame.
     image_format: VizImageFormat,
     toggles: VizSendToggles,
@@ -146,7 +143,6 @@ impl VizBridge {
         _blueprint: &RerunRoot,
         fixed_rois: Vec<FixedRoi>,
         models: &ModelRegistry,
-        image_max_res: u32,
         image_format: VizImageFormat,
     ) -> Self {
         Self {
@@ -157,7 +153,6 @@ impl VizBridge {
             addr: rerun_addr.to_string(),
             retry_backoff_ms: INITIAL_BACKOFF_MS,
             stream_proven: false,
-            image_max_res,
             image_format,
             toggles: toggles.clone(),
             fixed_rois,
@@ -184,7 +179,6 @@ impl VizBridge {
             addr: String::new(),
             retry_backoff_ms: INITIAL_BACKOFF_MS,
             stream_proven: false,
-            image_max_res: 0,
             image_format: VizImageFormat::Raw,
             toggles: VizSendToggles::default(),
             fixed_rois: Vec::new(),
