@@ -323,11 +323,23 @@ impl MetricsEngine {
 
     /// Mide el periodo real del scan contra el inicio del ciclo anterior y lo
     /// enfrenta al presupuesto declarado ([health] `cycle_budget_ms`):
-    /// la tesis del PLC vuelta señal verificable. `processed` marca los
-    /// ciclos con trabajo real — un ciclo que solo esperó el `poll` nunca
-    /// declara overrun, porque el ocio cumple su presupuesto por
-    /// construcción (duerme a timeout).
-    pub fn tick_cycle_at(&mut self, now: Instant, processed: bool) {
+    /// la tesis del PLC vuelta señal verificable.
+    ///
+    /// Lo que se mide es el **periodo**, no el trabajo. Un ciclo ocioso duerme
+    /// hasta el tick del scan y por construcción cae muy por debajo del
+    /// presupuesto, así que no necesita exención: si el periodo se pasa, algo
+    /// bloqueó el lazo, y eso es precisamente lo que el presupuesto existe para
+    /// delatar.
+    ///
+    /// Antes había un parámetro `processed` que exigía "trabajo real" para
+    /// declarar overrun. Confundía *no hizo trabajo* con *estuvo ocioso*, y el
+    /// único llamador de producción lo pasaba en `false` de forma
+    /// incondicional — de modo que `cycle_overruns` no podía ser distinto de
+    /// cero nunca y `cycle_budget_ms` era un knob que no gobernaba nada. El
+    /// caso que ocultaba es el importante: un scan bloqueado 8 s drenando un
+    /// sink saturado no procesa keyframes, así que quedaba exento del
+    /// presupuesto que debía denunciarlo.
+    pub fn tick_cycle_at(&mut self, now: Instant) {
         self.current.cycles += 1;
         let delta_us = u64::try_from(
             now.saturating_duration_since(self.last_cycle_start)
@@ -338,7 +350,7 @@ impl MetricsEngine {
         self.current.cycle_min_us = self.current.cycle_min_us.min(delta_us);
         self.current.cycle_max_us = self.current.cycle_max_us.max(delta_us);
         self.current.cycle_samples.push(delta_us);
-        if processed && delta_us > self.cycle_budget_us {
+        if delta_us > self.cycle_budget_us {
             self.current.cycle_overruns += 1;
         }
     }

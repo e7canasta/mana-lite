@@ -92,6 +92,11 @@ pub(super) fn wire_observers_and_sinks<R: FrameReader>(
                 &validated.rerun_blueprint.rerun,
                 fixed_rois,
                 &perception.models,
+                config.viz.image_max_res,
+                crate::viz::VizImageFormat::parse(
+                    &config.viz.image_format,
+                    config.viz.image_quality,
+                ),
             )
         } else {
             VizBridge::disabled()

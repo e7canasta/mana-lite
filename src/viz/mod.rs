@@ -53,6 +53,11 @@ pub struct VizBridge {
     retry_backoff_ms: u64,
     /// Whether any flush has succeeded on the current sink.
     stream_proven: bool,
+    /// Longest side allowed on the wire; `0` means native. See
+    /// [`crate::config::VizConfig::image_max_res`].
+    image_max_res: u32,
+    /// Wire encoding for the main frame.
+    image_format: VizImageFormat,
     toggles: VizSendToggles,
     fixed_rois: Vec<FixedRoi>,
     roles: HashMap<String, ModelRole>,
@@ -68,6 +73,33 @@ pub struct VizBridge {
 pub struct FixedRoi {
     pub model: String,
     pub rect: CropRect,
+}
+
+/// How a frame is encoded before it reaches the Rerun sink.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VizImageFormat {
+    /// Uncompressed RGB24: `3·w·h` bytes on the wire.
+    Raw,
+    /// Baseline JPEG at the given quality. Preserves pixel dimensions, so
+    /// overlay coordinates need no compensation.
+    Jpeg { quality: u8 },
+}
+
+impl VizImageFormat {
+    /// Unknown names fall back to `Raw` with a warning rather than failing the
+    /// run: visualization is a debugging aid, not a reason to refuse to boot.
+    pub fn parse(name: &str, quality: u8) -> Self {
+        match name.trim().to_ascii_lowercase().as_str() {
+            "raw" => Self::Raw,
+            "jpeg" | "jpg" => Self::Jpeg {
+                quality: quality.clamp(1, 100),
+            },
+            other => {
+                log::warn!("viz: unknown image_format `{other}`, falling back to raw");
+                Self::Raw
+            }
+        }
+    }
 }
 
 const DEPTH_OVERLAY_ALPHA: u8 = 150;
@@ -114,6 +146,8 @@ impl VizBridge {
         _blueprint: &RerunRoot,
         fixed_rois: Vec<FixedRoi>,
         models: &ModelRegistry,
+        image_max_res: u32,
+        image_format: VizImageFormat,
     ) -> Self {
         Self {
             inner: Inner::Disconnected {
@@ -123,6 +157,8 @@ impl VizBridge {
             addr: rerun_addr.to_string(),
             retry_backoff_ms: INITIAL_BACKOFF_MS,
             stream_proven: false,
+            image_max_res,
+            image_format,
             toggles: toggles.clone(),
             fixed_rois,
             roles: models
@@ -146,6 +182,10 @@ impl VizBridge {
         Self {
             inner: Inner::Disabled,
             addr: String::new(),
+            retry_backoff_ms: INITIAL_BACKOFF_MS,
+            stream_proven: false,
+            image_max_res: 0,
+            image_format: VizImageFormat::Raw,
             toggles: VizSendToggles::default(),
             fixed_rois: Vec::new(),
             roles: HashMap::new(),

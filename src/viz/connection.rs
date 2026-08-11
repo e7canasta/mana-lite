@@ -248,7 +248,7 @@ impl VizBridge {
                 // than the probe window to drain over the network; treating that
                 // as a drop would resend the viewer blueprint and reset the
                 // state-dedup caches on every slow frame.
-                Err(rerun::SinkFlushError::Timeout) => {
+                Err(rerun::sink::SinkFlushError::Timeout) => {
                     *flush_timeouts += 1;
                     if *flush_timeouts >= MAX_FLUSH_TIMEOUTS {
                         drop_reason = Some(format!(

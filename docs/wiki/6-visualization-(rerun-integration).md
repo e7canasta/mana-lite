@@ -21,9 +21,30 @@ The core of this system is the `VizBridge`, which manages the connection to a R
 
 `VizBridge` implements an asynchronous connection strategy with exponential backoff to ensure that the main inference pipeline is not blocked if the Rerun server is unavailable; `try_connect` (attempt + backoff doubling) lives in `src/viz/connection.rs` [src/viz/connection.rs:8-60](src/viz/connection.rs#L8-L60)
 
-- **Backoff Logic**: Connections start with a 1-second delay (`INITIAL_BACKOFF_MS`), doubling on failure up to a maximum of 30 seconds (`MAX_BACKOFF_MS`) [src/viz/mod.rs:64-65](src/viz/mod.rs#L64-L65)
+- **What `Connected` means**: the gRPC sink connects lazily — `connect_grpc_opts` returns `Ok` with no viewer listening — so creating a sink proves nothing. `Inner::Connected` means only "there is somewhere to write"; liveness is established by the first flush that returns `Ok`, which is also when `viz: connected` is logged. Sink creation itself is logged at `debug`.
+- **Backpressure is not disconnection**: `flush_with_timeout` returns `SinkFlushError::Timeout` (the link is alive but did not drain in the probe window) or `SinkFlushError::Failed` (no viewer). `Failed` drops the sink immediately; `Timeout` is counted, and only a run of `MAX_FLUSH_TIMEOUTS` consecutive ones drops it. Collapsing the two made a large frame on a slow link read as a drop, which re-sent the viewer blueprint and reset the state-dedup caches every couple of seconds.
+- **Backoff Logic**: the retry delay lives on `VizBridge`, not inside `Inner::Disconnected`. Because creating a sink always succeeds, a backoff scoped to the disconnected state was reset on every retry and never grew. It starts at `INITIAL_BACKOFF_MS` (1 s), doubles each time the sink is dropped up to `MAX_BACKOFF_MS` (30 s), and is reset only by a flush that actually reaches a viewer [src/viz/mod.rs:64-65](src/viz/mod.rs#L64-L65)
 - **State Configuration**: Upon a successful connection, the bridge initializes the Rerun viewer with a default blueprint and pre-configured state categories for room occupancy and face dwell states [src/viz/connection.rs:148-175](src/viz/connection.rs#L148-L175)
 - **Toggles**: Data emission is strictly controlled by `VizSendToggles`, allowing specific streams (e.g., depth, masks, or latency) to be enabled or disabled via configuration [src/config/observability.rs:44](src/config/observability.rs#L44-L44)
+
+### Frame Encoding and Link Budget
+
+A 1080p RGB24 frame is 6,220,800 bytes. At one keyframe per second the bridge sustains ~50 Mbit/s, which is what makes a 100 ms flush probe unrealistic. Two orthogonal knobs under `[viz]` reduce it, and they compose:
+
+|Mode|`image_max_res`|`image_format`|Result|Payload|Cost|
+|---|---|---|---|---|---|
+|Native (default)|`0`|`raw`|1920x1080|6,220,800 B|—|
+|Decimated|`960`|`raw`|960x540|1,555,200 B|0.9 ms|
+|Decimated|`720`|`raw`|640x360|691,200 B|0.4 ms|
+|**Compressed**|`0`|`jpeg`|1920x1080|~195,000 B|~40 ms|
+
+`image_max_res` bounds the **longest side**, so for 1920x1080 the factor is derived from 1920, not from 1080. The factor is an integer (`w.max(h).div_ceil(max_res)`) because point subsampling by an integer factor is exact and needs no filter kernel, and it is self-limiting: a source already within the target passes through untouched.
+
+Measured on a high-frequency synthetic pattern — the worst case for JPEG — by `viz::frame::tests`.
+
+`jpeg` at `image_max_res = 0` is the preferred mode: it cuts the payload ~32× **without changing resolution**, so boxes, ROIs and masks logged in native pixel coordinates stay aligned with no compensation. Any `image_max_res` that actually shrinks the image leaves overlays in full-resolution coordinates, so that mode requires visual verification before use — it is the open question in `workshop/scenarios/02-ingest-viz`.
+
+Encoding runs on the pipeline thread, so the ~40 ms JPEG cost is charged against the scan cycle budget; at one keyframe per second that is well inside the 500 ms budget.
 
 ### Data Stream Architecture
 
@@ -31,7 +52,7 @@ The visualization system organizes data into two primary entity paths: `/world/
 
 |Entity Path|Data Type|Description|
 |---|---|---|
-|`/world/camera/bgr`|`rerun::Image`|The full-resolution raw video frame [src/viz/frame.rs:92](src/viz/frame.rs#L92-L92)|
+|`/world/camera/bgr`|`rerun::Image` or `rerun::EncodedImage`|The main video frame. Wire encoding is set by `[viz] image_format` (`raw`/`jpeg`) and `image_max_res`; see Frame Encoding below [src/viz/frame.rs:92](src/viz/frame.rs#L92-L92)|
 |`/world/camera/crops/{model}/bgr`|`rerun::Image`|Sub-regions extracted for cascaded model inference [src/viz/frame.rs:106](src/viz/frame.rs#L106-L106)|
 |`/world/camera/entities`|`rerun::Boxes2D`|Tracked entities with color-coded boxes and labels [src/viz/boxes.rs:92](src/viz/boxes.rs#L92-L92)|
 |`/pipeline/state/room/*`|`rerun::StateChange`|Occupancy, second person, and signal validity states [src/viz/state.rs:31-45](src/viz/state.rs#L31-L45)|

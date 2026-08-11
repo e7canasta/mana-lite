@@ -57,6 +57,14 @@ pub struct IngestEngine<R: FrameReader> {
     pending_keyframes_seen: u64,
     pending_keyframes_dropped: u64,
     last_keyframe_at: Instant,
+    /// Freshest keyframe drained but not yet emitted.
+    ///
+    /// This lives on the engine rather than on the stack of
+    /// [`Self::poll_freshest_keyframe`] because that future is polled inside a
+    /// `tokio::select!`, which drops the losing branch. A keyframe held in a
+    /// local would be counted in `keyframes_seen` and then silently discarded
+    /// when the scan tick wins the race.
+    staged: Option<Frame>,
 }
 
 impl<R: FrameReader> IngestEngine<R> {
@@ -71,38 +79,39 @@ impl<R: FrameReader> IngestEngine<R> {
             pending_keyframes_seen: 0,
             pending_keyframes_dropped: 0,
             last_keyframe_at: Instant::now(),
+            staged: None,
         }
     }
 
     /// Drain all buffered frames and return the freshest IDR keyframe, or
     /// `None` if no new keyframe arrived before the reader timed out.
     /// Duplicate consecutive keyframes (same 64-bit digest) are suppressed.
+    ///
+    /// **Cancellation-safe.** Every observation is committed to `self` as soon
+    /// as it is made, so dropping this future — which `tokio::select!` does on
+    /// every scan tick that wins the race — loses no work. A keyframe already
+    /// drained stays staged and is emitted by the next call.
     pub async fn poll_freshest_keyframe(&mut self) -> Option<RawKeyframe> {
-        let mut latest: Option<Frame> = None;
-        let mut pframes: u64 = 0;
-
         loop {
             match self.reader.next_frame().await {
                 Some(frame) => {
                     if frame.is_keyframe {
                         self.keyframes_seen += 1;
                         self.pending_keyframes_seen += 1;
-                        if latest.is_some() {
+                        if self.staged.is_some() {
                             self.keyframes_dropped += 1;
                             self.pending_keyframes_dropped += 1;
                         }
-                        latest = Some(frame);
+                        self.staged = Some(frame);
                     } else {
-                        pframes += 1;
+                        self.pframes_dropped += 1;
                     }
                 }
                 None => break,
             }
         }
 
-        self.pframes_dropped += pframes;
-
-        let kf = latest?;
+        let kf = self.staged.take()?;
 
         let digest = h264_digest(&kf.h264);
         if self.last_digest == Some(digest) {
@@ -385,6 +394,62 @@ mod tests {
 
     fn make_reader(frames: Vec<Frame>) -> IngestEngine<SyntheticReader> {
         IngestEngine::new(SyntheticReader::new(frames))
+    }
+
+    /// Yields its queue, then pends forever instead of reporting exhaustion.
+    ///
+    /// Models the real condition on a live stream: frames keep arriving faster
+    /// than `poll_timeout_ms`, so the drain loop never terminates on its own
+    /// and is always ended by `select!` cancelling it.
+    struct PendingReader {
+        frames: std::collections::VecDeque<Frame>,
+        pending: bool,
+    }
+
+    impl FrameReader for PendingReader {
+        async fn next_frame(&mut self) -> Option<Frame> {
+            if let Some(frame) = self.frames.pop_front() {
+                return Some(frame);
+            }
+            if self.pending {
+                std::future::pending().await
+            } else {
+                None
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn staged_keyframe_survives_cancellation() {
+        let mut engine = IngestEngine::new(PendingReader {
+            frames: vec![make_keyframe(9)].into(),
+            pending: true,
+        });
+
+        // Cancel the drain the way `tokio::select!` does when the scan tick wins.
+        let cancelled = tokio::time::timeout(
+            std::time::Duration::from_millis(20),
+            engine.poll_freshest_keyframe(),
+        )
+        .await;
+        assert!(
+            cancelled.is_err(),
+            "the drain must still be running when it is cancelled"
+        );
+        assert_eq!(engine.keyframes_seen, 1, "the keyframe was observed");
+
+        // Letting the reader report exhaustion must surface that same keyframe:
+        // a cancellation is not allowed to consume it.
+        engine.reader.pending = false;
+        let kf = engine
+            .poll_freshest_keyframe()
+            .await
+            .expect("keyframe staged before cancellation must survive");
+        assert_eq!(kf.h264, vec![9u8; 64]);
+        assert_eq!(
+            engine.keyframes_seen, 1,
+            "the surviving keyframe must not be counted twice"
+        );
     }
 
     #[tokio::test]

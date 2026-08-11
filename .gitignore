@@ -32,3 +32,4 @@ snapshots/
 /.kiro/
 /.claude/settings.local.json
 /.claude/worktrees/*/
+workshop/runs/

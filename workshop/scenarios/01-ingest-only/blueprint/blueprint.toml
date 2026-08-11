@@ -1,0 +1,18 @@
+# Blueprint mínimo para el escenario de ingesta pura.
+#
+# El bootstrap carga y valida el catálogo de modelos aunque `pipeline.infer`
+# esté en false, así que un blueprint sigue siendo obligatorio. Este declara el
+# mínimo que pasa validación y nada más: un solo modelo, sin cascada y sin
+# tracking, de modo que ningún requisito del blueprint arrastre otra capa.
+#
+# `requires_tracking = false` es esencial: con `true`, bootstrap rechaza
+# `pipeline.track = false` (src/app/bootstrap/catalogs.rs:187).
+[blueprint]
+name = "ingest-only"
+description = "Ingesta pura: RTSP, decode y JSONL, sin inferencia"
+primary_model = "detect-fast"
+models = ["detect-fast"]
+requires_tracking = false
+
+[[rules]]
+model = "detect-fast"

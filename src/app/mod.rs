@@ -196,7 +196,7 @@ impl<R: FrameReader> App<R> {
     }
 
     fn scan_tick(&mut self, _config: &AppConfig, now: Instant) {
-        self.metrics.tick_cycle_at(now, false);
+        self.metrics.tick_cycle_at(now);
         self.drain_ingest_counters();
         // The first tick runs at the timeline origin; every later tick advances
         // one period first, so `timeline.now()` is the instant for this scan.

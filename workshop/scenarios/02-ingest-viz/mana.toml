@@ -1,0 +1,113 @@
+# ============================================================================
+# ESCENARIO 02 — INGESTA + BRIDGE DE RERUN
+#
+# Agrega una sola capa sobre el escenario 01: el transporte hacia el viewer.
+# Sigue sin inferencia, tracking, zonas ni FSM, de modo que cualquier
+# inestabilidad observada pertenece al bridge y a nada más.
+#
+#   cargo run --release -- --config workshop/scenarios/02-ingest-viz/mana.toml
+# ============================================================================
+
+metrics_file = "config/metrics.toml"
+viz_file = "config/viz.toml"
+rerun_file = "config/rerun.toml"
+
+[source]
+url = "rtsp://192.168.1.6:8554/home2"
+username = "admin"
+password = ""
+transport = "tcp"
+keyframes_only = true
+
+[ingest]
+poll_timeout_ms = 50
+error_window_size = 128
+error_window_threshold = 25
+reconnect_backoff_initial_ms = 1000
+reconnect_backoff_max_ms = 30000
+
+[inference]
+model_catalog = "config/models.toml"
+blueprint_file = "workshop/scenarios/01-ingest-only/blueprint/blueprint.toml"
+
+[detection]
+face_component_coverage = 0.70
+face_max_center_y_ratio = 0.65
+face_edge_margin_px = 32
+same_class_iou = 0.5
+
+[presence]
+enabled = false
+class = "person"
+
+[presence.poi]
+on_ms = 200
+off_ms = 16_000
+
+[presence.occupancy]
+single_confirm_ms = 3000
+empty_confirm_ms = 8000
+multiple_confirm_ms = 5000
+multiple_exit_ms = 5000
+require_confirmed_tracks = false
+
+[tracking]
+max_age_ms = 40_000
+tentative_max_age_ms = 6_000
+ghost_max_ms = 6_000
+min_hits = 2
+iou_threshold = 0.2
+nominal_dt_ms = 2000
+
+[tracking.noise]
+measurement = 1.0
+process_position = 1.0
+process_velocity = 0.25
+
+[health]
+data_stale_ms = 10_000
+stale_warn_ms = 5_000
+panic_window_cycles = 20
+max_panics_in_window = 3
+cycle_budget_ms = 500
+report_interval_s = 5
+
+[output]
+format = "jsonl"
+save_dir = "workshop/runs/02-ingest-viz"
+rotate = "hourly"
+snapshot_dir = "workshop/runs/02-ingest-viz/snapshots"
+snapshot_verbose = false
+jsonl_level = "debug"
+
+[pipeline]
+snapshot = false
+infer = false
+track = false
+zones = false
+fsm = false
+
+# ----------------------------------------------------------------------------
+# La capa bajo prueba.
+#
+# `image_max_res` e `image_format` son ortogonales y se combinan.
+#
+# `image_max_res` acota el **lado mayor**: para 1920x1080 el factor sale de
+# 1920, no de 1080. Payload por frame de 1080p, medido sobre un patrón
+# sintético de alta frecuencia (`viz::frame::tests`), el peor caso para JPEG:
+#
+#   max_res=0,   raw    → 6.220.800 B  1920x1080  (referencia)
+#   max_res=960, raw    → 1.555.200 B   960x540    4,0x   0,89 ms
+#   max_res=720, raw    →   691.200 B   640x360    9,0x   0,37 ms
+#   max_res=0,   jpeg75 →   195.373 B  1920x1080  31,8x  40 ms
+#
+# `jpeg` con `image_max_res = 0` es el modo preferido: reduce el bitrate sin
+# tocar la escala, así que los overlays conservan sus coordenadas nativas y no
+# hace falta compensación de ningún tipo. Cualquier `image_max_res` que achique
+# de verdad exige verificación visual antes de confiar en él.
+[viz]
+enabled = true
+rerun_addr = "192.168.1.20:9876"
+image_max_res = 0
+image_format = "jpeg"
+image_quality = 75
