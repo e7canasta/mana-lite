@@ -228,7 +228,7 @@ fn app_for_depth_rules(rules: DepthRules, context_roi: Option<CropRect>) -> App<
         cascade: CascadeScheduler::from_rules(&[]),
         detection_consolidator: DetectionConsolidator::new(0.7, 0.65, 0.5),
         models: ModelRegistry::from_catalog(&empty_catalog, "detect-fast"),
-        ingest: IngestEngine::new(SyntheticReader::empty()),
+        ingest: IngestEngine::new(SyntheticReader::empty(), 5_000),
         metrics: MetricsEngine::new(0, 50),
         depth_context_roi: context_roi,
         depth_rules: rules,

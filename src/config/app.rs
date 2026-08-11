@@ -441,6 +441,18 @@ pub struct IngestConfig {
     pub reconnect_backoff_initial_ms: u64,
     #[serde(default = "default_backoff_max_ms")]
     pub reconnect_backoff_max_ms: u64,
+    /// Cuánto puede suprimirse un keyframe idéntico al anterior antes de
+    /// emitirlo igual.
+    ///
+    /// La deduplicación por digest evita reprocesar una imagen que no cambió,
+    /// pero sin vencimiento una escena completamente inmóvil —- con IDR
+    /// byte-idénticos— quedaría suprimida para siempre, y la propia supresión
+    /// terminaría disparando `data_stale`.
+    ///
+    /// Debe quedar por debajo de `[health] data_stale_ms`: si no, el knob no
+    /// gobierna nada y el bootstrap lo rechaza.
+    #[serde(default = "default_dedup_max_suppress_ms")]
+    pub dedup_max_suppress_ms: u64,
 }
 
 impl Default for IngestConfig {
@@ -451,8 +463,15 @@ impl Default for IngestConfig {
             error_window_threshold: default_error_window_threshold(),
             reconnect_backoff_initial_ms: default_backoff_initial_ms(),
             reconnect_backoff_max_ms: default_backoff_max_ms(),
+            dedup_max_suppress_ms: default_dedup_max_suppress_ms(),
         }
     }
+}
+
+/// Mitad del `data_stale_ms` por defecto (10 s): una escena inmóvil se refresca
+/// con holgura antes de que la salud pueda declarar pérdida de señal.
+const fn default_dedup_max_suppress_ms() -> u64 {
+    5_000
 }
 
 fn default_poll_timeout_ms() -> u64 {
@@ -529,6 +548,11 @@ impl HealthConfig {
     pub fn is_valid(&self) -> bool {
         self.data_stale_ms > 0 && self.stale_warn_ms < self.data_stale_ms
     }
+}
+
+#[cfg(test)]
+pub(crate) fn default_data_stale_ms_for_tests() -> u64 {
+    default_data_stale_ms()
 }
 
 fn default_data_stale_ms() -> u64 {

@@ -295,6 +295,25 @@ mod tests {
         assert_models_toml_core(&model);
     }
 
+    /// El dedupe y la salud viven en secciones distintas de `mana.toml` y sus
+    /// defaults tienen que ser coherentes entre sí: si la supresión pudiera
+    /// durar tanto como la tolerancia de staleness, una escena inmóvil seguiría
+    /// derivando en `data_stale` y el knob no evitaría nada.
+    ///
+    /// El bootstrap rechaza esa combinación; este test evita que los propios
+    /// defaults del binario la produzcan al moverse por separado.
+    #[test]
+    fn default_dedup_window_stays_under_default_staleness() {
+        let ingest = IngestConfig::default();
+        let stale_ms = super::app::default_data_stale_ms_for_tests();
+        assert!(
+            ingest.dedup_max_suppress_ms < stale_ms,
+            "dedup_max_suppress_ms ({}) debe quedar por debajo de data_stale_ms ({})",
+            ingest.dedup_max_suppress_ms,
+            stale_ms
+        );
+    }
+
     fn assert_mana_toml_core(config: &AppConfig) {
         assert_eq!(config.source.transport, "tcp");
         assert!(config.source.keyframes_only);

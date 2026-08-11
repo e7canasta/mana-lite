@@ -66,7 +66,7 @@ pub(super) fn wire_observers_and_sinks<R: FrameReader>(
     perception: &mut PerceptionEngines,
     log: Box<dyn LogSink>,
 ) -> Result<WiredObservers<R>> {
-    let ingest = IngestEngine::new(reader);
+    let ingest = IngestEngine::new(reader, config.ingest.dedup_max_suppress_ms);
 
     let metrics = MetricsEngine::new(
         validated.metrics_log.metrics.report_interval_s,

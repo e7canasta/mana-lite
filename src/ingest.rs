@@ -65,12 +65,37 @@ pub struct IngestEngine<R: FrameReader> {
     /// local would be counted in `keyframes_seen` and then silently discarded
     /// when the scan tick wins the race.
     staged: Option<Frame>,
+    /// Cuánto puede suprimirse un keyframe idéntico antes de emitirlo igual.
+    /// Ver [`should_suppress`].
+    dedup_max_suppress_ms: u64,
+}
+
+/// Decide si un keyframe duplicado debe suprimirse.
+///
+/// La supresión **vence**. Ante una escena completamente inmóvil un encoder
+/// puede emitir IDR byte-idénticos indefinidamente, y sin vencimiento la propia
+/// supresión terminaría disparando `data_stale`: aguas arriba no habría forma de
+/// distinguir "la escena no cambió" de "el stream murió". En un sistema clínico
+/// esas dos cosas no pueden confundirse — `data_stale` significa "perdí la
+/// señal" y tiene que seguir significando eso.
+///
+/// Función pura a propósito: el vencimiento depende del reloj, y aislar la
+/// decisión permite probarla exhaustivamente sin inyectar tiempo en un future
+/// que vive dentro de un `tokio::select!`.
+fn should_suppress(
+    last_digest: Option<u64>,
+    digest: u64,
+    since_emit_ms: u64,
+    max_suppress_ms: u64,
+) -> bool {
+    last_digest == Some(digest) && since_emit_ms < max_suppress_ms
 }
 
 impl<R: FrameReader> IngestEngine<R> {
-    pub fn new(reader: R) -> Self {
+    pub fn new(reader: R, dedup_max_suppress_ms: u64) -> Self {
         Self {
             reader,
+            dedup_max_suppress_ms,
             last_digest: None,
             pframes_dropped: 0,
             keyframes_dup: 0,
@@ -114,7 +139,13 @@ impl<R: FrameReader> IngestEngine<R> {
         let kf = self.staged.take()?;
 
         let digest = h264_digest(&kf.h264);
-        if self.last_digest == Some(digest) {
+        let since_emit_ms = self.last_keyframe_at.elapsed().as_millis() as u64;
+        if should_suppress(
+            self.last_digest,
+            digest,
+            since_emit_ms,
+            self.dedup_max_suppress_ms,
+        ) {
             self.keyframes_dup += 1;
             return None;
         }
@@ -378,6 +409,33 @@ impl FrameReader for SyntheticReader {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Ventana holgada: los tests de dedupe fijan la supresión, no su
+    /// vencimiento. Ese se prueba aparte sobre `should_suppress`.
+    const TEST_SUPPRESS_MS: u64 = 60_000;
+
+    #[test]
+    fn suppression_expires_so_a_still_scene_never_looks_dead() {
+        const D: u64 = 0xABCD;
+        const WINDOW: u64 = 5_000;
+
+        // Digest distinto: nunca se suprime, sin importar el reloj.
+        assert!(!should_suppress(Some(0x1111), D, 0, WINDOW));
+        assert!(!should_suppress(None, D, 0, WINDOW));
+
+        // Mismo digest dentro de la ventana: se suprime.
+        assert!(should_suppress(Some(D), D, 0, WINDOW));
+        assert!(should_suppress(Some(D), D, WINDOW - 1, WINDOW));
+
+        // Alcanzada la ventana, se emite igual: es lo que evita que una escena
+        // inmóvil termine indistinguible de un stream muerto.
+        assert!(!should_suppress(Some(D), D, WINDOW, WINDOW));
+        assert!(!should_suppress(Some(D), D, WINDOW * 10, WINDOW));
+
+        // Ventana cero desactiva la deduplicación por completo.
+        assert!(!should_suppress(Some(D), D, 0, 0));
+    }
+
     fn make_keyframe(id: u8) -> Frame {
         Frame {
             h264: vec![id; 64],
@@ -393,7 +451,8 @@ mod tests {
     }
 
     fn make_reader(frames: Vec<Frame>) -> IngestEngine<SyntheticReader> {
-        IngestEngine::new(SyntheticReader::new(frames))
+        // Ventana holgada: estos tests fijan el dedupe, no su vencimiento.
+        IngestEngine::new(SyntheticReader::new(frames), TEST_SUPPRESS_MS)
     }
 
     /// Yields its queue, then pends forever instead of reporting exhaustion.
@@ -421,10 +480,13 @@ mod tests {
 
     #[tokio::test]
     async fn staged_keyframe_survives_cancellation() {
-        let mut engine = IngestEngine::new(PendingReader {
-            frames: vec![make_keyframe(9)].into(),
-            pending: true,
-        });
+        let mut engine = IngestEngine::new(
+            PendingReader {
+                frames: vec![make_keyframe(9)].into(),
+                pending: true,
+            },
+            TEST_SUPPRESS_MS,
+        );
 
         // Cancel the drain the way `tokio::select!` does when the scan tick wins.
         let cancelled = tokio::time::timeout(

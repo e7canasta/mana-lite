@@ -190,6 +190,20 @@ fn validate_blueprint_selection(
             msg: format!("blueprint '{}' requires tracking", bp.blueprint.name),
         }));
     }
+    // Un dedupe que puede suprimir más de lo que la salud tolera no gobierna
+    // nada: la escena inmóvil sigue derivando en `data_stale` y el knob mentiría
+    // sobre lo que evita.
+    if config.ingest.dedup_max_suppress_ms >= config.health.data_stale_ms {
+        return Err(ManaError::Config(ConfigError::InvalidValue {
+            field: "ingest.dedup_max_suppress_ms".into(),
+            msg: format!(
+                "must stay below health.data_stale_ms ({} >= {}); \
+                 otherwise a still scene still reaches data_stale and the knob prevents nothing. \
+                 Set it to about half of data_stale_ms",
+                config.ingest.dedup_max_suppress_ms, config.health.data_stale_ms
+            ),
+        }));
+    }
     Ok(())
 }
 
