@@ -314,6 +314,7 @@ impl MetricsJsonlConfig {
             Event::Fsm { .. } => self.fsm_events,
             Event::Presence { .. } => self.presence_events,
             Event::FaceDwell { .. } => self.face_dwell_events,
+            Event::SceneSignals { .. } => self.scene_signals_events,
             Event::Metrics(_) => self.metrics_event,
             Event::Meta { .. } | Event::Health { .. } | Event::Entity { .. } => true,
         }

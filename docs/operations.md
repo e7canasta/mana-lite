@@ -1,8 +1,9 @@
 # Mana Lite Operations Guide
 
 Guia para administradores y operadores de una instancia de Mana Lite.
-Describe el modo actual de calibracion: inferencia, consolidacion de
-detecciones y observabilidad, sin identidad temporal.
+Describe inferencia, consolidacion, tracking, FSM y observabilidad del engine
+actual. Para alta y promoción de perfiles, usar el [manual de onboarding de
+blueprints](scene-signals/12-blueprint-onboarding.md).
 
 Para el blueprint completo de profundidad, roles, contratos ROI-locales y
 procedimientos de promocion, ver [specs/depth-standard.md](specs/depth-standard.md).
@@ -28,7 +29,7 @@ Este modo produce:
 
 No produce `track_id`, `entity` ni memoria entre frames.
 
-### Modo Futuro: Entidades Trackeadas
+### Modo Actual: Entidades, FSM Y Señales
 
 ```toml
 [pipeline]
@@ -40,9 +41,12 @@ Este modo conserva las observaciones consolidadas y agrega:
 - `track_id` y eventos `entity` en JSONL.
 - Rerun en `/world/camera/entities`.
 - Habilitacion de modelos hijos que dependen de tracks confirmados.
+- `SceneSignals` con nueve tags, valores, ausencias y `ControlStamp` por scan.
+- Evaluacion de guards genericos desde el snapshot congelado del mismo ciclo.
 
-No activar este modo para calibrar la deteccion. Primero validar el modo
-stateless con video real.
+No activar este modo para calibrar solamente la deteccion. Primero validar el
+perfil raw y luego promover a un blueprint con tracking, zonas o FSM según el
+escenario.
 
 ## 2. Arranque
 

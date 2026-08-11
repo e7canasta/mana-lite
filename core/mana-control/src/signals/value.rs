@@ -39,10 +39,10 @@ impl Ratio {
 
     /// The underlying finite value in `[0.0, 1.0]`.
     ///
-    /// Kept crate-private so callers cannot recover two ratios and compare
-    /// their floating-point representations for exact equality.
+    /// Reading a ratio does not enable exact equality through the signal
+    /// comparison API; callers still only get the finite, bounded value.
     #[must_use]
-    pub(crate) const fn get(self) -> f32 {
+    pub const fn get(self) -> f32 {
         self.0
     }
 }

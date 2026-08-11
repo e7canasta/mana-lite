@@ -1,7 +1,7 @@
 # Modelo funcional — Motor de señales de escena
 
-**Estado:** diseño operativo decidido; la spec prevalece ante cualquier
-diferencia. Describe el estado objetivo al completar las etapas A a D.
+**Estado:** diseño operativo implementado; la spec prevalece ante cualquier
+diferencia. Describe el estado alcanzado al completar las etapas A a D.
 
 *Big picture: [4-big-picture.md](4-big-picture.md) · Contrato: [1-spec.md](1-spec.md) · Plan: [2-sprints.md](2-sprints.md) · Diseño técnico: [design.md](design.md) · Decisión: [ADR-032](../adrs/032-scene-signals-as-contract.md)*
 

@@ -21,6 +21,18 @@ struct RecordingHandler {
     flushes: std::rc::Rc<std::cell::Cell<usize>>,
 }
 
+struct DroppingHandler {
+    calls: std::rc::Rc<std::cell::Cell<usize>>,
+}
+
+impl LogHandler for DroppingHandler {
+    fn handle(&mut self, _event: Event) {
+        self.calls.set(self.calls.get() + 1);
+    }
+
+    fn flush(&mut self) {}
+}
+
 impl LogHandler for RecordingHandler {
     fn handle(&mut self, event: Event) {
         self.events.borrow_mut().push(event);
@@ -48,6 +60,38 @@ fn log_manager_fans_events_out_to_handlers() {
 
     assert_eq!(first.get(), 1);
     assert_eq!(second.get(), 1);
+}
+
+#[test]
+fn scene_signals_survive_a_degraded_fanout_handler() {
+    let dropped = std::rc::Rc::new(std::cell::Cell::new(0));
+    let recorded = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    let flushes = std::rc::Rc::new(std::cell::Cell::new(0));
+    let mut log = LogManager::with_handlers(vec![
+        Box::new(DroppingHandler {
+            calls: dropped.clone(),
+        }),
+        Box::new(RecordingHandler {
+            events: recorded.clone(),
+            flushes,
+        }),
+    ]);
+
+    log.emit(Event::scene_signals(
+        crate::scan::ControlStamp {
+            scan_seq: 3,
+            evidence_frame_id: 8,
+            observations_age_ms: 0,
+            depth_age_ms: None,
+        },
+        mana_control::signals::SceneSignalsSnapshot::default(),
+    ));
+
+    assert_eq!(dropped.get(), 1);
+    assert!(matches!(
+        recorded.borrow().first(),
+        Some(Event::SceneSignals { stamp, .. }) if stamp.scan_seq == 3
+    ));
 }
 
 #[test]
@@ -433,6 +477,81 @@ fn presence_event_serializes_cardinality_evidence() {
     assert!(out.contains("\"second_person\":\"candidate\""));
     assert!(out.contains("\"raw_count\":2"));
     assert!(out.contains("\"confirmed_count\":1"));
+}
+
+#[test]
+fn scene_signals_event_serializes_values_absences_and_stable_order() {
+    let mut table = mana_control::signals::SignalTable::new();
+    let catalog = mana_control::signals::scene_signal_catalog();
+    table
+        .insert(
+            catalog,
+            mana_control::domain::SignalTag::new("persona.presente"),
+            mana_control::signals::SignalValue::Bool(true),
+        )
+        .unwrap();
+    table
+        .insert(
+            catalog,
+            mana_control::domain::SignalTag::new("cara.confianza"),
+            mana_control::signals::SignalValue::Ratio(
+                mana_control::signals::Ratio::new(0.87).unwrap(),
+            ),
+        )
+        .unwrap();
+    let snapshot = table.snapshot(catalog);
+
+    let mut log = test_logger();
+    log.emit(Event::scene_signals(
+        crate::scan::ControlStamp {
+            scan_seq: 12,
+            evidence_frame_id: 42,
+            observations_age_ms: 3,
+            depth_age_ms: Some(5),
+        },
+        snapshot,
+    ));
+    let out = collect(&mut log);
+
+    assert!(out.contains("\"type\":\"scene_signals\""));
+    assert!(out.contains("\"catalog_version\":1"));
+    assert!(out.contains("\"scan_seq\":12"));
+    assert!(out.contains("\"evidence_frame_id\":42"));
+    assert!(out.contains("\"tag\":\"cara.confianza\",\"kind\":\"ratio\",\"value\":0.87"));
+    assert!(out.contains("\"tag\":\"cara.en_borde\",\"kind\":\"bool\",\"absent\":true"));
+    assert!(out.contains("\"tag\":\"persona.presente\",\"kind\":\"bool\",\"value\":true"));
+    assert_eq!(out.matches("\"tag\":").count(), 9);
+    assert!(
+        out.find("\"tag\":\"cara.confianza\"").unwrap()
+            < out.find("\"tag\":\"persona.presente\"").unwrap()
+    );
+}
+
+#[test]
+fn scene_signals_event_can_be_filtered_without_affecting_default_persistence() {
+    let table = mana_control::signals::SignalTable::new();
+    let snapshot = table.snapshot(mana_control::signals::scene_signal_catalog());
+    let event = Event::scene_signals(
+        crate::scan::ControlStamp {
+            scan_seq: 1,
+            evidence_frame_id: 1,
+            observations_age_ms: 0,
+            depth_age_ms: None,
+        },
+        snapshot.clone(),
+    );
+
+    let mut default_log = test_logger();
+    default_log.emit(event.clone());
+    assert!(collect(&mut default_log).contains("\"type\":\"scene_signals\""));
+
+    let mut filtered_log = test_logger();
+    filtered_log.set_jsonl_config(MetricsJsonlConfig {
+        scene_signals_events: false,
+        ..MetricsJsonlConfig::default()
+    });
+    filtered_log.emit(event);
+    assert!(!collect(&mut filtered_log).contains("\"type\":\"scene_signals\""));
 }
 
 #[test]

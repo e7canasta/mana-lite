@@ -1,5 +1,9 @@
 # Manual Operativo: Blueprints De Inferencia
 
+El runbook operativo completo, con escenarios, `scene_signals`, promoción,
+diagnóstico y rollback, está en
+[12-blueprint-onboarding.md](../scene-signals/12-blueprint-onboarding.md).
+
 ## 1. Seleccionar el perfil activo
 
 Editar solo la referencia en `config/mana.toml`:

@@ -1,7 +1,7 @@
 # Backlog operativo — Señales de escena
 
-**Estado:** Sprint 3 / Etapa C cerrada; Etapa D pendiente
-**Próximo hito:** D — gemelo visible ([handoff](10-sprint-4-handoff.md))
+**Estado:** Sprint 4 / Etapas A a D cerradas
+**Próximo hito:** mantenimiento del contrato y siguiente evolución versionada
 **Fuente de verdad:** [1-spec.md](1-spec.md), [requirements.md](requirements.md),
 [design.md](design.md), [2-sprints.md](2-sprints.md), [3-sprint-1.md](3-sprint-1.md),
 [7-sprint-2-handoff.md](7-sprint-2-handoff.md) y [10-sprint-4-handoff.md](10-sprint-4-handoff.md)
@@ -12,8 +12,9 @@ los archivos que toca cada tarea y la evidencia necesaria para cerrarla.
 
 ## 1. Regla de operación
 
-- Las Etapas B y C están cerradas con código, pruebas y compuerta verificadas. D
-  sigue siendo el hito posterior, no trabajo adelantado.
+- Las Etapas A a D están cerradas con código, pruebas y compuerta verificadas.
+  El trabajo posterior debe conservar el contrato y versionar cambios
+  incompatibles.
 - Una casilla se marca al completar código, pruebas y la verificación indicada.
 - Un fallo de compuerta detiene el avance de la etapa; no se regenera un golden
   para hacerlo pasar.
@@ -29,7 +30,7 @@ los archivos que toca cada tarea y la evidencia necesaria para cerrarla.
 | A | **Cerrada** | Catálogo, valores, operadores y tabla sin consumidores productivos. | [6-sprint-1-cierre.md](6-sprint-1-cierre.md) |
 | B | **Cerrada** | Doble producción, paridad y latch derivado. | [8-sprint-2-cierre.md](8-sprint-2-cierre.md) |
 | C | **Cerrada** | Guard `Signal`, compilación de boot y once migraciones. | [9-sprint-3-cierre.md](9-sprint-3-cierre.md) |
-| D | Pendiente | Snapshot observable, logger y retiro del contexto plano. | [10-sprint-4-handoff.md](10-sprint-4-handoff.md) |
+| D | **Cerrada** | Snapshot observable, logger y retiro del contexto plano de la ruta productiva. | [11-sprint-4-cierre.md](11-sprint-4-cierre.md) |
 
 ## 3. Sprint 1 — definición de terminado
 
@@ -333,3 +334,23 @@ profundidad permanecen con sus motores propios.
 
 La evidencia de cierre está en [9-sprint-3-cierre.md](9-sprint-3-cierre.md).
 La entrada operativa de D está en [10-sprint-4-handoff.md](10-sprint-4-handoff.md).
+
+## 9. Sprint 4 — gemelo visible
+
+La Etapa D agrega observabilidad aditiva al ciclo de control. El snapshot de
+señales se construye antes de evaluar la FSM y el logger sólo lo serializa
+después, como trabajo T3 best-effort.
+
+- [x] D-01: emitir exactamente un `SceneEvent::SceneSignals` por `scan()` con
+  `ControlStamp` y las nueve entradas.
+- [x] D-02: mapear y serializar `Event::SceneSignals` con tipos, valores,
+  ausencias explícitas y orden estable.
+- [x] D-03: mantener persistencia informativa por defecto y probar degradación
+  de un handler sin bloquear otro destino.
+- [x] D-04: migrar `FaceDwellLogStrategy` al `SceneSignalsSnapshot`.
+- [x] D-05: retirar `FsmSceneContext` de `ControlState`, App y logger; el engine
+  conserva sólo adaptadores de contexto para sus pruebas/API heredadas.
+- [x] D-06: extender el ciclo multi-actor y goldens con correlación por scan,
+  valores, ausencias y orden bruto del batch.
+
+La evidencia de cierre está en [11-sprint-4-cierre.md](11-sprint-4-cierre.md).

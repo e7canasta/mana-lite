@@ -1,6 +1,7 @@
 use super::Event;
 use super::writers::{write_control_stamp, write_f32, write_json_string, write_u64};
 use crate::logger::event::FaceDwellTimerRecord;
+use mana_control::signals::{SignalKind, SignalValue, scene_signal_catalog};
 
 pub(super) fn write_entity_event(event: &Event, buf: &mut Vec<u8>) {
     let Event::Entity {
@@ -229,6 +230,70 @@ pub(super) fn write_face_dwell_event(event: &Event, buf: &mut Vec<u8>) {
         buf,
     );
     write_face_dwell_timers(active_timers, buf);
+}
+
+pub(super) fn write_scene_signals_event(event: &Event, buf: &mut Vec<u8>) {
+    let Event::SceneSignals { stamp, snapshot } = event else {
+        unreachable!()
+    };
+    buf.extend_from_slice(b"\"type\":\"scene_signals\"");
+    write_control_stamp(
+        stamp.scan_seq,
+        stamp.evidence_frame_id,
+        stamp.observations_age_ms,
+        stamp.depth_age_ms,
+        buf,
+    );
+    buf.extend_from_slice(b",\"catalog_version\":");
+    write_u64(snapshot.catalog_version() as u64, buf);
+    buf.extend_from_slice(b",\"signals\":[");
+    for (index, (tag, value)) in snapshot.iter().enumerate() {
+        if index > 0 {
+            buf.push(b',');
+        }
+        buf.extend_from_slice(b"{\"tag\":\"");
+        write_json_string(tag.as_str(), buf);
+        buf.extend_from_slice(b"\",\"kind\":\"");
+        write_signal_kind(
+            scene_signal_catalog()
+                .get(tag)
+                .expect("snapshot tag must be declared in catalog")
+                .kind(),
+            buf,
+        );
+        buf.push(b'\"');
+        match value {
+            Some(SignalValue::Bool(value)) => {
+                buf.extend_from_slice(b",\"value\":");
+                buf.extend_from_slice(if *value { b"true" } else { b"false" });
+            }
+            Some(SignalValue::Count(value)) => {
+                buf.extend_from_slice(b",\"value\":");
+                write_u64(*value, buf);
+            }
+            Some(SignalValue::Ratio(value)) => {
+                buf.extend_from_slice(b",\"value\":");
+                write_f32(value.get(), buf);
+            }
+            Some(SignalValue::Label(value)) => {
+                buf.extend_from_slice(b",\"value\":\"");
+                write_json_string(value, buf);
+                buf.push(b'\"');
+            }
+            None => buf.extend_from_slice(b",\"absent\":true"),
+        }
+        buf.push(b'}');
+    }
+    buf.push(b']');
+}
+
+fn write_signal_kind(kind: SignalKind, buf: &mut Vec<u8>) {
+    buf.extend_from_slice(match kind {
+        SignalKind::Bool => b"bool",
+        SignalKind::Count => b"count",
+        SignalKind::Ratio => b"ratio",
+        SignalKind::Label => b"label",
+    });
 }
 
 pub(super) fn write_face_dwell_state(

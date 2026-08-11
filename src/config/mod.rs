@@ -414,10 +414,11 @@ mod tests {
     }
 
     #[test]
-    fn room_transition_metrics_profile_only_keeps_presence_events() {
+    fn room_transition_metrics_profile_keeps_presence_and_scene_signals() {
         let config = load_metrics_log(Path::new("config/metrics-room-transition.toml")).unwrap();
         assert!(!config.metrics.jsonl.detection_events);
         assert!(config.metrics.jsonl.presence_events);
+        assert!(config.metrics.jsonl.scene_signals_events);
         assert!(!config.metrics.jsonl.face_dwell_events);
         assert!(!config.metrics.jsonl.depth_events);
         assert!(!config.metrics.text.infer_summary);

@@ -168,7 +168,6 @@ fn control_state(start: Instant) -> ControlState {
         zone_engine: Some(ZoneEngine::from_catalog(&zones)),
         fsm_engine: Some(FsmEngine::from_program_at(program, start)),
         health: Health::new_at(DATA_STALE_MS, DATA_STALE_MS / 2, start),
-        fsm_context: Default::default(),
         signal_snapshot: Default::default(),
         last_scan_at: start,
         scan_seq: 0,

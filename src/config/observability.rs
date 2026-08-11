@@ -238,6 +238,8 @@ pub struct MetricsJsonlConfig {
     #[serde(default = "default_true")]
     pub face_dwell_events: bool,
     #[serde(default = "default_true")]
+    pub scene_signals_events: bool,
+    #[serde(default = "default_true")]
     pub metrics_event: bool,
     #[serde(default = "default_true")]
     pub per_model_in_window: bool,
@@ -258,6 +260,7 @@ impl Default for MetricsJsonlConfig {
             fsm_events: true,
             presence_events: true,
             face_dwell_events: true,
+            scene_signals_events: true,
             metrics_event: true,
             per_model_in_window: true,
             class_counts_in_window: true,

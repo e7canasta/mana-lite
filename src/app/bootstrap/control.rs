@@ -3,7 +3,7 @@
 use std::time::Instant;
 
 use crate::config::AppConfig;
-use crate::fsm::{FsmEngine, FsmProgram, FsmSceneContext};
+use crate::fsm::{FsmEngine, FsmProgram};
 use crate::health::Health;
 use crate::scan::{ControlPolicy, ControlState};
 use mana_control::domain::LoopId;
@@ -68,7 +68,6 @@ pub(super) fn build_control_state(
                 require_confirmed_tracks: config.presence.occupancy.require_confirmed_tracks,
             },
         ),
-        fsm_context: FsmSceneContext::default(),
         signal_snapshot: Default::default(),
         last_scan_at: boot_instant,
         scan_seq: 0,

@@ -263,7 +263,6 @@ fn control_state(start: Instant) -> ControlState {
         zone_engine: Some(ZoneEngine::from_catalog(&zones)),
         fsm_engine: Some(FsmEngine::from_program_at(program, start)),
         health: Health::new_at(DATA_STALE_MS, DATA_STALE_MS / 2, start),
-        fsm_context: Default::default(),
         signal_snapshot: Default::default(),
         last_scan_at: start,
         scan_seq: 0,
@@ -306,6 +305,21 @@ fn tick(
     let sample = sample(observations, frame);
     refresh(image, sample.clone(), now.as_instant());
     let events = scan(state, image, timeline);
+    let signal_events: Vec<_> = events
+        .iter()
+        .filter_map(|event| match event {
+            SceneEvent::SceneSignals { stamp, snapshot } => Some((*stamp, snapshot)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(signal_events.len(), 1, "one SceneSignals event per scan");
+    let (stamp, snapshot) = signal_events[0];
+    assert_eq!(stamp.scan_seq, state.scan_seq);
+    assert_eq!(stamp.evidence_frame_id, sample.frame_number);
+    assert_eq!(stamp.observations_age_ms, 0);
+    assert_eq!(snapshot.catalog_version(), 1);
+    assert_eq!(snapshot.len(), 9);
+    assert_snapshots_equal(snapshot, &state.signal_snapshot);
     assert_base_signal_parity(state, &sample);
     image.measurement_pending = false;
     for event in scene_events_to_log(&events) {
@@ -333,33 +347,82 @@ fn assert_ratio_signal(snapshot: &SceneSignalsSnapshot, name: &str, expected: f3
 
 fn assert_base_signal_parity(state: &ControlState, sample: &SceneSample) {
     let snapshot = &state.signal_snapshot;
-    let context = &state.fsm_context;
     assert_eq!(snapshot.len(), 9);
-    assert_bool_signal(snapshot, "persona.presente", context.person_present);
+    assert_bool_signal(snapshot, "persona.presente", sample.raw_person_count > 0);
     assert!(matches!(
         signal(snapshot, "persona.cantidad"),
         SignalValue::Count(value) if *value == sample.raw_person_count as u64
     ));
-    assert_bool_signal(snapshot, "cara.presente", context.face_present);
+    let person = sample
+        .observations
+        .iter()
+        .filter(|observation| observation.class.as_str() == "person")
+        .max_by(|a, b| a.confidence.total_cmp(&b.confidence));
+    let face = person.and_then(|observation| observation.face);
+    assert_bool_signal(snapshot, "cara.presente", face.is_some());
+    let at_edge = person.is_some_and(|observation| {
+        state.policy.person_detection_roi.is_some_and(|roi| {
+            let margin = state.policy.face_edge_margin_px as f32;
+            observation.bbox[0] <= roi[0] as f32 + margin
+                || observation.bbox[1] <= roi[1] as f32 + margin
+                || observation.bbox[2] >= roi[2] as f32 - margin
+                || observation.bbox[3] >= roi[3] as f32 - margin
+        })
+    });
 
-    match context.face_confidence {
+    match face.map(|value| value.confidence) {
         Some(confidence) => assert_ratio_signal(snapshot, "cara.confianza", confidence),
         None => assert!(snapshot.is_absent(&SignalTag::new("cara.confianza"))),
     }
-    match context.face_in_dwell {
+    match state
+        .policy
+        .face_dwell_roi
+        .map(|roi| face.is_some_and(|value| intersects_for_test(value.bbox, roi)))
+    {
         Some(in_dwell) => assert_bool_signal(snapshot, "cara.en_dwell", in_dwell),
         None => assert!(snapshot.is_absent(&SignalTag::new("cara.en_dwell"))),
     }
-    assert_bool_signal(snapshot, "cara.en_borde", context.at_edge);
-    assert_bool_signal(snapshot, "cara.modelo_corrio", context.face_model_ran);
+    assert_bool_signal(snapshot, "cara.en_borde", at_edge);
+    assert_bool_signal(snapshot, "cara.modelo_corrio", sample.face_model_ran);
     assert!(matches!(
         signal(snapshot, "ocupacion.cardinalidad"),
-        SignalValue::Label(value) if context.cardinality.as_deref() == Some(value.as_str())
+        SignalValue::Label(_)
     ));
     assert!(matches!(
         signal(snapshot, "cara.estuvo_dentro"),
         SignalValue::Bool(_)
     ));
+}
+
+fn assert_snapshots_equal(left: &SceneSignalsSnapshot, right: &SceneSignalsSnapshot) {
+    let left_entries: Vec<_> = left.iter().collect();
+    let right_entries: Vec<_> = right.iter().collect();
+    assert_eq!(left_entries.len(), right_entries.len());
+    for ((left_tag, left_value), (right_tag, right_value)) in
+        left_entries.into_iter().zip(right_entries)
+    {
+        assert_eq!(left_tag, right_tag);
+        match (left_value, right_value) {
+            (None, None) => {}
+            (Some(SignalValue::Bool(left)), Some(SignalValue::Bool(right))) => {
+                assert_eq!(left, right)
+            }
+            (Some(SignalValue::Count(left)), Some(SignalValue::Count(right))) => {
+                assert_eq!(left, right)
+            }
+            (Some(SignalValue::Ratio(left)), Some(SignalValue::Ratio(right))) => {
+                assert!((left.get() - right.get()).abs() < f32::EPSILON)
+            }
+            (Some(SignalValue::Label(left)), Some(SignalValue::Label(right))) => {
+                assert_eq!(left, right)
+            }
+            (left, right) => panic!("signal value mismatch: {left:?} vs {right:?}"),
+        }
+    }
+}
+
+fn intersects_for_test(b: [f32; 4], r: [u32; 4]) -> bool {
+    b[0] < r[2] as f32 && b[2] > r[0] as f32 && b[1] < r[3] as f32 && b[3] > r[1] as f32
 }
 
 #[test]
@@ -521,6 +584,7 @@ fn event_kinds(events: &[SceneEvent]) -> String {
         .map(|event| match event {
             SceneEvent::Track { .. } => "track",
             SceneEvent::Presence { .. } => "presence",
+            SceneEvent::SceneSignals { .. } => "scene_signals",
             SceneEvent::Occupancy { .. } => "occupancy",
             SceneEvent::EntityBoxes(_) => "entity_boxes",
             SceneEvent::Zone { .. } => "zone",

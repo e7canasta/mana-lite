@@ -6,6 +6,8 @@ pub use records::{DetRecord, FaceDwellTimerRecord, MaskRecord};
 pub use scene::{scene_events_to_log, track_event_to_log, zone_event_to_log};
 
 use crate::metrics::{MetricsReport, PerClassFrameStats};
+use crate::scan::ControlStamp;
+use mana_control::signals::SceneSignalsSnapshot;
 
 /// Version del esquema del evento `depth`. v2 agrega `roi`, `map_width`,
 /// `map_height` y `valid_ratio` (contrato `DepthRoiMap`, spec §8/§10).
@@ -128,6 +130,10 @@ pub enum Event {
         multiple_candidate_timer_ms: u64,
         multiple_exit_timer_ms: u64,
     },
+    SceneSignals {
+        stamp: ControlStamp,
+        snapshot: SceneSignalsSnapshot,
+    },
     FaceDwell {
         scan_seq: u64,
         evidence_frame_id: u64,
@@ -180,6 +186,7 @@ impl Event {
             Event::Health { .. } => JsonlLevel::Info,
             Event::Fsm { .. } => JsonlLevel::Info,
             Event::Presence { .. } => JsonlLevel::Debug,
+            Event::SceneSignals { .. } => JsonlLevel::Info,
             Event::FaceDwell { .. } => JsonlLevel::Debug,
             Event::Metrics { .. } => JsonlLevel::Info,
             Event::Frame { .. } => JsonlLevel::Debug,

@@ -43,7 +43,6 @@ fn single_at(start: Instant, period_ms: u64) -> Instant {
         zone_engine: None,
         fsm_engine: None,
         health: Health::new_at(10_000, 5_000, start),
-        fsm_context: Default::default(),
         signal_snapshot: Default::default(),
         last_scan_at: start,
         scan_seq: 0,

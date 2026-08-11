@@ -232,7 +232,8 @@ impl<R: FrameReader> App<R> {
                 }
                 SceneEvent::Presence { stamp, .. }
                 | SceneEvent::Track { stamp, .. }
-                | SceneEvent::Zone { stamp, .. } => {
+                | SceneEvent::Zone { stamp, .. }
+                | SceneEvent::SceneSignals { stamp, .. } => {
                     last_stamp = Some(*stamp);
                 }
                 SceneEvent::FsmTransition(_) | SceneEvent::Health(_) => {}
@@ -249,7 +250,7 @@ impl<R: FrameReader> App<R> {
             let snapshot = fsm.snapshot_at(now);
             self.observer.emit(self.face_dwell_logger.keyframe_event(
                 stamp,
-                &self.control.fsm_context,
+                &self.control.signal_snapshot,
                 &snapshot,
             ));
         }

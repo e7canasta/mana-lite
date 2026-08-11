@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 
 pub use crate::SceneSample as ClinicalSample;
 use crate::domain::{ClassName, LoopId, SignalTag};
-use crate::fsm::{FsmEngine, FsmSceneContext, FsmTransitionResult};
+use crate::fsm::{FsmEngine, FsmTransitionResult};
 use crate::health::{Health, HealthTransition};
 use crate::occupancy::{
     self, OccupancyStateMachine, OccupancyUpdate, RoomCardinality, SecondPersonState,
@@ -68,7 +68,6 @@ pub struct ControlState {
     pub zone_engine: Option<ZoneEngine>,
     pub fsm_engine: Option<FsmEngine>,
     pub health: Health,
-    pub fsm_context: FsmSceneContext,
     /// Signals produced by the most recent control cycle.
     pub signal_snapshot: SceneSignalsSnapshot,
     pub last_scan_at: Instant,
@@ -96,6 +95,10 @@ pub enum SceneEvent {
         empty_timer_ms: u64,
         multiple_candidate_timer_ms: u64,
         multiple_exit_timer_ms: u64,
+    },
+    SceneSignals {
+        stamp: ControlStamp,
+        snapshot: SceneSignalsSnapshot,
     },
     Occupancy {
         state: RoomCardinality,
@@ -326,10 +329,7 @@ fn evaluate_fsm(
     signals: &mut SignalTable,
     events: &mut Vec<SceneEvent>,
 ) {
-    // Context refresh moved here from between occupancy and zones: nothing between
-    // those steps reads fsm_context, and App only reads it after the full scan batch.
-    update_context(
-        &mut state.fsm_context,
+    update_signals(
         &state.policy,
         cardinality,
         input.sample.raw_person_count,
@@ -337,35 +337,38 @@ fn evaluate_fsm(
         &input.sample.observations,
         signals,
     );
+    state.signal_snapshot = signals.snapshot(scene_signal_catalog());
     if let Some(f) = state.fsm_engine.as_mut() {
-        f.update_face_latch(&state.fsm_context);
+        f.update_face_latch_from_signals(&state.signal_snapshot);
         insert_signal(
             signals,
             "cara.estuvo_dentro",
             SignalValue::Bool(f.face_was_inside()),
         );
+        state.signal_snapshot = signals.snapshot(scene_signal_catalog());
     }
-    state.signal_snapshot = signals.snapshot(scene_signal_catalog());
+    events.push(SceneEvent::SceneSignals {
+        stamp: input.stamp,
+        snapshot: state.signal_snapshot.clone(),
+    });
     if let Some(f) = state.fsm_engine.as_mut() {
         let depth = image.depth_snapshot();
-        if let Some(x) = f.evaluate_with_signals_at(
+        if let Some(x) = f.evaluate_snapshot_at(
             zones,
             state.zone_engine.as_ref(),
             &state.health,
             &depth,
-            &state.fsm_context,
             &state.signal_snapshot,
             now,
         ) {
             events.push(SceneEvent::FsmTransition(x))
         }
         events.push(SceneEvent::FsmState(f.snapshot_at(now).state));
-        if let Some(x) = f.evaluate_wildcard_with_signals_at(
+        if let Some(x) = f.evaluate_wildcard_snapshot_at(
             &[],
             state.zone_engine.as_ref(),
             &state.health,
             &depth,
-            &state.fsm_context,
             &state.signal_snapshot,
             now,
         ) {
@@ -382,8 +385,7 @@ fn evaluate_health(state: &mut ControlState, now: Instant, events: &mut Vec<Scen
     }
 }
 
-fn update_context(
-    ctx: &mut FsmSceneContext,
+fn update_signals(
     policy: &ControlPolicy,
     cardinality: RoomCardinality,
     raw: usize,
@@ -396,46 +398,40 @@ fn update_context(
         .filter(|x| x.class == policy.person_class)
         .max_by(|a, b| a.confidence.total_cmp(&b.confidence));
     let face = person.and_then(|x| x.face);
-    ctx.cardinality = Some(cardinality.as_str().into());
-    ctx.person_present = raw > 0;
-    ctx.face_present = face.is_some();
-    ctx.face_confidence = face.map(|x| x.confidence);
-    ctx.face_in_dwell = policy
+    let person_present = raw > 0;
+    let face_present = face.is_some();
+    let face_confidence = face.map(|x| x.confidence);
+    let face_in_dwell = policy
         .face_dwell_roi
         .map(|r| face.is_some_and(|f| intersects(f.bbox, r)));
-    ctx.at_edge = person.is_some_and(|p| {
+    let at_edge = person.is_some_and(|p| {
         near(
             p.bbox,
             policy.person_detection_roi,
             policy.face_edge_margin_px,
         )
     });
-    ctx.face_model_ran = face_model_ran;
 
     insert_signal(
         signals,
         "persona.presente",
-        SignalValue::Bool(ctx.person_present),
+        SignalValue::Bool(person_present),
     );
     insert_signal(signals, "persona.cantidad", SignalValue::Count(raw as u64));
-    insert_signal(
-        signals,
-        "cara.presente",
-        SignalValue::Bool(ctx.face_present),
-    );
-    if let Some(confidence) = ctx.face_confidence {
+    insert_signal(signals, "cara.presente", SignalValue::Bool(face_present));
+    if let Some(confidence) = face_confidence {
         let ratio = Ratio::new(confidence)
             .unwrap_or_else(|error| panic!("invalid face confidence for scene signal: {error:?}"));
         insert_signal(signals, "cara.confianza", SignalValue::Ratio(ratio));
     }
-    if let Some(in_dwell) = ctx.face_in_dwell {
+    if let Some(in_dwell) = face_in_dwell {
         insert_signal(signals, "cara.en_dwell", SignalValue::Bool(in_dwell));
     }
-    insert_signal(signals, "cara.en_borde", SignalValue::Bool(ctx.at_edge));
+    insert_signal(signals, "cara.en_borde", SignalValue::Bool(at_edge));
     insert_signal(
         signals,
         "cara.modelo_corrio",
-        SignalValue::Bool(ctx.face_model_ran),
+        SignalValue::Bool(face_model_ran),
     );
     insert_signal(
         signals,
@@ -550,7 +546,6 @@ mod tests {
             zone_engine: None,
             fsm_engine: None,
             health: Health::new_at(10_000, 5_000, start),
-            fsm_context: Default::default(),
             signal_snapshot: Default::default(),
             last_scan_at: start,
             scan_seq: 0,
@@ -747,7 +742,7 @@ mod tests {
         let events = scan(&mut state, &image, &timeline);
         assert_eq!(
             events.len(),
-            2,
+            3,
             "null engines must not emit Track/Zone/EntityBoxes/Fsm/Health: {events:?}"
         );
         assert!(
@@ -760,6 +755,20 @@ mod tests {
             "second event must be Presence, got {:?}",
             events[1]
         );
+        assert!(
+            matches!(events[2], SceneEvent::SceneSignals { .. }),
+            "third event must be SceneSignals, got {:?}",
+            events[2]
+        );
+        let SceneEvent::SceneSignals { stamp, snapshot } = &events[2] else {
+            unreachable!()
+        };
+        assert_eq!(stamp.scan_seq, 1);
+        assert_eq!(stamp.evidence_frame_id, 1);
+        assert_eq!(snapshot.len(), 9);
+        assert!(snapshot.is_absent(&SignalTag::new("cara.confianza")));
+        assert!(snapshot.is_absent(&SignalTag::new("cara.en_dwell")));
+        assert!(snapshot.is_absent(&SignalTag::new("cara.estuvo_dentro")));
     }
 
     /// The clock of one control loop must never tick another loop's state.

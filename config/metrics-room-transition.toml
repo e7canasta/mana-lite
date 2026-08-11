@@ -24,6 +24,7 @@ frame_events = false
 detection_events = false
 presence_events = true
 face_dwell_events = false
+scene_signals_events = true
 zone_events = false
 fsm_events = false
 metrics_event = false

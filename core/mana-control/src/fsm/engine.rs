@@ -2,9 +2,9 @@ use std::collections::HashMap;
 use std::time::Instant;
 
 use crate::DepthRuleSnapshot;
-use crate::domain::StateId;
+use crate::domain::{SignalTag, StateId};
 use crate::health::Health;
-use crate::signals::SceneSignalsSnapshot;
+use crate::signals::{SceneSignalsSnapshot, SignalValue};
 use crate::zones::{ZoneEngine, ZoneEvent};
 
 use super::FsmProgram;
@@ -158,7 +158,6 @@ impl FsmEngine {
             zones: zone_engine,
             health,
             depth,
-            scene: context,
             face_was_inside: self.face_was_inside,
             signals,
         };
@@ -174,7 +173,7 @@ impl FsmEngine {
                 &ctx,
                 now,
             ) {
-                self.apply_transition(&result, context, now);
+                self.apply_transition(&result, context.face_present, now);
                 return Some(result);
             }
         }
@@ -224,7 +223,6 @@ impl FsmEngine {
             zones: zone_engine,
             health,
             depth,
-            scene: context,
             face_was_inside: self.face_was_inside,
             signals,
         };
@@ -239,7 +237,7 @@ impl FsmEngine {
                     &ctx,
                     now,
                 ) {
-                    self.apply_transition(&result, context, now);
+                    self.apply_transition(&result, context.face_present, now);
                     return Some(result);
                 }
             }
@@ -257,11 +255,117 @@ impl FsmEngine {
                 &ctx,
                 now,
             ) {
-                self.apply_transition(&result, context, now);
+                self.apply_transition(&result, context.face_present, now);
                 return Some(result);
             }
         }
 
+        None
+    }
+
+    /// Evaluate the FSM using the signal snapshot produced by the same scan.
+    ///
+    /// This is the production path: scene evidence is read from one immutable
+    /// snapshot and no parallel context struct is needed by the control state.
+    pub fn evaluate_snapshot_at(
+        &mut self,
+        zone_events: &[ZoneEvent],
+        zone_engine: Option<&ZoneEngine>,
+        health: &Health,
+        depth: &DepthRuleSnapshot,
+        signals: &SceneSignalsSnapshot,
+        now: Instant,
+    ) -> Option<FsmTransitionResult> {
+        self.update_face_latch_from_signals(signals);
+        if !self.state_dwell_satisfied(now) {
+            return None;
+        }
+
+        let ctx = GuardCtx {
+            zone_events,
+            zones: zone_engine,
+            health,
+            depth,
+            face_was_inside: self.face_was_inside,
+            signals,
+        };
+        let face_present = signal_bool(signals, "cara.presente");
+        let transitions = self.program.transitions();
+        for t in transitions {
+            if t.from.is_wildcard() {
+                if let Some(result) = try_transition(
+                    &mut self.dwell_timers,
+                    t,
+                    &self.state_entered_at,
+                    &self.program,
+                    &ctx,
+                    now,
+                ) {
+                    self.apply_transition(&result, face_present, now);
+                    return Some(result);
+                }
+            }
+        }
+        for t in transitions {
+            if !t.from.matches(&self.current_state) {
+                continue;
+            }
+            if let Some(result) = try_transition(
+                &mut self.dwell_timers,
+                t,
+                &self.state_entered_at,
+                &self.program,
+                &ctx,
+                now,
+            ) {
+                self.apply_transition(&result, face_present, now);
+                return Some(result);
+            }
+        }
+        None
+    }
+
+    /// Evaluate only wildcard transitions using the signal snapshot from the
+    /// same scan.
+    pub fn evaluate_wildcard_snapshot_at(
+        &mut self,
+        zone_events: &[ZoneEvent],
+        zone_engine: Option<&ZoneEngine>,
+        health: &Health,
+        depth: &DepthRuleSnapshot,
+        signals: &SceneSignalsSnapshot,
+        now: Instant,
+    ) -> Option<FsmTransitionResult> {
+        self.update_face_latch_from_signals(signals);
+        if !self.state_dwell_satisfied(now) {
+            return None;
+        }
+
+        let ctx = GuardCtx {
+            zone_events,
+            zones: zone_engine,
+            health,
+            depth,
+            face_was_inside: self.face_was_inside,
+            signals,
+        };
+        let face_present = signal_bool(signals, "cara.presente");
+        for t in self.program.transitions() {
+            if !t.from.is_wildcard() {
+                continue;
+            }
+            if let Some(result) = try_transition(
+                &mut self.dwell_timers,
+                t,
+                &self.state_entered_at,
+                &self.program,
+                &ctx,
+                now,
+            ) {
+                self.apply_transition(&result, face_present, now);
+                return Some(result);
+            }
+        }
         None
     }
 
@@ -270,12 +374,26 @@ impl FsmEngine {
     /// Stage B publishes the resulting value as a derived scene signal without
     /// moving the latch rules into the scan orchestrator.
     pub fn update_face_latch(&mut self, context: &FsmSceneContext) {
+        self.update_face_latch_values(context.face_present, context.cardinality.as_deref());
+    }
+
+    /// Updates the temporal latch from the immutable signal snapshot used by
+    /// the production FSM evaluation.
+    pub fn update_face_latch_from_signals(&mut self, signals: &SceneSignalsSnapshot) {
+        let cardinality = match signals.get(&SignalTag::new("ocupacion.cardinalidad")) {
+            Some(SignalValue::Label(value)) => Some(value.as_str()),
+            _ => None,
+        };
+        self.update_face_latch_values(signal_bool(signals, "cara.presente"), cardinality);
+    }
+
+    fn update_face_latch_values(&mut self, face_present: bool, cardinality: Option<&str>) {
         if self.state_sets_face_latch(&self.current_state)
-            || (self.state_maybe_sets_face_latch(&self.current_state) && context.face_present)
+            || (self.state_maybe_sets_face_latch(&self.current_state) && face_present)
         {
             self.face_was_inside = true;
         }
-        if context.cardinality.as_deref() == Some("multiple") {
+        if cardinality == Some("multiple") {
             self.face_was_inside = false;
         }
     }
@@ -303,19 +421,14 @@ impl FsmEngine {
             })
     }
 
-    fn apply_transition(
-        &mut self,
-        result: &FsmTransitionResult,
-        context: &FsmSceneContext,
-        now: Instant,
-    ) {
+    fn apply_transition(&mut self, result: &FsmTransitionResult, face_present: bool, now: Instant) {
         self.current_state = StateId::new(&result.to);
         self.state_entered_at = now;
         self.dwell_timers.clear();
         if self.current_state == *self.program.reset() {
             self.face_was_inside = false;
         } else if self.state_sets_face_latch(&result.to)
-            || (self.state_maybe_sets_face_latch(&result.to) && context.face_present)
+            || (self.state_maybe_sets_face_latch(&result.to) && face_present)
         {
             self.face_was_inside = true;
         }
@@ -348,4 +461,11 @@ impl FsmEngine {
         self.state_entered_at = now;
         self.dwell_timers.clear();
     }
+}
+
+fn signal_bool(signals: &SceneSignalsSnapshot, tag: &str) -> bool {
+    matches!(
+        signals.get(&SignalTag::new(tag)),
+        Some(SignalValue::Bool(value)) if *value
+    )
 }

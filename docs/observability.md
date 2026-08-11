@@ -132,8 +132,8 @@ infer:  2.0 Hz — 10 calls in 5s | 38ms avg | 2-145ms | 12 dets | skips:2, empt
 
 Controlado por `config/metrics.toml` seccion `[metrics.jsonl]`. Para depurar
 una transicion aislada se puede usar `config/metrics-room-transition.toml`,
-que deja solo el evento `presence` por evaluacion. Para analizar las dos
-maquinas juntas se puede usar `config/metrics-face-dwell-transition.toml`.
+que deja los eventos `presence` y `scene_signals` por evaluacion. Para analizar
+las dos maquinas juntas se puede usar `config/metrics-face-dwell-transition.toml`.
 
 ```toml
 [metrics.jsonl]
@@ -141,6 +141,7 @@ frame_events = true              # {"type":"frame", frame_id, decode_ms, gap_ms}
 detection_events = true          # {"type":"detection", model, infer_ms, pipeline_ms, det, per_class}
 presence_events = true           # {"type":"presence", state, second_person, counts}
 face_dwell_events = true         # {"type":"face_dwell", state, timers, face evidence}
+scene_signals_events = true      # {"type":"scene_signals", stamp, catalog, nine signals}
 zone_events = true               # {"type":"zone", zone, event, class, confidence}
 fsm_events = true                # {"type":"fsm", from, to, trigger, dwell_ms}
 metrics_event = true             # {"type":"metrics", ...} — reporte de ventana
@@ -236,6 +237,20 @@ evalúan con evidencia fresca de keyframe:
 cumpla su dwell. `face_model_ran` evita confundir una cara ausente con un
 modelo facial que no fue ejecutado. El evento `fsm` sigue siendo el registro
 de la transicion confirmada; `face_dwell` no duplica ni reemplaza esa maquina.
+
+**Scene signals event** — snapshot completo de las nueve señales declaradas en
+el mismo ciclo que la evaluación de la FSM. `signals` es un array en orden de
+tag; cada entrada incluye `kind` y contiene `value` o `absent: true`:
+
+```json
+{"type":"scene_signals","scan_seq":481,"evidence_frame_id":42,
+ "observations_age_ms":0,"depth_age_ms":null,"catalog_version":1,
+ "signals":[{"tag":"cara.confianza","kind":"ratio","value":0.84},
+             {"tag":"cara.en_dwell","kind":"bool","absent":true}]}
+```
+
+El evento es informativo y se persiste por defecto. La serialización ocurre
+fuera de `mana-control`; una falla del sink no participa en la decisión clínica.
 
 **Depth event** — estadisticas del mapa depth local al ROI, nunca la matriz:
 
@@ -545,6 +560,7 @@ Los eventos opcionales se filtran antes de entrar al buffer JSONL. Los eventos
 | `detection_events` | true | model, infer_ms, pipeline_ms, det[], **per_class{}** |
 | `presence_events` | true | cardinality, second-person evidence and temporal counters |
 | `face_dwell_events` | true | facial state, face evidence and active dwell timers |
+| `scene_signals_events` | true | complete catalog-v1 snapshot, values and explicit absences per scan |
 | `consolidated_detection` | `jsonl_level=debug` | frame, class, bbox, primary_model, sources |
 | `depth_events` | true | model, infer_ms, pipeline_ms, width, height, valid_pixels, min/max_depth_m |
 | `zone_events` | true | zone, event, class, confidence |

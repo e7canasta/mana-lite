@@ -1,6 +1,6 @@
 # Spec — Tabla de señales de escena
 
-**Estado:** Diseño aprobado; Etapas A, B y C implementadas; Etapa D abierta
+**Estado:** Diseño aprobado; Etapas A, B, C y D implementadas
 **Version:** 0.1
 **Fecha:** 2026-08-10
 **Decisión de base:** [ADR-032](../adrs/032-scene-signals-as-contract.md)

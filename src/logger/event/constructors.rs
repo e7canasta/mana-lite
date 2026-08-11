@@ -1,6 +1,7 @@
 use super::{DEPTH_EVENT_VERSION, Event, FaceDwellTimerRecord, JSONL_SCHEMA_VERSION};
 use crate::metrics::{MetricsReport, PerClassFrameStats};
 use crate::scan::ControlStamp;
+use mana_control::signals::SceneSignalsSnapshot;
 
 impl Event {
     pub fn meta_startup(version: &str, config: &str) -> Self {
@@ -320,5 +321,9 @@ impl Event {
 
     pub fn metrics(report: MetricsReport) -> Self {
         Event::Metrics(report)
+    }
+
+    pub fn scene_signals(stamp: ControlStamp, snapshot: SceneSignalsSnapshot) -> Self {
+        Event::SceneSignals { stamp, snapshot }
     }
 }

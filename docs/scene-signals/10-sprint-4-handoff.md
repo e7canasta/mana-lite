@@ -1,14 +1,15 @@
 # Handoff — Etapa D: el gemelo visible
 
-**Estado:** Etapa C cerrada; siguiente hito: Etapa D
+**Estado:** Entrada histórica; Etapa D implementada
 **Precondición:** Etapas A, B y C cerradas funcionalmente
 **Branch de entrada:** `dev`
 **Commit de entrada:** `c6902da docs(signals): cerrar etapa C`
-**Fuente operativa:** [tasks.md](tasks.md#8-sprint-3--guard-genérico)
+**Fuente operativa:** [tasks.md](tasks.md#9-sprint-4--gemelo-visible)
 
-Este documento es la entrada de una sesión nueva para implementar D. No reemplaza
+Este documento fue la entrada de la sesión que implementó D. No reemplaza
 el contrato ni el diseño técnico. La evidencia de C está en
 [9-sprint-3-cierre.md](9-sprint-3-cierre.md).
+La evidencia actual de D está en [11-sprint-4-cierre.md](11-sprint-4-cierre.md).
 
 ## Lectura rápida
 
@@ -19,7 +20,7 @@ el contrato ni el diseño técnico. La evidencia de C está en
 5. [9-sprint-3-cierre.md](9-sprint-3-cierre.md) — estado de entrada y decisiones cerradas.
 6. Este handoff — orden operativo para la sesión.
 
-## Estado de entrada
+## Estado de entrada histórico
 
 El worktree de `dev` está limpio. A, B y C están cerradas; D todavía no tiene
 implementación. La compuerta de entrada quedó verde en debug, release y la

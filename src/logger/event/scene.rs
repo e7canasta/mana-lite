@@ -111,6 +111,7 @@ pub fn zone_event_to_log(ev: &ZoneEvent, stamp: ControlStamp) -> Event {
 #[must_use]
 pub fn scene_events_to_log(events: &[SceneEvent]) -> Vec<Event> {
     let mut out = Vec::new();
+    let mut scene_signal_events = Vec::new();
     let mut last_stamp: Option<ControlStamp> = None;
     for event in events {
         match event {
@@ -124,10 +125,18 @@ pub fn scene_events_to_log(events: &[SceneEvent]) -> Vec<Event> {
             }
             SceneEvent::FsmTransition(_) => append_fsm_transition_scene_event(event, &mut out),
             SceneEvent::Health(_) => append_health_scene_event(event, &mut out),
+            SceneEvent::SceneSignals { stamp, snapshot } => {
+                last_stamp = Some(*stamp);
+                scene_signal_events.push(Event::scene_signals(*stamp, snapshot.clone()));
+            }
             // Viz-only: occupancy cardinality travels inside presence.state.
             SceneEvent::Occupancy { .. } | SceneEvent::FsmState(_) => {}
         }
     }
+    // Keep the legacy JSONL sequence contiguous. The raw domain batch still
+    // places SceneSignals before FSM evaluation; T3 appends its audit record
+    // after the legacy records for this scan.
+    out.extend(scene_signal_events);
     out
 }
 

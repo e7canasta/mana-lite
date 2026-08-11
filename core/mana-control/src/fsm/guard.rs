@@ -11,7 +11,7 @@ use crate::zones::{ZoneEngine, ZoneEvent};
 use serde::Deserialize;
 
 use super::program::{ProgramGuard, ProgramTransition};
-use super::{FsmProgram, FsmSceneContext, FsmTransitionResult};
+use super::{FsmProgram, FsmTransitionResult};
 
 /// Clinical predicates that drive FSM transitions.
 ///
@@ -92,7 +92,6 @@ pub struct GuardCtx<'a> {
     pub zones: Option<&'a ZoneEngine>,
     pub health: &'a Health,
     pub depth: &'a DepthRuleSnapshot,
-    pub scene: &'a FsmSceneContext,
     pub face_was_inside: bool,
     pub signals: &'a SceneSignalsSnapshot,
 }

@@ -1,5 +1,8 @@
 # Guia: Elegir Un Blueprint
 
+Para el procedimiento completo de alta, operación y rollback, ver el
+[manual de onboarding de blueprints](../scene-signals/12-blueprint-onboarding.md).
+
 ## Decision rapida
 
 ```text

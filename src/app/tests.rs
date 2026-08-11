@@ -211,7 +211,6 @@ fn app_for_depth_rules(rules: DepthRules, context_roi: Option<CropRect>) -> App<
             zone_engine: None,
             fsm_engine: None,
             health: mana_control::health::Health::new_at(10_000, 5_000, start),
-            fsm_context: Default::default(),
             signal_snapshot: Default::default(),
             last_scan_at: start,
             scan_seq: 0,

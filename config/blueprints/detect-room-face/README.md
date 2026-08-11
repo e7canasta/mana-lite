@@ -49,10 +49,11 @@ multiple_exit_ms = 5000
 require_confirmed_tracks = false
 ```
 
-El estado se publica en Rerun por frame y en JSONL cuando se habilita
-`face_dwell_events`. En Rerun, `log_time` es el tiempo de envío y `frame_time`
-es el timestamp compartido por estado, frame BGR y crops. Para una prueba
-enfocada en transiciones se puede seleccionar:
+El estado se publica en Rerun por frame. En JSONL, `scene_signals_events` queda
+activo por defecto y `face_dwell_events` agrega el diagnóstico facial legacy.
+En Rerun, `log_time` es el tiempo de envío y `frame_time` es el timestamp
+compartido por estado, frame BGR y crops. Para una prueba enfocada en
+transiciones se puede seleccionar:
 
 ```toml
 metrics_file = "config/metrics-room-transition.toml"
