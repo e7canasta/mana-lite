@@ -1,5 +1,8 @@
 # Fase 1 — La forma del lazo
 
+> **Cerrada el 2026-08-11.** Compuertas verdes; el resultado y las tres
+> desviaciones del plan están al final, en [Cierre](#cierre).
+
 Plan de implementación. Requiere la [Fase 0](fase-0-sanear-base.md) cerrada.
 
 **Referencias:** [ROADMAP.md](../../ROADMAP.md) · [ARCHITECTURE.md](../../ARCHITECTURE.md) §1-2 ·
@@ -240,3 +243,67 @@ suma de periodos no deriva.
 3. Que el escenario 03 registre sus números en el README, no un "dio bien".
 4. Que el escenario 01 muestre atraso ~0 — si no, el instrumento miente.
 5. Que nada de esta fase intente degradar o reaccionar al atraso.
+
+---
+
+## Cierre
+
+**El número que la fase existía para producir:**
+
+```
+bloqueo del lazo (decode + infer)   221 ms de media contra un periodo de 200 ms
+                                    = 110% de un periodo
+                                    47 de 51 keyframes lo superan
+```
+
+La premisa de ADR-033 era teórica —*"216 ms bloquean un ciclo de 200 ms"*—. Medida
+en la instalación real es más fuerte: la inferencia no *retrasa* un scan, **se
+come más de un periodo entero, el 92% de las veces**.
+
+**Compuertas.** Suite en verde (135 unitarios + 8 suites de integración, golden
+JSONL sin cambios). Escenario 01: `missed 0` en las 19 ventanas. Escenario 03: 5
+incumplimientos por ventana, uno por keyframe, 0 overruns en 20 ventanas.
+Escenario 02: sin regresión, y de yapa el costo de bloqueo del bridge —`late max
+26,7 ms`— que es un dato de la Fase 2 que nadie había medido.
+
+### Tres desviaciones del plan
+
+**1. El primer vencimiento va en el origen, no en `origin + period`.** El esquema
+del plan (`Instant::now() + period`) tenía una segunda trampa de deriva, distinta
+de la que el plan sí documenta. `tokio::time::interval` completa su primer tick
+de inmediato; con `+ period`, el tick 0 de `ScanTimeline` pasaría a ejecutarse un
+periodo más tarde y **el tiempo de control quedaría un periodo atrás del de pared
+para siempre**, subestimando todas las edades clínicas sin error ni síntoma.
+`ScanDeadline` se ancla en `boot_instant`, el mismo origen que la timeline, y
+`control_time_tracks_wall_time_through_lateness` fija que las dos grillas no se
+separan.
+
+**2. `missed` necesita tolerancia; `late > 0` no sirve.** El piso del temporizador
+de tokio, medido sobre 487 vencimientos del escenario de control, es ~2,1 ms — y
+se mueve entre corridas (1,5–2,1 ms según el estado de la máquina). Con el umbral
+en 1 ms el contador daba 470/487 en el escenario *sano* contra 321/332 en el
+bloqueado: no discriminaba nada. Está en 5 ms, con el piso medido documentado en
+la constante y la compuerta "el 01 debe dar `missed 0`" para que no se re-tune a
+ojo. La distribución se publica en µs y sin recortar.
+
+**3. Se publica `p50` además de `p95`.** El atraso es bimodal por construcción:
+los ciclos que no chocan con trabajo se quedan en el piso y los que sí saltan a la
+latencia de la etapa que los bloqueó. Con sólo p95, la línea se lee como un lazo
+degradado de forma continua; con p50 al lado dice lo que pasa —cumple cuatro de
+cada cinco veces y en la quinta se come el modelo.
+
+### Lo que la fase deja abierto
+
+**El atraso no es una constante del sistema: es función de una fase que no
+controlamos.** El `late p95` da un escalón de 150 a 110 ms a mitad de la corrida
+sin que la inferencia se mueva; el nivel depende de dónde cae el keyframe dentro
+de la grilla, y esa fase la fija el GOP de la cámara. Lo estable es la cota, no el
+valor. Consecuencia para las fases siguientes: **citar un `late p95` suelto como
+"la" latencia del lazo es citar una coincidencia** — la magnitud que se compara
+antes y después es el bloqueo, que sí es propiedad del sistema.
+
+**Un episodio no reproducido.** Una corrida corta mostró el atraso subiendo 165%
+con excursiones de inferencia a 303 ms y el `cycle max` en 458 ms contra un
+presupuesto de 500. La corrida larga no lo reprodujo. Anotado en el README del
+escenario 03 como no reproducido, con la instrucción de mirar `infer_ms` y no el
+atraso si vuelve a aparecer.

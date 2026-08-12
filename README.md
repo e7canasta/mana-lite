@@ -1,33 +1,54 @@
 # Mana Lite
 
-Pipeline de percepcion clinica en un unico binario Rust. Recibe RTSP, decodifica
-H.264, ejecuta modelos ONNX, filtra y consolida detecciones, y publica JSONL y
-Rerun.
+Middleware de control clínico en un único binario Rust. Recibe RTSP, decodifica
+H.264, ejecuta modelos ONNX, consolida detecciones y corre una capa de control a
+cadencia fija que publica JSONL y Rerun.
 
-## Estado Actual
+La frase que ordena el diseño está en [HANDOFF.md](HANDOFF.md):
 
-El modo operativo por defecto de este workspace es la consolidacion stateless:
+> **mana-lite es un PLC cuyo dispositivo de campo es una cámara.** El programa
+> corre a cadencia fija y tiene que emitir salida en cada tick aunque el campo
+> esté muerto.
 
-```toml
-[pipeline]
-infer = true
-track = false
+## Estado actual
+
+El sistema corre en **tres etapas con dueños de ejecución distintos**, unidas por
+bordes que no bloquean:
+
+```
+[task tokio]      RTSP → demux → dedupe
+      │  Slot<RawKeyframe>
+      ▼
+[hilo percepción] decode → cascada → ProcessImage        ~221 ms
+      │  Slot<PerceptionOutput>   │  Slot<VizBatch> ──► [hilo viz] ── Rerun
+      ▼                           
+[task tokio]      scan() @ 200 ms — el lazo de control
+      ▼
+      JSONL
 ```
 
-Esto publica observaciones del frame actual sin asignar `track_id`. El tracking
-temporal existe como etapa opcional y se probara por separado.
+El lazo de control mantiene su cadencia aunque la inferencia tarde más de un
+periodo, aunque el visor sature el enlace o aunque percepción entre en pánico.
+Medido: atraso p95 de **1,4–3,3 ms** sobre un periodo de 200 ms, con la
+inferencia corriendo a 194–217 ms. Ver [ARCHITECTURE.md](ARCHITECTURE.md) §1.
 
-El baseline actual ejecuta 5 ramas: `detect-fast` (raiz), `pose-standard`,
-`face-yolo` y `seg-standard` como hijos `same_frame`, y `depth-standard` como
-raiz independiente con mapa depth local a su ROI. La matriz FP16 de modelos
-(4 tareas × 4 tamanos × 2 resoluciones) esta registrada deshabilitada para
-benchmark en `tools/model-tools/`.
+El blueprint por defecto es `detect-room-face`: cardinalidad de sala más recorte
+dinámico de cara, con FSM de ciclo de vida. La matriz FP16 de modelos (4 tareas ×
+4 tamaños × 2 resoluciones) está registrada deshabilitada para benchmark en
+`tools/model-tools/`.
 
 ## Inicio Rapido
 
 ```bash
 cargo test
-cargo run -- --config config/mana.toml
+cargo run --release -- --config config/mana.toml
+```
+
+Para probar una capa por vez, el banco de escenarios de `workshop/` la enciende
+de a una, con criterios escritos antes de correr:
+
+```bash
+cargo run --release -- --config workshop/scenarios/01-ingest-only/mana.toml
 ```
 
 ## Documentacion
@@ -41,11 +62,14 @@ cargo run -- --config config/mana.toml
   ([depth-standard](docs/specs/depth-standard.md)), segmentacion
   ([seg-standard](docs/specs/seg-standard.md)) y wire de mascaras
   ([mask-jsonl](docs/specs/mask-jsonl.md)).
-- [Arquitectura](docs/ARCHITECTURE.md): modulos, ownership y ciclo principal.
+- [Arquitectura de ejecución](ARCHITECTURE.md): hilos, relojes, puertos e
+  invariantes. Es la que hay que leer antes de tocar el lazo.
+- [Arquitectura del workspace](docs/ARCHITECTURE.md): partición en crates por
+  tier (ADR-027, ADR-028).
+- [Roadmap](ROADMAP.md): estado y siguientes etapas.
 - [Observabilidad](docs/observability.md): metricas, toggles y blueprint.
 - [ROI y crops](docs/roi.md): crops estaticos y dinamicos.
-- [Roadmap](docs/ROADMAP.md): estado y siguientes etapas.
-- [ADRs](docs/adrs/): decisiones de diseno (001-024).
+- [ADRs](docs/adrs/): decisiones de diseño (001-035).
 
 ## Salidas
 
@@ -93,6 +117,6 @@ La suite completa necesita los pesos ONNX: un test de arranque
 catalogos reales. Si no los tenes en la raiz del checkout, apuntalos con
 `MANA_MODELS_HOME`.
 
-El tracker actual es un prototipo de prediccion lineal y matching greedy por
-IoU. Kalman/Hungarian y TTL de evidencias quedan para una etapa posterior,
-despues de validar la consolidacion con video real.
+El tracker usa filtro de Kalman con asociación por distancia de Mahalanobis
+(`tracking.mahalanobis_threshold`) e IoU como respaldo. Hungarian queda pendiente:
+la asignación sigue siendo greedy.

@@ -46,13 +46,17 @@ echo "== config efectiva: $CONFIG"
 cd "$REPO_ROOT"
 timeout "$DURATION" cargo run --release -q -- --config "$CONFIG" 2>&1 \
   | tee "$RUN_DIR/run.log" \
-  | grep -E 'viz:|ingest:|cycle:|reconnect' || true
+  | grep -E 'viz:|ingest:|cycle:|dline:|reconnect' || true
 
 echo
 echo "== compuertas"
 printf 'viz: connected      %s (esperado: 1)\n' "$(grep -c 'viz: connected' "$RUN_DIR/run.log" || true)"
 printf 'reconexiones rtsp   %s (esperado: 0)\n' "$(grep -c 'rtsp reconnect attempt' "$RUN_DIR/run.log" || true)"
 printf 'overruns de ciclo   %s (esperado: 0)\n' "$(grep -o '[0-9]* overruns' "$RUN_DIR/run.log" | awk '{s+=$1} END{print s+0}')"
+# Cuánto bloquea el bridge al lazo de control. No es una compuerta de pasa/no
+# pasa: es el número que justifica la Fase 2, y se registra corrida a corrida.
+grep -o 'late min [0-9.]*ms p50 [0-9.]*ms p95 [0-9.]*ms max [0-9.]*ms' "$RUN_DIR/run.log" \
+  | awk '{if ($9+0 > m) m=$9+0} END{printf "atraso del lazo     %.1fms peor caso (costo de bloqueo del bridge)\n", m}'
 # La comparación es acumulada, no por ventana. Un keyframe visto al final de
 # una ventana se emite en la siguiente, así que `processed < seen` en una
 # ventana aislada es un straddle de borde, no una pérdida. Lo que delata una

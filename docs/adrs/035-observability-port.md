@@ -1,6 +1,6 @@
 # ADR-035: Observabilidad necesita un puerto, como los otros subsistemas
 
-**Status:** Proposed
+**Status:** Superseded en parte por ADR-033 — ver *Qué pasó realmente*
 **Date:** 2026-08-11
 
 ## Qué cambia para el producto
@@ -85,6 +85,41 @@ es irrelevante, y se paga a cambio de que el subsistema sea sustituible.
 repositorio son trece sitios y ninguno necesita cambiar. Si algo afuera dependía
 de `observer.viz` como `VizBridge` concreto, dependía de un detalle que nunca
 debió estar expuesto.
+
+## Qué pasó realmente
+
+**El problema se resolvió por estructura, no por abstracción**, y esta ADR queda
+como registro de un diagnóstico correcto con una solución equivocada.
+
+El diagnóstico era exacto: la visualización corría en el hilo del control y podía
+frenarlo, y la causa era que no tenía puerto. La solución propuesta —un trait
+`VizSink` con la superficie de los ~20 métodos, más un `VizRelay` que lo
+implementara— no se construyó, y no hace falta.
+
+Lo que pasó en la Fase 3 (ADR-033) fue que al partir las etapas, el `VizBridge`
+quedó con **dueño único**: el hilo de percepción. El lazo de control ya no puede
+alcanzarlo, así que no puede ser frenado por él. El problema que esta ADR quería
+resolver dejó de existir por dónde quedó la frontera de ejecución.
+
+Y el trait que ya existía —`PipelineObserver`— se borró, porque al separar las
+etapas quedó con **un solo implementador y ningún doble de test**. Un trait que
+no vuelve imposible ningún error es un módulo con pasos de más; es el mismo
+criterio que ADR-028 aplica a los crates, y aplica igual acá.
+
+### Lo que sigue abierto
+
+Un enlace saturado **sigue bloqueando a percepción**: `re_chunk` no ofrece
+política de descarte. Bajó de categoría —de *"un visor de depuración retrasa una
+decisión clínica"* a *"un visor de depuración deja al sistema sin evidencia
+fresca, y el control lo declara"*— pero no es cero.
+
+El cierre es un `Slot` hacia un hilo propio del visor, que descarte en vez de
+bloquear: la primitiva de ADR-034 aplicada al borde que le faltaba. **No** hace
+falta reintroducir el trait de 20 métodos — con un solo dueño alcanza con que el
+relay sea ese dueño.
+
+Registrado en `ARCHITECTURE.md` §6.1, sin medir todavía: la corrida que lo
+cuantifica es la variante `a-raw-native` del escenario 02.
 
 ## Referencias
 

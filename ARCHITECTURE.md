@@ -7,64 +7,99 @@ línea. El *por qué* conceptual está en [BIGPICTURE.md](BIGPICTURE.md).
 
 ---
 
-## 1. El super loop
+## 1. Tres etapas, ningún borde que bloquee
 
-Todo el trabajo del sistema ocurre en **una sola task de tokio**, en
-`App::run` (`src/app/mod.rs:65`):
+El sistema corre en **tres etapas con dueños de ejecución distintos**, unidas por
+bordes que no pueden hacer esperar a nadie (ADR-033, ADR-034):
+
+```
+[task tokio]      RTSP → demux → dedupe            async, sólo I/O de red
+      │  Slot<RawKeyframe>
+      ▼
+[hilo percepción] decode → cascada → ProcessImage  CPU-bound, ~221 ms
+      │  Slot<PerceptionOutput>          Cola<Vec<Event>>
+      ▼                                        │
+[task tokio]      scan() @ 200 ms  ◄────────────┘   trabajo acotado
+      │  Slot<ControlDirective>  ──► vuelve a percepción
+      ▼
+      JSONL
+```
+
+La regla que decide la primitiva de cada borde es de ADR-034 y no se negocia por
+conveniencia:
+
+> Si perder el dato viejo es **correcto**, es una muestra: va en `Slot`.
+> Si perderlo es un **bug**, es un evento: va en cola.
+
+Un frame es una muestra —nadie quiere ver el cuarto como estaba hace ocho
+segundos—; una detección del JSONL es un evento, y perderla rompe la auditoría.
+
+### 1.1 El lazo de control es un temporizador puro
+
+`App::run` (`src/app/mod.rs`) ya no arbitra entre trabajo y reloj. Su `select!`
+sólo elige entre el vencimiento del scan y las señales de apagado:
 
 ```rust
-loop {
-    tokio::select! {
-        kf = self.ingest.poll_freshest_keyframe() => { /* decode + inferencia */ }
-        _  = scan_interval.tick()                 => { /* control + observabilidad */ }
-    }
+tokio::select! {
+    () = tokio::time::sleep_until(scan_deadline.next().into()) => { /* scan_tick */ }
+    _ = term.recv() => break,
+    _ = &mut ctrl_c => break,
 }
 ```
 
-Dos ramas compiten. Hay que entender tres cosas de esta construcción antes de
-tocar cualquier cosa que corra adentro.
+Todo lo que hace `scan_tick` está acotado por construcción: drenar la cola de
+eventos, tomar la imagen de proceso del slot, avanzar el reloj, evaluar, emitir.
+Ningún paso puede esperar a la red, a un modelo ni al disco de otra etapa.
 
-### 1.1 `select!` cancela la rama perdedora
+**Nada con latencia variable puede vivir acá adentro.** Si algo la tiene, entra
+como etapa, no como llamada.
 
-Cuando una rama gana, el future de la otra **se descarta**. Cualquier estado que
-viva en la pila de ese future se pierde.
+### 1.2 El lazo cerrado: control decide qué mira percepción
 
-Esto no es teórico: fue el bug más caro de esta base de código.
-`poll_freshest_keyframe` acumulaba el keyframe en una variable local mientras
-incrementaba `keyframes_seen` sobre el engine. Al cancelarse, el contador
-sobrevivía y el frame no —- el sistema informaba "5 vistos, 0 procesados" y el FSM
-se iba a `data_stale` con el transporte perfectamente sano.
+Percepción **no es una fuente, es el actuador de un lazo**. El FSM decide qué
+modelos corren (`fsm.current_models()`) y el tracker decide dónde recortar para
+la cascada. Los dos viven del lado de control.
 
-> **Invariante.** Todo future poleteado dentro del `select!` debe ser
-> cancelación-seguro: sus observaciones se comprometen a `self` en el momento en
-> que se hacen, nunca al final del bucle. Fijado por
-> `ingest::tests::staged_keyframe_survives_cancellation`.
+Por eso hay dos slots en direcciones opuestas y no un pipeline. Leer el tracker
+directo desde el hilo de inferencia obligaría a un candado que ese hilo podría
+estar sosteniendo justo cuando el lazo tiene que ticar — el bloqueo que la
+arquitectura saca, reintroducido con otro nombre.
 
-### 1.2 El trabajo pesado es síncrono y bloquea la task
+La directiva viaja como muestra: llega hasta un periodo desactualizada, y
+alcanza. Antes de la separación ya se leía igual de vieja —el tracker se muta en
+`scan()` a 5 Hz y percepción corre a 1 Hz—, así que no se perdió frescura.
 
-`process_keyframe` (`src/app/mod.rs:145`) **no es `async`**. Decodificar y correr
-la cascada de modelos ocurre en línea, bloqueando la task completa:
+### 1.3 Qué compensa cada etapa cuando la otra falla
 
-| Etapa | Costo medido |
+| Falla | Qué pasa |
 |---|---|
-| decode 1080p | ~14 ms |
-| inferencia (`detect-fast`, 320px) | ~216 ms |
+| percepción entra en pánico | descarta su imagen entera y sigue; el lazo envejece la evidencia y va a `blind` |
+| la ingesta muere | el lazo lo detecta por `is_finished()` y emite `stage_died`: `blind` con causa |
+| el visor satura el enlace | bloquea a percepción, no al lazo; el control mantiene cadencia |
+| control se atrasa | percepción sigue con la directiva anterior; su slot pisa lo viejo y lo cuenta |
+| la cámara muere | el slot de keyframes queda vacío; el lazo emite salida igual, en `blind` |
 
-Mientras eso corre, `scan_interval.tick()` **no puede dispararse**. El scan
-nominal de 5 Hz se detiene durante todo el procesamiento del keyframe.
+La última fila es el invariante de `HANDOFF.md`, y **es la primera versión del
+sistema que lo cumple**: *el programa corre a cadencia fija aunque el campo esté
+muerto.*
 
-Se ve en cualquier reporte de ciclo: `p95 200ms max 200ms min 1ms`. Ese
-**`min 1ms` es la marca del tick que se recuperó de golpe** después de un bloqueo.
+### 1.4 De dónde viene esto
 
-### 1.3 Los ticks perdidos se recuperan en ráfaga
+Hasta la Fase 3 (2026-08-11) todo corría en una sola task, con un `select!` entre
+la ingesta y el reloj. Eso dejaba tres marcas que conviene reconocer al leer
+reportes viejos o ramas anteriores:
 
-`tokio::time::interval` (`src/app/mod.rs:71`) se construye sin
-`set_missed_tick_behavior`, o sea con el default **`MissedTickBehavior::Burst`**:
-los ticks que no pudieron dispararse salen inmediatamente, uno tras otro, hasta
-alcanzar el reloj.
-
-Eso no es un accidente afortunado: es **de lo que depende la corrección del reloj
-de control**. Ver la sección 2.
+- **`min 1ms` en la línea de ciclo** era el tick recuperado en ráfaga después de
+  un bloqueo, no un ciclo rápido.
+- **El invariante de cancelación-seguridad** —"todo future dentro del `select!`
+  se compromete a `self` en el momento"— era obligatorio porque la rama perdedora
+  se descartaba. Con la ingesta en su propia task ya no hay rama perdedora y la
+  regla dejó de hacer falta; el test que la fija
+  (`ingest::tests::staged_keyframe_survives_cancellation`) se conserva porque
+  ahora protege el aborto en el apagado.
+- **El bloqueo medido**: decode ~10 ms más inferencia ~211 ms daban 221 ms de
+  media, el **110% de un periodo de scan**, superado en 47 de 51 keyframes. Ese
+  número —el producto de la Fase 1— es lo que justificó la separación.
 
 ---
 
@@ -95,19 +130,38 @@ histéresis de zonas —- corre sobre este reloj virtual.
 
 ### 2.3 Por qué eso funciona, y de qué depende
 
-Dos scans pueden ejecutarse con 1 ms real de diferencia (una ráfaga de
-recuperación) y el control creerá que pasaron 200 ms entre ellos. Sin embargo el
-reloj virtual **no deriva**, porque `Burst` garantiza exactamente un tick por
-periodo transcurrido: el tick que se recupera corresponde a tiempo real que sí
-pasó durante el bloqueo.
+Dos scans pueden ejecutarse con 1 ms real de diferencia —una recuperación en
+ráfaga— y el control creerá que pasaron 200 ms entre ellos. Sin embargo el reloj
+virtual **no deriva**, porque se recupera exactamente un tick por periodo
+transcurrido: el tick recuperado corresponde a tiempo real que sí pasó.
 
-> **Invariante crítico.** El reloj de control se mantiene alineado con el reloj
-> de pared **únicamente** porque los ticks perdidos se recuperan uno a uno.
-> Cambiar `MissedTickBehavior` a `Skip` o `Delay` haría que el reloj virtual
-> corriera más lento que el real, y **todos los tiempos clínicos configurados
-> durarían más de lo que dicen**, sin ningún error visible. Si alguna vez se
-> toca esa configuración, hay que reemplazar `ScanTimeline` por una derivación
-> del reloj real en el mismo commit.
+Desde la Fase 1 eso no depende del comportamiento por defecto de una primitiva
+de tokio sino de aritmética explícita, en `ScanDeadline::arrive`
+(`src/app/deadline.rs`):
+
+```rust
+let late = now.saturating_duration_since(self.next);
+self.next += self.period;   // desde el vencimiento anterior, nunca desde `now`
+```
+
+> **Invariante crítico.** El próximo vencimiento se calcula **desde el
+> vencimiento anterior**, y la grilla se ancla en `boot_instant`, el mismo
+> origen que `ScanTimeline`. Las dos condiciones son necesarias:
+>
+> - Con `next = now + period`, cada atraso correría el reloj hacia adelante de
+>   forma permanente y **todos los tiempos clínicos durarían más de lo que
+>   dicen**.
+> - Con el primer vencimiento en `origin + period` en vez de en `origin`, el
+>   tiempo de control quedaría **un periodo entero por detrás** del de pared para
+>   siempre, y todas las edades clínicas se subestimarían.
+>
+> Ninguna de las dos rompe un test ni produce un error: son fallas silenciosas
+> con daño clínico. Fijadas por `deadline::tests::deadlines_do_not_drift_under_lateness`
+> y `deadline::tests::control_time_tracks_wall_time_through_lateness`, que corre
+> `ScanDeadline` y `ScanTimeline` en paralelo y verifica que no se separan.
+
+El atraso que `arrive` devuelve no se descarta: se publica como distribución en
+la línea `dline:` y en el JSONL. Ver §5.1.
 
 ---
 
@@ -120,26 +174,19 @@ Control y Observabilidad. La calidad de las fronteras no es pareja.
 |---|---|---|
 | Percepción → Control | `ProcessImage` / `SceneSample` | declarado y respetado |
 | Control → dominio | `SceneEvent` | declarado y respetado |
-| Pipeline → Observabilidad | `PipelineObserver` | **declarado y evadido** |
+| Percepción → Observabilidad | `VizHandle` → `Slot<VizBatch>` | declarado y respetado |
+| Percepción → Control (eventos) | `Cola<Vec<Event>>` | declarado y respetado |
 
-### 3.1 La costura
+### 3.1 La costura, y lo que quedó de ella
 
-`PipelineObserver` (`src/app/observer.rs:10`) es la abstracción correcta: define
-`on_occupancy`, `emit`, `flush`, y existe un `NullObserver` para tests. La wiki
-la documenta como el mecanismo de fan-out (`docs/wiki/6.2`).
+La frontera de observabilidad era la peor del sistema y **la separación de
+etapas la resolvió por estructura, no por abstracción**.
 
-Pero el código la honra en **un solo método**. Los demás sitios entran por
-`FanoutObserver.viz`, que es un campo `pub`, salteándose la abstracción —- y
-`viz_mut()` devuelve `&mut VizBridge`, el **tipo concreto**, así que aunque se la
-usara no permitiría sustituir la implementación.
-
-Consecuencia directa y medida: **la visualización corre en el hilo del control y
-puede frenarlo.** rerun aplica contrapresión al productor cuando su batcher se
-llena (`max_bytes_in_flight`, y `re_chunk` no ofrece política de descarte), de
-modo que un enlace saturado bloquea el `log()` del pipeline.
-
-Y el daño no se detiene en el control. Medido en una corrida de 180 s con frames
-sin comprimir (`workshop/scenarios/02-ingest-viz`, variante `a-raw-native`):
+Lo que había: un trait `PipelineObserver` honrado en un solo método, con los
+demás sitios entrando por `FanoutObserver.viz` —campo `pub`— y un `viz_mut()`
+que devolvía el tipo concreto. La visualización corría en el hilo del control y
+podía frenarlo. Medido en 180 s con frames sin comprimir
+(`workshop/scenarios/02-ingest-viz`, variante `a-raw-native`):
 
 ```
 enlace de viz saturado
@@ -150,15 +197,30 @@ enlace de viz saturado
               └─ 24% de los keyframes perdidos
 ```
 
-**La visualización de depuración tira la ingesta de video.** El bloqueo se
-propaga hasta la capa de red, que reacciona reconectando.
+Lo que hay ahora: el `VizBridge` tiene **dueño único** —el hilo de percepción— y
+el lazo de control no puede alcanzarlo. Los tres dibujos que produce control
+(ocupancia, estado del FSM, cajas de entidades) viajan dentro de
+`ControlDirective`, por el mismo slot que ya lleva la realimentación.
 
-> **Regla.** Un subsistema sin puerto declarado termina cableado inline. La
-> ausencia de puerto para Observabilidad no es una omisión cosmética: es la causa
-> de que una preocupación de depuración pueda degradar el lazo de control de un
-> sistema clínico.
+El trait desapareció, y esa es la parte que conviene entender antes de
+reintroducirlo: al partir las etapas quedó con **un solo implementador y ningún
+doble de test que lo usara**. Un trait que no vuelve imposible ningún error es un
+módulo con pasos de más — el mismo criterio que ADR-028 aplica a los crates.
 
-Ver la sección 6 para el estado del trabajo sobre esto.
+Y desde la Fase 2 el bridge **ni siquiera lo tiene percepción**: vive en un hilo
+propio detrás de un `Slot<VizBatch>`, y lo que percepción sostiene es un
+`VizHandle` que encola dibujos con sus argumentos ya en propiedad. La
+contrapresión de rerun sigue existiendo —`re_chunk` no ofrece política de
+descarte— pero ahora sólo puede bloquear al hilo que no tiene a nadie esperándolo.
+
+Un lote es **un keyframe entero de dibujo** y se descarta entero: medio frame de
+overlays sobre el frame siguiente sería peor que no dibujar nada. Los lotes
+pisados se publican como `viz_pisados` (§5.1.2).
+
+> **Sin medir todavía.** La corrida que lo cuantifica es
+> `./workshop/scenarios/02-ingest-viz/run-variant.sh a-raw-native`, la variante
+> que quedó degradada en la Fase 0. `viz_pisados` **tiene que subir** ahí: es la
+> prueba de que se descarta en vez de bloquear.
 
 ---
 
@@ -220,6 +282,82 @@ para delatar.
 > `metrics::tests::a_stalled_cycle_without_work_still_trips_the_budget`, y
 confirmado en campo contra un scan real de 41 s.
 
+### 5.1.1 Periodo y atraso son dos ejes, no uno
+
+El presupuesto mide **periodo**: cuánto pasó entre dos scans. Esa magnitud **se
+autocorrige** —un scan que arranca tarde empuja al siguiente, que arranca de
+inmediato— así que el promedio se ve sano aunque el lazo esté incumpliendo.
+
+Lo que no se autocorrige es el **atraso de vencimiento**: cuánto después de su
+deadline arrancó cada scan. Es lo que un PLC llama incumplimiento, y se publica
+aparte, en la línea `dline:` y en el evento JSONL `health`/`scan_deadline`:
+
+```
+dline: 26 deadlines in 5s | late min 0.4ms p50 1.1ms p95 1.6ms max 2.2ms | 0 missed (>5.0ms)
+```
+
+Tres decisiones de esa línea que no son obvias:
+
+- **Se publica en µs, no en ms.** Un lazo sano vive por debajo del milisegundo;
+  en ms enteros el reporte diría `0` tanto cuando cumple como cuando el
+  instrumento está roto.
+- **`missed` lleva tolerancia de 5 ms**, que es el piso medido del temporizador
+  de tokio (~1,5–2,1 ms según el estado de la máquina) con margen. Con el umbral
+  en `late > 0` el contador daba ~96% de incumplimientos **en el escenario de
+  control**, y no distinguía un lazo sano de uno bloqueado 188 ms. La tolerancia
+  gobierna sólo el contador; la distribución va sin recortar.
+- **`p50` va junto a `p95`** porque el atraso es bimodal por construcción: los
+  ciclos que no chocan con trabajo se quedan en el piso, y los que sí saltan a la
+  latencia de la etapa que los bloqueó.
+
+Compuerta que mantiene honesta la tolerancia: **el escenario 01 debe informar
+`missed 0`**. Si vuelve a marcar incumplimientos sin que nada bloquee el lazo, el
+piso se movió y la constante hay que volver a medirla, no subirla.
+
+### 5.1.1.1 La edad de la evidencia: el único número clínico
+
+Todo lo demás que se mide acá —periodo, atraso, latencia de inferencia,
+descartes— es **salud del motor**: dice si la máquina está sana, no si la
+decisión se tomó sobre algo actual. La pregunta que hace un revisor de incidente
+es otra:
+
+> Cuando el FSM dijo `bed_alert`, ¿de cuándo era lo que vio?
+
+```
+evid:  25 scans con evidencia in 5s | edad min 4ms p50 402ms p95 806ms max 812ms
+```
+
+Se mide contra el **reloj de control**, no contra el de pared: es la edad tal
+como la percibió la decisión.
+
+Dos cosas que hay que entender antes de leer esa línea:
+
+- **El piso no es cero y no debería serlo.** Con keyframes a 1 Hz y un lazo a
+  5 Hz, cuatro de cada cinco scans deciden sobre evidencia que ya tenían. Un p50
+  cerca de medio intervalo de keyframe es lo sano.
+- **Lo que hay que mirar es el `max` contra `health.data_stale_ms`.** Si se
+  acerca, el sistema está decidiendo sobre evidencia que casi califica de
+  obsoleta, y eso no lo delata ninguna de las otras líneas.
+
+Sólo se registra cuando hay evidencia. Sin observaciones la edad vale
+`u64::MAX`, y ese centinela dentro de una distribución la arruina para siempre;
+la ausencia ya la cuenta `blind_cycles`. Fijado por
+`metrics::tests::a_window_without_evidence_reports_zero_not_a_sentinel`.
+
+### 5.1.2 Los bordes entre etapas se instrumentan
+
+Cada `Slot` publica lo que pisó, en la línea de ingesta:
+
+```
+ingest: ... | kf_pisados:3, img_pisadas:1
+```
+
+`kf_pisados` significa que percepción no dio abasto con la cámara;
+`img_pisadas`, que produjo dos evidencias entre dos scans. **Descartar es la
+degradación correcta para una muestra; descartarla en silencio no lo es** —
+un borde sin instrumentar es un borde sobre el que no se puede razonar cuando
+algo va mal (ADR-034).
+
 ### 5.2 El bridge de Rerun
 
 Dos distinciones que el bridge debe mantener y que no son obvias:
@@ -248,21 +386,18 @@ geometría.
 
 En orden de importancia.
 
-### 6.1 Observabilidad sin puerto — *en curso*
+### 6.1 El dibujo de control viaja por la directiva — *provisorio*
 
-La visualización corre en el hilo del control y puede frenarlo (§3.1). La
-corrección es completar el seam que ya está declarado:
+Los tres dibujos que produce el lazo de control (ocupancia, estado del FSM, cajas
+de entidades) viajan dentro de `ControlDirective` en vez de ir directo al hilo
+del visor. Funciona y no cuesta nada, pero mezcla dos cosas en un mismo mensaje:
+qué debe correr percepción, y qué debe dibujarse.
 
-1. Un trait `VizSink` con la superficie de los 20 métodos —- el puerto faltante.
-2. `VizBridge` lo implementa directo (síncrono).
-3. Un `VizRelay` lo implementa reenviando a un hilo propio por una cola acotada
-   que **descarta en vez de bloquear**. rerun no ofrece esa política, así que hay
-   que ponerla afuera.
-4. `FanoutObserver.viz` pasa a `Box<dyn VizSink>`, con lo que los sitios de
-   llamada existentes siguen compilando por deref.
-
-El punto de diseño: el costo de convertir prestado→propio se paga **una vez, en
-el relay**, no repartido por el pipeline.
+Es residuo de haber hecho la Fase 3 antes que la 2: cuando el `VizBridge` tenía
+dueño único en percepción, era la única vía. Ahora que el visor tiene hilo
+propio, control podría tener su propio `VizHandle` y la directiva volvería a ser
+sólo `models` + `tracks`. No es urgente: la única consecuencia observable es que
+el visor dibuja el estado de control con hasta un periodo de retraso.
 
 ### 6.2 El dedupe de keyframes no vence — *latente*
 
@@ -272,17 +407,35 @@ completamente inmóvil, un encoder que emita IDR byte-idénticos suprimiría
 indefinidamente, y **la propia supresión dispararía `data_stale`**: aguas arriba
 no habría forma de distinguir "la escena no cambió" de "el stream murió".
 
+### 6.2.1 El `Mutex<MetricsEngine>` está en el camino del lazo — *a medir*
+
+Percepción y control comparten el motor de métricas por `Mutex`. Las secciones
+críticas son de microsegundos sobre contadores y **nunca se sostienen a través
+de trabajo de latencia variable**, así que el argumento es que no es la clase de
+bloqueo que la arquitectura saca.
+
+Pero es un candado que el lazo toma: si percepción es desalojada sosteniéndolo,
+el lazo espera un quantum del scheduler. La medición que lo resuelve ya existe:
+el piso del escenario 01 era `late max 1,5–1,6 ms` antes del corte. Si ahora
+subió, el candado está en el camino y hay que pasar a contadores por etapa
+fusionados al armar el reporte. Si no se movió, el argumento era correcto.
+
 ### 6.3 El presupuesto cuenta pero no actúa — *abierto*
 
-`cycle_overruns` ya es una medición real (§5.1), pero contar no es actuar. Un
-overrun sostenido debería degradar algo —- apagar viz, bajar calidad— o al menos
-escalar el aviso.
+`cycle_overruns` y `scan_deadlines_missed` ya son mediciones reales (§5.1), pero
+contar no es actuar. Un incumplimiento sostenido debería degradar algo —apagar
+viz, bajar calidad— o al menos escalar el aviso.
 
-### 6.4 Los modelos se cargan aunque la inferencia esté apagada — *menor*
+Con las etapas separadas esto **recién ahora es accionable**: un atraso del lazo
+aislado ya no puede venir de otra etapa, así que significa un problema del lazo y
+de nadie más. Antes no decía de quién era la culpa.
 
-`pipeline.infer = false` corta la ejecución (`src/app/mod.rs:182`) pero no la
-carga: el bootstrap construye igual la sesión ONNX. Un despliegue sin inferencia
-paga el arranque y la memoria del modelo.
+### 6.4 ~~Los modelos se cargan aunque la inferencia esté apagada~~ — *cerrada*
+
+Cerrada el 2026-08-11. Con `pipeline.infer = false` el bootstrap construye el
+motor desde un catálogo vacío y no crea ninguna sesión ONNX. La validación del
+catálogo y del blueprint sigue corriendo en la etapa 2, así que un catálogo roto
+sigue siendo falla de arranque aunque la inferencia esté apagada.
 
 ---
 
@@ -296,6 +449,7 @@ prendido hay seis sospechosos ante cualquier anomalía; con la escalera, hay uno
 |---|---|
 | `01-ingest-only` | RTSP → decode → JSONL |
 | `02-ingest-viz` | bridge de Rerun |
+| `03-ingest-infer` | inferencia dentro del lazo — el escenario que midió el bloqueo |
 
 Regla de invocación: **siempre `cargo run`, nunca una ruta fija al binario.**
 `target-dir` puede estar redirigido por configuración global de cargo, en cuyo

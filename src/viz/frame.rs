@@ -83,11 +83,12 @@ fn finite_depth_max(depth: &DepthFrame) -> Option<f32> {
         .reduce(f32::max)
 }
 
-/// Baseline JPEG encode of an RGB24 buffer.
+/// Encode JPEG de un buffer RGB24.
 ///
-/// This is the lever that reduces the link budget *without* touching
-/// resolution: the decoded image keeps its pixel dimensions, so every overlay
-/// logged in native frame coordinates stays aligned with no compensation.
+/// Es la palanca que baja el presupuesto del enlace **sin tocar la
+/// resolución**: la imagen conserva sus dimensiones en píxeles, así que todo
+/// overlay logueado en coordenadas nativas del frame sigue alineado sin
+/// compensación.
 pub(super) fn encode_jpeg(rgb: &[u8], w: u32, h: u32, quality: u8) -> Result<Vec<u8>, String> {
     let mut bytes = Vec::new();
     image::codecs::jpeg::JpegEncoder::new_with_quality(&mut bytes, quality)

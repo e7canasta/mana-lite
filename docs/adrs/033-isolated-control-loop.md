@@ -1,6 +1,6 @@
 # ADR-033: El lazo de control es un hilo aislado que no puede bloquearse
 
-**Status:** Proposed
+**Status:** Accepted — implementado 2026-08-11 (Fases 3 y 4)
 **Date:** 2026-08-11
 
 ## Qué cambia para el producto
@@ -124,6 +124,41 @@ haciendo cada borde observable.
 catálogo de señales, el layering de configuración, la validación al arrancar.
 Esta decisión cambia la plomería, no el dominio, y no debería alterar ninguna
 regla clínica.
+
+## Resultado medido
+
+Escenario 03 (`workshop/scenarios/03-ingest-infer/`), antes y después de separar
+las etapas, con la misma cámara y el mismo modelo:
+
+| | antes | después |
+|---|---|---|
+| `cycle` p95 | 305–348 ms | **200–201 ms** |
+| `cycle` min | 49–92 ms | **197–199 ms** |
+| atraso p95 | 101–154 ms | **1,4–3,3 ms** |
+| atraso max | 200–260 ms | **1,6–4,8 ms** |
+| vencimientos incumplidos | 5 por ventana | **0** |
+| latencia de inferencia | 194–217 ms | 194–217 ms |
+
+La inferencia tarda exactamente lo mismo: no se optimizó nada, dejó de cobrárselo
+al lazo. El `cycle min` de 199 ms es la señal de que la causa se fue y no se
+disimuló — un mínimo de 85 ms era la recuperación en ráfaga, y ya no hay nada que
+recuperar.
+
+Ningún slot descartó muestras en la corrida (`kf_pisados` y `img_pisadas` en
+cero): la cadencia no se compró tirando evidencia.
+
+## Lo que la decisión no previó
+
+**El lazo es cerrado, no un pipeline.** El FSM decide qué modelos corren y el
+tracker dónde recortar: percepción es el actuador de un lazo, no una fuente. Por
+eso hay dos slots en direcciones opuestas y no uno. El diagrama de esta ADR
+muestra sólo el sentido de ida.
+
+**El decoder no se puede mover de hilo.** `FrameDecoder` contiene un
+`ffmpeg_next::software::scaling::Context` con un `*mut SwsContext` y sin
+`unsafe impl Send`, así que la etapa se manda como semilla y el decoder se
+construye del otro lado. El hilo reporta hacia atrás si falla, para que un ffmpeg
+roto siga siendo falla de arranque.
 
 ## Referencias
 

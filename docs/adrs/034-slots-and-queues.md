@@ -1,6 +1,6 @@
 # ADR-034: Muestras en slots, eventos en colas
 
-**Status:** Proposed
+**Status:** Accepted — implementado 2026-08-11 (`src/slot.rs`)
 **Date:** 2026-08-11
 
 ## Qué cambia para el producto
@@ -109,6 +109,26 @@ cualquier canal genérico, y la simplicidad es el punto.
 consumidor se demoró apenas. A las cadencias reales del sistema —- un keyframe por
 segundo contra un lazo de 5 Hz— eso no ocurre salvo bajo saturación, que es
 justamente cuando descartar es lo correcto.
+
+## Cómo quedó implementado
+
+`Slot<T>` son ~90 líneas sobre `Mutex` + `Condvar`, con tres bordes en uso:
+`RawKeyframe` (ingesta → percepción), `PerceptionOutput` (percepción → control) y
+`ControlDirective` (control → percepción, la realimentación).
+
+Dos cosas que el diseño original no separaba y que el uso obligó a distinguir:
+
+- **`take()` no bloquea nunca** y es la única forma que puede usar el lazo de
+  control. Un `take` que pudiera esperar volvería a acoplar la cadencia a la
+  etapa de arriba.
+- **`take_blocking()`** existe para consumidores cuyo trabajo *es* la muestra
+  —percepción no tiene nada que hacer sin keyframe— y que por lo tanto pueden
+  dormir sin acoplar a nadie. El productor jamás espera en la condvar.
+
+El borde de eventos es un `mpsc` y no un slot, como prescribe la regla: una
+detección del JSONL perdida es un bug de auditoría. Los eventos se envían incluso
+para el keyframe que entró en pánico, porque son la traza de lo que llegó a pasar
+antes de romperse.
 
 ## Referencias
 
