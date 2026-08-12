@@ -228,6 +228,7 @@ Los cinco peldaños corridos, 2026-08-12. Números en el README de cada uno.
 |03 + inferencia|✓ verde|
 |04 + tracking y cascada|✓ verde **después de un arreglo**|
 |05 + zonas, FSM y presencia|✓ verde **después del mismo arreglo**|
+|06 el 05 con visor, para revisar|✓ verde|
 
 **El invariante se sostiene de punta a punta.** Con la pila completa el atraso
 queda en el piso del temporizador: `dline` p95 1,9–3,0 ms, `0 overruns`,
@@ -310,7 +311,11 @@ timeout 180 cargo run --release -- --config workshop/scenarios/01-ingest-only/ma
 timeout 180 cargo run --release -- --config workshop/scenarios/03-ingest-infer/mana.toml
 timeout 180 cargo run --release -- --config workshop/scenarios/04-infer-track/mana.toml
 timeout 180 cargo run --release -- --config workshop/scenarios/05-clinical/mana.toml
+./workshop/scenarios/06-clinical-viz/run-fuente.sh clip1 180
 ```
+
+El 06 no agrega capa: es el 05 con el visor, y existe para mirar lo que los
+otros sólo miden. Necesita un visor de Rerun escuchando.
 
 Si el 04 o el 05 salen raros, lo primero que hay que mirar no es el atraso sino
 `evid:` y `kf_pisados`. El atraso es síntoma; esos dos son causa. Y si un modelo

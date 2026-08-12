@@ -24,9 +24,26 @@ sospechosas. La escalera existe para que en cada punto haya como mucho una.
 |---|---|---|---|
 |01|`01-ingest-only`|RTSP → decode → JSONL|Cadencia de keyframes estable, sin reconexiones, sin frames corruptos|
 |02|`02-ingest-viz`|Bridge de Rerun|Una sola línea `viz: connected`, sin churn de reconexión|
+|03|`03-ingest-infer`|Inferencia, un modelo|Atraso del lazo visible y acotado por la latencia del modelo|
+|04|`04-infer-track`|Tracking y cascada con hijo|La compuerta del hijo gobierna y el recorte sigue al track|
+|05|`05-clinical`|Zonas, FSM, presencia, ocupancia|Cadencia en el piso del temporizador con todo encendido|
+|06|`06-clinical-viz`|*(ninguna)* — el 05 con visor|El visor no cuesta evidencia: `kf_pisados` e `img_pisadas` en cero|
 
-Los escenarios siguientes (inferencia, tracking, zonas, FSM) se agregan a medida
-que las compuertas anteriores queden verdes.
+Los seis están corridos y verdes al 2026-08-12, con los números medidos en el
+README de cada uno. El 06 es el único que no agrega una capa: existe para
+**mirar**, porque los cinco de abajo prueban que el sistema sostiene su contrato
+temporal y ninguno prueba que lo que ve sea razonable.
+
+Sin cobertura todavía: los blueprints `detect-face-pose-seg` y
+`detect-room-raw`.
+
+### La cámara de la instalación suele estar vacía
+
+Los escenarios 04, 05 y 06 no prueban lo que dicen probar sin una persona en
+escena: la cascada no corre, el FSM se queda en `idle`, y una compuerta cerrada
+por la razón correcta no se distingue de una rota. Los tres se corren también
+contra un RTSP local con una persona en cama, a la misma cadencia de keyframe
+que la cámara. El 06 lo tiene como argumento (`run-fuente.sh clip1`).
 
 ## Cómo correr un escenario
 
