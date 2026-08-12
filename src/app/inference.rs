@@ -38,10 +38,11 @@ impl PerceptionStage {
 
         let requested = self.resolve_models(config);
         let ordered = self.cascade.ordered(&requested);
+        self.count_models_gated_by_state(&ordered, config);
         let mut pending: Vec<PendingModelOutput> = Vec::new();
 
         let primary_root_valid = self.run_root_models(&ordered, fb, &mut pending);
-        self.run_child_models(&ordered, fb, config, &mut pending);
+        self.run_child_models(&ordered, fb, &mut pending);
 
         let observations = self.consolidate_and_emit(&pending, cycle.frame_number);
         let face_model_ran = pending
@@ -89,12 +90,16 @@ impl PerceptionStage {
         primary_root_valid
     }
 
-    /// Stage: run cascade children when presence gate and target allow.
+    /// Stage: run cascade children whose declared rule resuelve un recorte.
+    ///
+    /// No hay compuerta acá. La condición —clase, cantidad exacta, confianza
+    /// mínima, región— la declara el blueprint y la aplica `target_for*`; qué
+    /// modelos están habilitados lo declara el estado del FSM. Este bucle sólo
+    /// ejecuta y cuenta.
     fn run_child_models(
         &mut self,
         ordered: &[&str],
         fb: &FrameBuffer,
-        config: &PerceptionConfig,
         pending: &mut Vec<PendingModelOutput>,
     ) {
         let children: Vec<String> = ordered
@@ -103,10 +108,6 @@ impl PerceptionStage {
             .map(|model| (*model).to_owned())
             .collect();
         for model_key in children {
-            if self.presence_track_count(&config.presence_class) != 1 {
-                self.lock_metrics().tick_infer_skip(&model_key);
-                continue;
-            }
             let target = self.resolve_cascade_target(&model_key, pending, fb);
             if target.is_none() {
                 self.lock_metrics().tick_infer_skip(&model_key);
@@ -116,20 +117,29 @@ impl PerceptionStage {
         }
     }
 
-    /// Compuerta de la cascada, resuelta contra la **directiva** de control y
-    /// no contra el tracker.
+    /// Modelos que el catálogo habilita y **el estado del FSM no pidió**.
     ///
-    /// Es el borde de realimentación del lazo: el tracker vive del lado de
-    /// control y lo muta `scan()` a 5 Hz. Leerlo directo obligaría a un candado
-    /// que el hilo de inferencia podría estar sosteniendo justo cuando el lazo
-    /// tiene que ticar — el bloqueo que esta fase saca, reintroducido con otro
-    /// nombre. La directiva es una muestra: hasta un periodo vieja, y alcanza.
-    fn presence_track_count(&self, class: &str) -> usize {
-        self.directive
-            .tracks
+    /// Es una razón distinta de `skips` y hay que poder distinguirlas: un hijo
+    /// salteado por su regla vio la escena y no aplicó; un hijo apagado por el
+    /// estado nunca llegó a mirarla. Sin este contador, mover una política al
+    /// catálogo hace que un modelo deje de correr **en silencio**, y el
+    /// silencio es lo que dejó a la cascada muerta sin que nadie se enterara.
+    fn count_models_gated_by_state(&mut self, ordered: &[&str], config: &PerceptionConfig) {
+        let gated: Vec<String> = self
+            .cascade
+            .all_models()
             .iter()
-            .filter(|track| track.class.as_str() == class)
-            .count()
+            .filter(|name| self.is_model_enabled(config, name))
+            .filter(|name| !ordered.contains(&name.as_str()))
+            .cloned()
+            .collect();
+        if gated.is_empty() {
+            return;
+        }
+        let mut metrics = self.lock_metrics();
+        for name in gated {
+            metrics.tick_infer_gated(&name);
+        }
     }
 
     fn resolve_cascade_target(

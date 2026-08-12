@@ -95,6 +95,9 @@ pub struct PerModelMetrics {
     pub infer_max_us: u64,
     pub total_dets: u64,
     pub skips: u64,
+    /// Veces que el estado del FSM no pidió este modelo. Distinto de `skips`:
+    /// el modelo no llegó a mirar la escena.
+    pub gated: u64,
     pub empty: u64,
     pub conf_sum: f64,
     pub conf_min: f64,
@@ -117,6 +120,7 @@ impl Default for PerModelMetrics {
             infer_max_us: 0,
             total_dets: 0,
             skips: 0,
+            gated: 0,
             empty: 0,
             conf_sum: 0.0,
             conf_min: 0.0,
@@ -171,6 +175,7 @@ pub struct Metrics {
     pub ingest_pframes: u64,
     pub ingest_dup_keyframes: u64,
     pub infer_skips: u64,
+    pub infer_gated: u64,
     pub infer_empty: u64,
     pub infer_total_dets: u64,
     pub model_metrics: HashMap<String, PerModelMetrics>,
@@ -216,6 +221,7 @@ impl Default for Metrics {
             ingest_pframes: 0,
             ingest_dup_keyframes: 0,
             infer_skips: 0,
+            infer_gated: 0,
             infer_empty: 0,
             infer_total_dets: 0,
             model_metrics: HashMap::new(),
@@ -347,6 +353,7 @@ impl Metrics {
             ingest_pframes: self.ingest_pframes,
             ingest_dup_keyframes: self.ingest_dup_keyframes,
             infer_skips: self.infer_skips,
+            infer_gated: self.infer_gated,
             infer_empty: self.infer_empty,
             infer_total_dets: self.infer_total_dets,
             model_metrics: self.model_metrics,
@@ -401,6 +408,7 @@ pub struct MetricsReport {
     pub ingest_pframes: u64,
     pub ingest_dup_keyframes: u64,
     pub infer_skips: u64,
+    pub infer_gated: u64,
     pub infer_empty: u64,
     pub infer_total_dets: u64,
     pub model_metrics: HashMap<String, PerModelMetrics>,
@@ -644,6 +652,20 @@ impl MetricsEngine {
         self.current.slot_keyframes_dropped += keyframes;
         self.current.slot_images_dropped += images;
         self.current.slot_viz_dropped += viz;
+    }
+
+    /// El estado del FSM no pidió este modelo en este keyframe.
+    pub fn tick_infer_gated(&mut self, model_key: &str) {
+        self.current.infer_gated += 1;
+        let m = self
+            .current
+            .model_metrics
+            .entry(model_key.to_string())
+            .or_default();
+        m.gated += 1;
+        if !self.model_order.iter().any(|n| n == model_key) {
+            self.model_order.push(model_key.to_string());
+        }
     }
 
     pub fn tick_infer_skip(&mut self, model_key: &str) {

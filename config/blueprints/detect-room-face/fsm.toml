@@ -1,12 +1,16 @@
 # Face lifecycle for the person-crop detect-room-face experiment.
-# All normal states keep the same cascade models enabled; the cascade itself
-# still gates face-yolo until room cardinality is single.
+# Los estados de sesión mantienen la cascada completa; `idle` no, porque `idle`
+# es donde cae la escena cuando está vacía o cuando hay más de una persona, y
+# ahí la política es quedarse con la detección base y medir cardinalidad. La
+# regla de la cascada volvería a rechazar al hijo de todos modos: esto declara
+# la decisión en el catálogo en vez de dejarla implícita en el rechazo.
+# Mismo criterio que `config/fsm.toml`, donde `idle` ya corre un solo modelo.
 [fsm]
 initial = "idle"
 
 [fsm.states.idle]
 label = "Face idle"
-models = ["detect-fast", "face-yolo"]
+models = ["detect-fast"]
 
 [fsm.states.blind]
 label = "BLIND: No Camera Signal"

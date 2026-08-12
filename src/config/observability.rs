@@ -214,6 +214,8 @@ pub struct MetricsTextFlags {
     #[serde(default = "default_true")]
     pub infer_skips: bool,
     #[serde(default = "default_true")]
+    pub infer_gated: bool,
+    #[serde(default = "default_true")]
     pub infer_empty: bool,
 }
 
@@ -228,6 +230,7 @@ impl Default for MetricsTextFlags {
             ingest_ssrc: true,
             ingest_rtp: true,
             infer_skips: true,
+            infer_gated: true,
             infer_empty: true,
         }
     }

@@ -27,10 +27,16 @@ RAIZ="$(cd "$DIR_ESCENARIO/../../.." && pwd)"
 DIR_CORRIDA="$RAIZ/workshop/runs/06-clinical-viz/$FUENTE"
 mkdir -p "$DIR_CORRIDA"
 
+# Una corrida es evidencia de esa corrida: el log lleva su marca de tiempo y no
+# pisa al anterior. Comparar dos corridas es lo primero que se quiere hacer
+# cuando un número cambia, y no se puede comparar contra algo sobrescrito.
+SELLO="$(date -u +%Y%m%dT%H%M%SZ)"
+LOG="$DIR_CORRIDA/run-$SELLO.log"
+
 # La config efectiva se materializa completa junto a su salida: queda como
 # registro de qué se corrió exactamente, no como una diferencia que hay que
 # reconstruir después.
-CONFIG="$DIR_CORRIDA/mana.toml"
+CONFIG="$DIR_CORRIDA/mana-$SELLO.toml"
 python3 - "$DIR_ESCENARIO/mana.toml" "$CONFIG" "$URL" "$FUENTE" "${RERUN_ADDR:-}" <<'PY'
 import sys
 src, dst, url, fuente, addr = sys.argv[1:6]
@@ -51,19 +57,20 @@ PY
 echo "== fuente $FUENTE — $URL — ${DURACION}s"
 echo "== visor:  $(grep -oE 'rerun_addr = "[^"]+"' "$CONFIG")"
 echo "== config: $CONFIG"
+echo "== log:    $LOG"
 cd "$RAIZ"
 timeout "$DURACION" cargo run --release -q -- --config "$CONFIG" 2>&1 \
-  | tee "$DIR_CORRIDA/run.log" \
+  | tee "$LOG" \
   | grep -E 'viz:|cycle:|dline:|evid:|ingest:|infer:|face-yolo|detect-fast' || true
 
 echo
 echo "== compuertas"
-printf 'viz: connected      %s (esperado: 1)\n' "$(grep -c 'viz: connected' "$DIR_CORRIDA/run.log" || true)"
-printf 'reconexiones rtsp   %s (esperado: 0)\n' "$(grep -c 'rtsp reconnect attempt' "$DIR_CORRIDA/run.log" || true)"
-printf 'overruns de ciclo   %s (esperado: 0)\n' "$(grep -o '[0-9]* overruns' "$DIR_CORRIDA/run.log" | awk '{s+=$1} END{print s+0}')"
+printf 'viz: connected      %s (esperado: 1)\n' "$(grep -c 'viz: connected' "$LOG" || true)"
+printf 'reconexiones rtsp   %s (esperado: 0)\n' "$(grep -c 'rtsp reconnect attempt' "$LOG" || true)"
+printf 'overruns de ciclo   %s (esperado: 0)\n' "$(grep -o '[0-9]* overruns' "$LOG" | awk '{s+=$1} END{print s+0}')"
 # El costo del visor sobre la pila completa. No es pasa/no pasa: es el número
 # que este escenario produce, y se compara contra el 05 corriendo sin visor.
-grep -oE 'late min [0-9.]+ms p50 [0-9.]+ms p95 [0-9.]+ms max [0-9.]+ms' "$DIR_CORRIDA/run.log" \
+grep -oE 'late min [0-9.]+ms p50 [0-9.]+ms p95 [0-9.]+ms max [0-9.]+ms' "$LOG" \
   | awk '{if ($9+0 > m) m=$9+0} END{printf "atraso del lazo     %.1fms peor caso (05 sin visor: 6,4ms)\n", m}'
 # `viz_pisados` no es una compuerta: el visor recibe **muestras**, y que se
 # pise una significa que el bridge no llegó a tomarla antes de la siguiente.
@@ -71,9 +78,9 @@ grep -oE 'late min [0-9.]+ms p50 [0-9.]+ms p95 [0-9.]+ms max [0-9.]+ms' "$DIR_CO
 # número que este escenario produce. Los otros dos sí son compuertas: si
 # percepción o control empiezan a pisar, el visor está costando evidencia.
 printf 'viz_pisados         %s (cuántas muestras no llegaron al visor)\n' \
-  "$(grep -oE 'viz_pisados:[0-9]+' "$DIR_CORRIDA/run.log" | awk -F: '{s+=$2} END{print s+0}')"
+  "$(grep -oE 'viz_pisados:[0-9]+' "$LOG" | awk -F: '{s+=$2} END{print s+0}')"
 for f in kf_pisados img_pisadas; do
   printf '%-19s %s (esperado: 0)\n' "$f" \
-    "$(grep -oE "$f:[0-9]+" "$DIR_CORRIDA/run.log" | awk -F: '{s+=$2} END{print s+0}')"
+    "$(grep -oE "$f:[0-9]+" "$LOG" | awk -F: '{s+=$2} END{print s+0}')"
 done
 printf 'transiciones fsm    %s\n' "$(grep -hc '"type":"fsm"' "$DIR_CORRIDA"/*.jsonl 2>/dev/null | awk '{s+=$1} END{print s+0}')"

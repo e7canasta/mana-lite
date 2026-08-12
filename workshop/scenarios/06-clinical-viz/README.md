@@ -91,38 +91,48 @@ no un pasa/no pasa.
 
 ## Números medidos
 
-Corrida del 2026-08-12, `clip1`, 180 s, 34 ventanas de 5 s.
+Corrida del 2026-08-12, `clip1`, 150 s, 29 ventanas de 5 s.
 
 |Magnitud|06 con visor|05 sin visor|
 |---|---|---|
-|`dline` p95|2,1–3,0 ms|1,9–3,0 ms|
-|`dline` max / missed|4,3 ms / **0**|6,4 ms / 5|
-|`cycle` p95 / overruns|201 ms / **0**|202 ms / 0|
-|`evid` p50 / max|867 / 1274 ms|865 / 1272 ms|
-|keyframes|176 / 176|180 / 180|
-|`kf_pisados`, `img_pisadas`|**0**|0|
-|`viz_pisados`|**0**|—|
-|transiciones FSM|24|24|
-|`in_bed`|772 scans|772 scans|
+|`dline` p95|1,2–3,4 ms|1,9–3,0 ms|
+|`dline` max / missed|6,7 ms / 2|6,4 ms / 5|
+|`cycle` p95 / overruns|202 ms / **0**|202 ms / 0|
+|`evid` p50 / max|877 / 1285 ms|865 / 1272 ms|
+|keyframes|150 / 150|180 / 180|
+|`kf_pisados`, `img_pisadas`|**0, 0**|0, 0|
+|transiciones FSM|20|24|
+|`in_bed`|634 scans|772 scans|
 
-**El visor no cuesta cadencia medible sobre la pila completa.** Con `jpeg` y un
-keyframe por segundo, el bridge tiene un segundo entero para drenar cada muestra
-y le sobra: cero muestras pisadas en 176 keyframes.
+**El visor no cuesta cadencia ni evidencia.** Cero `kf_pisados` y cero
+`img_pisadas`: ni percepción ni el lazo perdieron nada por tenerlo prendido.
 
-Esto contrasta con la Fase 0, donde el visor bloqueaba el lazo 41 segundos y
-forzaba 147 reconexiones (`ARCHITECTURE.md` §3.1). No es que el bridge haya
-mejorado: el lazo dejó de esperarlo.
+Contrasta con la Fase 0, donde el visor bloqueaba el lazo 41 segundos y forzaba
+147 reconexiones (`ARCHITECTURE.md` §3.1). No es que el bridge haya mejorado: el
+lazo dejó de esperarlo.
 
-### Un número que apareció y no era del sistema
+### `viz_pisados`: medido, no explicado
 
-Una corrida anterior del mismo escenario dio **`viz_pisados: 55`**, cinco por
-ventana en 11 de 24 ventanas. Esa corrida arrancó con `cargo run` recompilando
-el binario, y el compilador se comió la máquina durante el primer tercio. La
-corrida limpia, con el binario ya construido, dio cero.
+Esta corrida dio **127** muestras pisadas, unas 5 por ventana, repartidas parejo
+de punta a punta. Una corrida anterior del mismo escenario, contra la misma
+fuente y con el mismo visor, dio **0**.
 
-Queda anotado porque el síntoma es indistinguible de un bridge que no da abasto,
-y la próxima vez que aparezca lo primero que hay que preguntar es **qué más
-estaba corriendo en la máquina** — no cuánto pesa el payload.
+No sé por qué. Las hipótesis que tuve —el compilador comiéndose la máquina
+durante la corrida, el payload de la pila completa contra el del 02— no las
+puedo sostener: la corrida de cero también tenía la pila completa, y la de 127
+no tenía nada más corriendo en la máquina. **No está explicado, y queda escrito
+así en vez de con la primera explicación que sonaba bien.**
+
+Lo que sí se puede afirmar: no le cuesta nada al sistema. En las dos corridas
+`kf_pisados` e `img_pisadas` quedaron en cero, o sea que la variabilidad vive
+del lado del bridge y del visor, no del lado del lazo. Que se pise una muestra
+es la degradación correcta — el visor recibe muestras, no una cola.
+
+Para la próxima, lo que hay que aislar es **el consumidor**: la misma corrida
+con el visor cerrado, y después con un visor recién abierto contra uno que ya
+acumuló varias corridas. Por eso el runner ahora guarda un log por corrida con
+su marca de tiempo: la corrida de cero se perdió al sobrescribirse, y sin las
+dos al lado no hay comparación posible.
 
 ### Lo que sería un hallazgo
 

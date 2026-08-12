@@ -245,6 +245,11 @@ fn log_infer_line(report: &MetricsReport, model_order: &[String], config: &Metri
     if config.flags.infer_skips && report.infer_skips > 0 {
         flags.push(format!("skips:{}", report.infer_skips));
     }
+    // Razón distinta de `skips`, y por eso contador distinto: el modelo no fue
+    // salteado por su regla, el estado del FSM no lo pidió.
+    if config.flags.infer_gated && report.infer_gated > 0 {
+        flags.push(format!("apagados:{}", report.infer_gated));
+    }
     if config.flags.infer_empty && report.infer_empty > 0 {
         flags.push(format!("empty:{}", report.infer_empty));
     }
@@ -294,7 +299,12 @@ fn log_per_model(name: &str, m: &PerModelMetrics, window_s: u64, keyframes: u64)
     };
     let flags: Vec<String> = vec![
         if m.skips > 0 {
-            Some("skip".to_string())
+            Some(format!("skip:{}", m.skips))
+        } else {
+            None
+        },
+        if m.gated > 0 {
+            Some(format!("apagado:{}", m.gated))
         } else {
             None
         },

@@ -5,9 +5,9 @@
 El seguimiento temporal y la cascada con hijo funcionan, y **el lazo cerrado
 gobierna**: los tracks que publica control deciden si corre el modelo hijo.
 
-Tracking y cascada entran juntos porque no son separables. La compuerta del hijo
-pregunta cuántos tracks de persona hay (`presence_track_count`, en
-`src/app/inference.rs`), así que una cascada con hijo **requiere** tracker.
+Tracking y cascada entran juntos porque no son separables: la regla del hijo
+pide una cantidad exacta de tracks de persona confirmados, así que una cascada
+con hijo **requiere** tracker.
 
 ## Qué está activo
 
@@ -33,10 +33,15 @@ que consultarlos. Acá el lazo se cierra de verdad.
 ```
 [control]  tracker.current_tracks()  ──► Slot<ControlDirective>
                                               │
-[percepción]  ¿hay exactamente 1 track de persona?
+[percepción]  la regla del blueprint: ¿exactamente 1 track de persona
+              confirmado, de la clase y confianza que pide el hijo?
                  sí → corre face-yolo, recorta sobre ese track
                  no → lo saltea y lo cuenta en infer_skips
 ```
+
+La condición la declara el blueprint (`requires_exact_count`, `requires_class`,
+`requires_min_confidence`) y la resuelve `cascade.rs`. No hay una compuerta
+equivalente en el código: hubo una y se borró, ver HANDOFF §11.
 
 ## Cómo correr
 
@@ -48,7 +53,7 @@ timeout 180 cargo run --release -- --config workshop/scenarios/04-infer-track/ma
 
 |Criterio|Qué se espera|
 |---|---|
-|La compuerta gobierna|`skips` en la línea de `face-yolo` **sube** cuando no hay exactamente una persona, y baja a 0 cuando la hay|
+|La regla gobierna|`skips` en la línea de `face-yolo` **sube** cuando no hay exactamente una persona, y baja a 0 cuando la hay. Si el modelo no corrió porque el estado del FSM no lo pidió, sale como `apagados:` y no como `skips:` — son razones distintas|
 |El recorte sigue al track|`roi:[...]` de `face-yolo` se mueve entre ventanas — un ROI congelado con la persona moviéndose significa que la directiva no está llegando|
 |Identidad estable|`track_id` en los eventos `entity` no debería renumerarse con una sola persona quieta|
 |Cadencia intacta|`dline:` en el piso del temporizador y `0 missed`, igual que en el 03|
@@ -99,8 +104,9 @@ cascada dejando de entrar en el intervalo de keyframe— **no ocurrió**.
 cuadro y `detect-fast` detectándola con 0,93 de confianza en todos ellos. La
 compuerta no se cerraba por la escena: no podía abrirse nunca.
 
-`presence_track_count` cuenta tracks confirmados en la directiva, y el JSONL
-mide `confirmed_count = 0` en **894 de 894 scans**. La causa estaba en
+La compuerta de entonces —`presence_track_count`, después borrada por estar
+hardcodeada— contaba tracks confirmados en la directiva, y el JSONL mide
+`confirmed_count = 0` en **894 de 894 scans**. La causa estaba en
 `Tracker::age_unmatched`, que ponía `hit_streak = 0` en cada scan sin medición.
 La confirmación pide una racha de scans *consecutivos*, y el lazo scanea a 5 Hz
 mientras la evidencia llega a 1 Hz: cuatro de cada cinco scans reseteaban la

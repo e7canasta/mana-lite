@@ -268,28 +268,41 @@ mediciones; `max_age_ms` y `tentative_max_age_ms` siguen en tiempo de pared.
 `fsm_events`, `zone_events` y `face_dwell_events` en `false`. El criterio de
 aceptación del 05 pide "transiciones en el JSONL". Ver §11.
 
-## 11. Lo que queda abierto, y es política
+## 11. La política, sacada del código
 
-Tres decisiones acopladas, ninguna urgente, ninguna de mecanismo:
+Las tres cosas que estaban hardcodeadas en percepción ya están declaradas donde
+corresponde:
 
-1. **La compuerta hardcodeada.** `src/app/inference.rs:106`
-   (`presence_track_count != 1`) duplica `requires_exact_count = 1` del
-   blueprint, pero contra tracks y usando `[presence].class` en vez de
-   `requires_class`. Es la única de las cuatro compuertas de la cascada que no
-   está declarada en ningún catálogo.
-2. **`[fsm.states.idle] models`.** Los catálogos con cascada declaran
-   `["detect-fast", "face-yolo"]` en `idle`. Si la política es "con más de una
-   persona, sólo el detector padre", eso va acá — hoy lo ejecuta la compuerta
-   hardcodeada, que tapa el hueco del catálogo.
-3. **El contador.** Si la política se mueve al FSM, el hijo deja de entrar en
-   `run_child_models` y `skips` deja de contarlo. `skips:177` fue lo que delató
-   todo esto; conviene decidir cómo se distingue "salteado por regla" de "no
-   habilitado por estado" **antes** de romper el instrumento.
+1. **La compuerta de la cascada.** `presence_track_count != 1` en
+   `src/app/inference.rs` se borró. Duplicaba `requires_exact_count = 1` del
+   blueprint contra otra fuente de clase y sin estar declarada en ningún
+   catálogo. La regla del blueprint ya hacía ese trabajo; ahora lo hace sola, y
+   `tests/cascade_gate_is_declarative.rs` la fija contra los tres blueprints de
+   producción.
+2. **La cardinalidad, en el catálogo.** `[fsm.states.idle]` de
+   `detect-room-face` declaraba `["detect-fast", "face-yolo"]`. Ahora declara
+   sólo el padre, que es la política: `idle` es donde cae la escena cuando está
+   vacía o cuando hay más de una persona, y ahí se mide cardinalidad con la
+   detección base. Es lo que `config/fsm.toml` ya hacía.
+3. **El contador, antes de moverla.** Un modelo que el estado no pide no entra
+   en `run_child_models`, así que `skips` no lo contaría: dejaría de correr en
+   silencio. Se agregó `apagados:` en la línea `infer:` y `apagado:N` en la
+   línea por modelo, con su flag en `[metrics.text.flags]`. Medido en el 06:
+   `apagados:4` aparece exactamente en la ventana donde el FSM estaba en `idle`.
 
-Y una observación de mecanismo, para cuando se toque: `TrackerConfig::default()`
-trae `tentative_max_age_ms = 600`, más corto que un intervalo de keyframe. Un
-track tentativo con esos valores no llega a su segunda medición. Los escenarios
-lo pisan con 6000; el default no es alcanzable en este sistema.
+**Sigue abierto**, y no bloquea nada:
+
+- **Los eventos clínicos en `config/metrics.toml`.** `fsm_events`, `zone_events`
+  y `face_dwell_events` vienen en `false` en el archivo de mecanismo, y por eso
+  el 05 no podía verificar su propio criterio. El 06 se trae su propio archivo
+  con las desviaciones. Falta decidir si el default del dispositivo cambia.
+- **`viz_pisados` sin explicar.** Dos corridas del 06 contra la misma fuente y
+  el mismo visor dieron 0 y 127. No le cuesta nada al sistema —`kf_pisados` e
+  `img_pisadas` en cero en las dos— pero no está entendido. Ver el README del 06.
+- **`TrackerConfig::default()`** trae `tentative_max_age_ms = 600`, más corto
+  que un intervalo de keyframe: un track tentativo con el default no llega a su
+  segunda medición. Los escenarios lo pisan con 6000; el default no es
+  alcanzable en este sistema.
 
 ## 12. La compuerta del circuito no cubre los tiers
 

@@ -145,4 +145,6 @@ tracker no confirmaba ningún track. El ciclo de vida de la cara no arrancaba.
 
 Los números de la fila "después del arreglo" son con esa corrección aplicada y
 **sin tocar ninguna otra cosa**: mismos catálogos, mismo blueprint, mismos
-umbrales.
+umbrales. Después de eso se sacó la compuerta hardcodeada y la política de
+cardinalidad pasó a `[fsm.states.idle]`, sin cambiar el comportamiento (HANDOFF
+§11). Para revisar la pila mirándola, el [escenario 06](../06-clinical-viz/README.md).
