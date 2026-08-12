@@ -158,6 +158,15 @@ pub(super) fn write_metrics_event(event: &Event, buf: &mut Vec<u8>) {
     append_field(buf, "keyframes_dropped", r.keyframes_dropped);
     append_field(buf, "pframes_dropped", r.pframes_dropped);
     append_field(buf, "inferences", r.inferences);
+    append_field(buf, "infer_skips", r.infer_skips);
+    append_field(buf, "infer_not_due", r.infer_not_due);
+    append_field(buf, "infer_due_but_gated", r.infer_due_but_gated);
+    append_field(buf, "infer_due_but_no_target", r.infer_due_but_no_target);
+    append_field(buf, "infer_gated", r.infer_gated);
+    append_field(buf, "infer_urgent", r.infer_urgent);
+    append_field(buf, "infer_urgent_expired", r.infer_urgent_expired);
+    append_field(buf, "infer_empty", r.infer_empty);
+    append_field(buf, "infer_total_dets", r.infer_total_dets);
     append_field(buf, "infer_total_ms", r.infer_total_ms);
     append_field(buf, "infer_min_ms", r.infer_min_ms);
     append_field(buf, "infer_max_ms", r.infer_max_ms);
@@ -198,6 +207,22 @@ pub(super) fn write_metrics_models(
         }
         append_field(buf, "dets", m.total_dets);
         append_field(buf, "skips", m.skips);
+        append_field(buf, "not_due", m.not_due);
+        append_field(buf, "due_but_gated", m.due_but_gated);
+        append_field(buf, "due_but_no_target", m.due_but_no_target);
+        append_field(buf, "urgent", m.urgent);
+        append_field(buf, "urgent_expired", m.urgent_expired);
+        append_field(buf, "interval_min_ms", m.interval_min_ms);
+        append_field(buf, "gap_samples", m.gap_samples);
+        append_field(buf, "gap_min_ms", m.gap_min_ms);
+        append_field(buf, "gap_p50_ms", m.gap_p50_ms);
+        append_field(buf, "gap_p95_ms", m.gap_p95_ms);
+        append_field(buf, "gap_max_ms", m.gap_max_ms);
+        append_field(buf, "due_late_samples", m.due_late_samples);
+        append_field(buf, "due_late_min_ms", m.due_late_min_ms);
+        append_field(buf, "due_late_p50_ms", m.due_late_p50_ms);
+        append_field(buf, "due_late_p95_ms", m.due_late_p95_ms);
+        append_field(buf, "due_late_max_ms", m.due_late_max_ms);
         // Razón distinta de `skips`, y por eso clave distinta: el modelo no fue
         // salteado por su regla, el estado del FSM no lo pidió. Sin separarlas,
         // una autopsia no puede distinguir "la escena no aplicaba" de "la
@@ -265,6 +290,15 @@ mod tests {
                 total_dets: 5,
                 skips: 3,
                 gated: 11,
+                interval_min_ms: 2_000,
+                gap_samples: 7,
+                gap_p50_ms: 2_100,
+                gap_p95_ms: 3_200,
+                gap_max_ms: 4_000,
+                due_late_samples: 7,
+                due_late_p50_ms: 100,
+                due_late_p95_ms: 900,
+                due_late_max_ms: 1_200,
                 empty: 1,
                 ..PerModelMetrics::default()
             },
@@ -276,6 +310,14 @@ mod tests {
         assert!(json.contains(r#""skips":3"#), "falta `skips` en {json}");
         assert!(json.contains(r#""gated":11"#), "falta `gated` en {json}");
         assert!(json.contains(r#""calls":7"#), "falta `calls` en {json}");
+        assert!(
+            json.contains(r#""gap_p95_ms":3200"#),
+            "falta gap p95 en {json}"
+        );
+        assert!(
+            json.contains(r#""due_late_max_ms":1200"#),
+            "falta atraso contra next_due en {json}"
+        );
         assert!(
             json.contains(r#""min_ms":"#),
             "con llamadas tiene que haber mínimo"

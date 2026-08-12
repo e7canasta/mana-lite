@@ -38,11 +38,11 @@ impl PerceptionStage {
 
         let requested = self.resolve_models(config);
         let ordered = self.cascade.ordered(&requested);
-        self.count_models_gated_by_state(&ordered, config);
+        self.count_models_gated_by_state(&ordered, config, cycle.now);
         let mut pending: Vec<PendingModelOutput> = Vec::new();
 
-        let primary_root_valid = self.run_root_models(&ordered, fb, &mut pending);
-        self.run_child_models(&ordered, fb, &mut pending);
+        let primary_root_valid = self.run_root_models(&ordered, fb, &mut pending, cycle.now);
+        self.run_child_models(&ordered, fb, &mut pending, cycle.now);
 
         let observations = self.consolidate_and_emit(&pending, cycle.frame_number);
         let face_model_ran = pending
@@ -74,6 +74,7 @@ impl PerceptionStage {
         ordered: &[&str],
         fb: &FrameBuffer,
         pending: &mut Vec<PendingModelOutput>,
+        now: Instant,
     ) -> bool {
         let roots: Vec<String> = ordered
             .iter()
@@ -82,6 +83,13 @@ impl PerceptionStage {
             .collect();
         let mut primary_root_valid = false;
         for model_key in roots {
+            if !self.cascade.is_due(&model_key, now) {
+                let interval = self.cascade.interval_min_ms(&model_key).unwrap_or(0);
+                let mut metrics = self.lock_metrics();
+                metrics.set_model_interval(&model_key, interval);
+                metrics.tick_infer_not_due(&model_key);
+                continue;
+            }
             let valid = self.run_scheduled_model(&model_key, None, fb, pending);
             if model_key == self.primary_model {
                 primary_root_valid = valid;
@@ -101,6 +109,7 @@ impl PerceptionStage {
         ordered: &[&str],
         fb: &FrameBuffer,
         pending: &mut Vec<PendingModelOutput>,
+        now: Instant,
     ) {
         let children: Vec<String> = ordered
             .iter()
@@ -108,9 +117,20 @@ impl PerceptionStage {
             .map(|model| (*model).to_owned())
             .collect();
         for model_key in children {
+            if !self.cascade.is_due(&model_key, now) {
+                let interval = self.cascade.interval_min_ms(&model_key).unwrap_or(0);
+                let mut metrics = self.lock_metrics();
+                metrics.set_model_interval(&model_key, interval);
+                metrics.tick_infer_not_due(&model_key);
+                continue;
+            }
             let target = self.resolve_cascade_target(&model_key, pending, fb);
             if target.is_none() {
-                self.lock_metrics().tick_infer_skip(&model_key);
+                let interval = self.cascade.interval_min_ms(&model_key).unwrap_or(0);
+                let mut metrics = self.lock_metrics();
+                metrics.set_model_interval(&model_key, interval);
+                metrics.tick_infer_skip(&model_key);
+                metrics.tick_infer_due_but_no_target(&model_key);
                 continue;
             }
             self.run_scheduled_model(&model_key, target, fb, pending);
@@ -124,7 +144,12 @@ impl PerceptionStage {
     /// estado nunca llegó a mirarla. Sin este contador, mover una política al
     /// catálogo hace que un modelo deje de correr **en silencio**, y el
     /// silencio es lo que dejó a la cascada muerta sin que nadie se enterara.
-    fn count_models_gated_by_state(&mut self, ordered: &[&str], config: &PerceptionConfig) {
+    fn count_models_gated_by_state(
+        &mut self,
+        ordered: &[&str],
+        config: &PerceptionConfig,
+        now: Instant,
+    ) {
         let gated: Vec<String> = self
             .cascade
             .all_models()
@@ -138,7 +163,13 @@ impl PerceptionStage {
         }
         let mut metrics = self.lock_metrics();
         for name in gated {
+            let interval = self.cascade.interval_min_ms(&name).unwrap_or(0);
+            let due = self.cascade.is_due(&name, now);
+            metrics.set_model_interval(&name, interval);
             metrics.tick_infer_gated(&name);
+            if due {
+                metrics.tick_infer_due_but_gated(&name);
+            }
         }
     }
 
@@ -252,6 +283,11 @@ impl PerceptionStage {
             .is_some_and(|c| c.crop_type == CropType::Static);
         let crop_rect = self.resolve_crop_rect(model_key, target, fb);
         let manual_crop = if is_static { None } else { crop_rect };
+        // Mark the attempt before entering the synchronous backend so a failed
+        // model cannot be retried on every incoming keyframe.
+        if let Some(timing) = self.cascade.mark_started(model_key, Instant::now()) {
+            self.lock_metrics().tick_inference_start(model_key, timing);
+        }
         let Some(mut output) = self.infer.run(model_key, &fb.rgb, fb.w, fb.h, manual_crop) else {
             return false;
         };

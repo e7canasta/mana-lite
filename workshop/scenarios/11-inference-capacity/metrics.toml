@@ -1,0 +1,42 @@
+[metrics]
+report_interval_s = 60
+
+[metrics.text]
+ingest_line = true
+infer_summary = true
+per_model_lines = true
+cycle_line = true
+deadline_line = true
+evidence_line = true
+keyframe_gap_line = true
+
+[metrics.text.flags]
+ingest_pframes = true
+ingest_dup = true
+ingest_keyframe_drops = true
+ingest_timeouts = true
+ingest_reconnect = true
+ingest_ssrc = true
+ingest_rtp = true
+infer_skips = true
+infer_not_due = true
+infer_due_but_gated = true
+infer_due_but_no_target = true
+infer_gated = true
+infer_urgent = true
+infer_urgent_expired = true
+infer_empty = true
+
+[metrics.jsonl]
+frame_events = false
+detection_events = false
+presence_events = false
+face_dwell_events = false
+scene_signals_events = false
+zone_events = false
+fsm_events = false
+metrics_event = true
+per_model_in_window = true
+class_counts_in_window = false
+class_per_frame_stats = false
+depth_events = false

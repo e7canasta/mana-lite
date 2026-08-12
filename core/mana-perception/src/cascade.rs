@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::time::Instant;
 
 use serde::Deserialize;
 
@@ -33,6 +34,9 @@ pub struct CascadeRule {
     pub requires_region: Option<String>,
     #[serde(default)]
     pub requires_region_coverage: Option<f32>,
+    /// Minimum time between starts. Zero means every eligible keyframe.
+    #[serde(default)]
+    pub interval_min_ms: u64,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -177,12 +181,25 @@ struct CascadeEntry {
     requires_min_area_ratio: Option<f32>,
     requires_region: Option<String>,
     requires_region_coverage: Option<f32>,
+    interval_min_ms: u64,
+    last_started_at: Option<Instant>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct CascadeTarget {
     pub id: Option<u64>,
     pub bbox: [f32; 4],
+}
+
+/// Timing observed when a model is admitted by the cooperative scheduler.
+///
+/// `gap` is measured between actual starts. `due_late` is only meaningful for
+/// a positive interval and measures the delay after the model's next due time.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CascadeStartTiming {
+    pub interval_min_ms: u64,
+    pub gap: Option<std::time::Duration>,
+    pub due_late: Option<std::time::Duration>,
 }
 
 pub struct CascadeScheduler {
@@ -216,6 +233,8 @@ impl CascadeScheduler {
                     requires_min_area_ratio: rule.requires_min_area_ratio,
                     requires_region: rule.requires_region.clone(),
                     requires_region_coverage: rule.requires_region_coverage,
+                    interval_min_ms: rule.interval_min_ms,
+                    last_started_at: None,
                 },
             );
         }
@@ -256,6 +275,48 @@ impl CascadeScheduler {
         self.entries
             .get(model)
             .is_some_and(|entry| entry.same_frame)
+    }
+
+    /// Returns whether a model may start on this scheduler tick.
+    ///
+    /// This is a cooperative interval, not a deadline. A late model is run at
+    /// most once when the next fresh keyframe reaches the perception stage; the
+    /// scheduler never catches up with a burst of invocations.
+    pub fn is_due(&self, model: &str, now: Instant) -> bool {
+        let Some(entry) = self.entries.get(model) else {
+            return false;
+        };
+        let Some(last_started_at) = entry.last_started_at else {
+            return true;
+        };
+        entry.interval_min_ms == 0
+            || now.saturating_duration_since(last_started_at).as_millis()
+                >= u128::from(entry.interval_min_ms)
+    }
+
+    /// Records the start of an actual model attempt and returns its timing.
+    ///
+    /// The timestamp is committed before the backend call so a failing model
+    /// cannot be retried on every incoming keyframe in a tight loop.
+    pub fn mark_started(&mut self, model: &str, now: Instant) -> Option<CascadeStartTiming> {
+        let entry = self.entries.get_mut(model)?;
+        let gap = entry
+            .last_started_at
+            .map(|last_started_at| now.saturating_duration_since(last_started_at));
+        let due_late = gap
+            .filter(|_| entry.interval_min_ms > 0)
+            .map(|gap| gap.saturating_sub(std::time::Duration::from_millis(entry.interval_min_ms)));
+        let timing = CascadeStartTiming {
+            interval_min_ms: entry.interval_min_ms,
+            gap,
+            due_late,
+        };
+        entry.last_started_at = Some(now);
+        Some(timing)
+    }
+
+    pub fn interval_min_ms(&self, model: &str) -> Option<u64> {
+        self.entries.get(model).map(|entry| entry.interval_min_ms)
     }
 
     pub fn target_for_detections(
@@ -412,6 +473,7 @@ fn bbox_region_coverage(bbox: &[f32; 4], region: &[f32; 4]) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
 
     fn gate_obs(
         id: u64,
@@ -445,6 +507,7 @@ mod tests {
                 requires_min_area_ratio: None,
                 requires_region: None,
                 requires_region_coverage: None,
+                interval_min_ms: 0,
             },
             CascadeRule {
                 model: "pose-standard".into(),
@@ -456,6 +519,7 @@ mod tests {
                 requires_min_area_ratio: None,
                 requires_region: None,
                 requires_region_coverage: None,
+                interval_min_ms: 0,
             },
         ]
     }
@@ -473,6 +537,7 @@ mod tests {
                 requires_min_area_ratio: None,
                 requires_region: None,
                 requires_region_coverage: None,
+                interval_min_ms: 0,
             },
             CascadeRule {
                 model: "face-yolo".into(),
@@ -484,6 +549,7 @@ mod tests {
                 requires_min_area_ratio: None,
                 requires_region: None,
                 requires_region_coverage: None,
+                interval_min_ms: 0,
             },
         ]);
         let one_person = [crate::detection::Detection {
@@ -534,6 +600,7 @@ mod tests {
                 requires_min_area_ratio: None,
                 requires_region: None,
                 requires_region_coverage: None,
+                interval_min_ms: 0,
             },
             CascadeRule {
                 model: "face-yolo".into(),
@@ -545,6 +612,7 @@ mod tests {
                 requires_min_area_ratio: Some(0.1),
                 requires_region: None,
                 requires_region_coverage: None,
+                interval_min_ms: 0,
             },
         ]);
         let low_confidence = [crate::detection::Detection {
@@ -579,6 +647,118 @@ mod tests {
         let requested: Vec<String> = vec!["pose-standard".into(), "detect-fast".into()];
         let result = cascade.ordered(&requested);
         assert_eq!(result, vec!["detect-fast", "pose-standard"]);
+    }
+
+    #[test]
+    fn interval_is_due_before_first_run() {
+        let cascade = CascadeScheduler::from_rules(&[CascadeRule {
+            model: "seg-standard".into(),
+            requires: None,
+            requires_class: None,
+            requires_exact_count: None,
+            same_frame: false,
+            requires_min_confidence: None,
+            requires_min_area_ratio: None,
+            requires_region: None,
+            requires_region_coverage: None,
+            interval_min_ms: 2_000,
+        }]);
+        let start = Instant::now();
+
+        assert!(cascade.is_due("seg-standard", start));
+    }
+
+    #[test]
+    fn interval_is_not_due_until_minimum_elapsed() {
+        let mut cascade = CascadeScheduler::from_rules(&[CascadeRule {
+            model: "seg-standard".into(),
+            requires: None,
+            requires_class: None,
+            requires_exact_count: None,
+            same_frame: false,
+            requires_min_confidence: None,
+            requires_min_area_ratio: None,
+            requires_region: None,
+            requires_region_coverage: None,
+            interval_min_ms: 2_000,
+        }]);
+        let start = Instant::now();
+        cascade.mark_started("seg-standard", start);
+
+        assert!(!cascade.is_due("seg-standard", start + Duration::from_millis(1_999)));
+        assert!(cascade.is_due("seg-standard", start + Duration::from_millis(2_000)));
+    }
+
+    #[test]
+    fn start_timing_reports_real_gap_and_lateness_after_next_due() {
+        let mut cascade = CascadeScheduler::from_rules(&[CascadeRule {
+            model: "seg-standard".into(),
+            requires: None,
+            requires_class: None,
+            requires_exact_count: None,
+            same_frame: false,
+            requires_min_confidence: None,
+            requires_min_area_ratio: None,
+            requires_region: None,
+            requires_region_coverage: None,
+            interval_min_ms: 2_000,
+        }]);
+        let start = Instant::now();
+
+        let first = cascade.mark_started("seg-standard", start).unwrap();
+        assert_eq!(first.interval_min_ms, 2_000);
+        assert_eq!(first.gap, None);
+        assert_eq!(first.due_late, None);
+
+        let second = cascade
+            .mark_started("seg-standard", start + Duration::from_millis(2_350))
+            .unwrap();
+        assert_eq!(second.gap, Some(Duration::from_millis(2_350)));
+        assert_eq!(second.due_late, Some(Duration::from_millis(350)));
+    }
+
+    #[test]
+    fn a_late_model_has_one_due_run_without_catch_up() {
+        let mut cascade = CascadeScheduler::from_rules(&[CascadeRule {
+            model: "seg-standard".into(),
+            requires: None,
+            requires_class: None,
+            requires_exact_count: None,
+            same_frame: false,
+            requires_min_confidence: None,
+            requires_min_area_ratio: None,
+            requires_region: None,
+            requires_region_coverage: None,
+            interval_min_ms: 2_000,
+        }]);
+        let start = Instant::now();
+        cascade.mark_started("seg-standard", start);
+        let late = start + Duration::from_secs(10);
+
+        assert!(cascade.is_due("seg-standard", late));
+        cascade.mark_started("seg-standard", late);
+        assert!(!cascade.is_due("seg-standard", late + Duration::from_millis(1)));
+    }
+
+    #[test]
+    fn zero_interval_preserves_every_keyframe_behavior() {
+        let mut cascade = CascadeScheduler::from_rules(&[CascadeRule {
+            model: "detect-fast".into(),
+            requires: None,
+            requires_class: None,
+            requires_exact_count: None,
+            same_frame: false,
+            requires_min_confidence: None,
+            requires_min_area_ratio: None,
+            requires_region: None,
+            requires_region_coverage: None,
+            interval_min_ms: 0,
+        }]);
+        let start = Instant::now();
+        cascade.mark_started("detect-fast", start);
+
+        assert!(cascade.is_due("detect-fast", start));
+        assert!(cascade.is_due("detect-fast", start + Duration::from_millis(1)));
     }
 
     #[test]
@@ -669,6 +849,7 @@ mod tests {
                 requires_min_area_ratio: None,
                 requires_region: None,
                 requires_region_coverage: None,
+                interval_min_ms: 0,
             },
             CascadeRule {
                 model: "pose-standard".into(),
@@ -680,6 +861,7 @@ mod tests {
                 requires_min_area_ratio: Some(0.01),
                 requires_region: Some("bed".into()),
                 requires_region_coverage: Some(0.5),
+                interval_min_ms: 0,
             },
         ];
         let regions = HashMap::from([(

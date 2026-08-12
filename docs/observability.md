@@ -103,6 +103,12 @@ ingest_reconnect = true
 ingest_ssrc = true
 ingest_rtp = true
 infer_skips = true
+infer_not_due = true
+infer_due_but_gated = true
+infer_due_but_no_target = true
+infer_gated = true
+infer_urgent = true
+infer_urgent_expired = true
 infer_empty = true
 ```
 
@@ -124,7 +130,10 @@ infer:  2.0 Hz — 10 calls in 5s | 38ms avg | 2-145ms | 12 dets | skips:2, empt
 | `Xms avg` | Latencia promedio |
 | `X-Xms` | Rango min-max de latencia en la ventana |
 | `N/Mfr` | N detecciones totales / M frames en la ventana |
-| `skip,empty` | Flags: saltos del cascade, inferencias vacias |
+| `skip,not_due,due_but_gated,due_but_no_target` | Razones por las que un modelo debido no produjo una llamada |
+| `gap p50/p95/max` | Tiempo entre inicios reales del mismo modelo |
+| `due_late p50/p95/max` | Atraso respecto del siguiente vencimiento del intervalo |
+| `urgent,urgent_expired` | Ejecuciones urgentes y solicitudes vencidas; Sprint 2 los deja en cero |
 
 ---
 

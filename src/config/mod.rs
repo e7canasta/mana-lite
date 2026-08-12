@@ -132,14 +132,17 @@ mod tests {
                 .validate(&model_enabled_map(&models), "detect-fast")
                 .is_empty()
         );
-        assert_eq!(
-            config
-                .rules
-                .iter()
-                .find(|r| r.model == "pose-standard")
-                .and_then(|r| r.requires_region.as_deref()),
-            Some("bed")
-        );
+        // The fallback cascade mirrors the blueprint pattern (the face path is
+        // the reference): one confirmed person, no region gate.
+        let pose = config
+            .rules
+            .iter()
+            .find(|r| r.model == "pose-standard")
+            .expect("pose-standard rule");
+        assert_eq!(pose.requires.as_deref(), Some("detect-fast"));
+        assert_eq!(pose.requires_exact_count, Some(1));
+        assert_eq!(pose.requires_region, None);
+        assert!(!pose.same_frame);
     }
 
     #[test]
@@ -148,6 +151,9 @@ mod tests {
         let enabled = model_enabled_map(&models);
         for path in [
             "config/blueprints/detect-face/blueprint.toml",
+            "config/blueprints/detect-pose/blueprint.toml",
+            "config/blueprints/detect-seg/blueprint.toml",
+            "config/blueprints/detect-face-pose/blueprint.toml",
             "config/blueprints/detect-face-pose-seg/blueprint.toml",
             "config/blueprints/detect-room-raw/blueprint.toml",
             "config/blueprints/detect-room-face/blueprint.toml",
@@ -169,6 +175,60 @@ mod tests {
                     .models
                     .contains(&blueprint.blueprint.primary_model)
             );
+        }
+    }
+
+    #[test]
+    fn capacity_workshop_profiles_apply_s_and_m_640_overlays() {
+        for (blueprint_path, overlay, expected_marker) in [
+            (
+                "workshop/scenarios/11-inference-capacity/blueprint-s-640.toml",
+                "workshop/scenarios/11-inference-capacity/models-s-640.toml",
+                "yolo26s-fp16-640.onnx",
+            ),
+            (
+                "workshop/scenarios/11-inference-capacity/blueprint-m-640.toml",
+                "workshop/scenarios/11-inference-capacity/models-m-640.toml",
+                "yolo26m-fp16-640.onnx",
+            ),
+        ] {
+            let blueprint: BlueprintConfig = load_config(Path::new(blueprint_path)).unwrap();
+            let models = load_model_catalog(Path::new("config/models.toml")).unwrap();
+            let config = CascadeConfig {
+                rules: blueprint.rules.clone(),
+                regions: blueprint.regions.clone(),
+            };
+            assert!(
+                config
+                    .validate(
+                        &model_enabled_map(&models),
+                        &blueprint.blueprint.primary_model
+                    )
+                    .is_empty(),
+                "invalid capacity blueprint {blueprint_path}"
+            );
+            assert_eq!(
+                blueprint
+                    .rules
+                    .iter()
+                    .find(|rule| rule.model == "seg-standard")
+                    .map(|rule| rule.interval_min_ms),
+                Some(2_000)
+            );
+
+            let mut models = load_model_catalog(Path::new("config/models.toml")).unwrap();
+            let overridden = apply_model_overlay(
+                &mut models,
+                Path::new(overlay),
+                Path::new("config/models.toml"),
+            )
+            .unwrap();
+
+            assert_eq!(overridden.len(), 4);
+            assert_eq!(models.models["detect-fast"].imgsz, Some(640));
+            assert!(models.models["detect-fast"].path.ends_with(expected_marker));
+            assert_eq!(models.models["pose-standard"].imgsz, Some(640));
+            assert_eq!(models.models["seg-standard"].imgsz, Some(640));
         }
     }
 

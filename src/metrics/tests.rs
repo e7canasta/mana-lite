@@ -34,6 +34,74 @@ fn empty_depth_does_not_count_as_detection_empty() {
     assert_eq!(report.infer_empty, 0);
 }
 
+#[test]
+fn not_due_is_reported_separately_from_cascade_skip() {
+    let mut engine = MetricsEngine::new(0, 50);
+    engine.tick_infer_not_due("seg-standard");
+
+    let (report, order) = engine.take_report().expect("zero-second report");
+    assert_eq!(order, vec!["seg-standard"]);
+    assert_eq!(report.infer_not_due, 1);
+    assert_eq!(report.infer_skips, 0);
+    assert_eq!(report.model_metrics["seg-standard"].not_due, 1);
+    assert_eq!(report.model_metrics["seg-standard"].skips, 0);
+}
+
+#[test]
+fn model_timing_reports_gap_and_next_due_lateness_percentiles() {
+    let mut engine = MetricsEngine::new(0, 50);
+
+    for (gap_ms, late_ms) in [(2_100, 100), (2_500, 500), (7_000, 3_000)] {
+        engine.tick_inference_start(
+            "seg-standard",
+            CascadeStartTiming {
+                interval_min_ms: 2_000,
+                gap: Some(Duration::from_millis(gap_ms)),
+                due_late: Some(Duration::from_millis(late_ms)),
+            },
+        );
+    }
+
+    let (report, order) = engine.take_report().expect("zero-second report");
+    let model = &report.model_metrics["seg-standard"];
+
+    assert_eq!(order, vec!["seg-standard"]);
+    assert_eq!(model.interval_min_ms, 2_000);
+    assert_eq!(model.gap_samples, 3);
+    assert_eq!(model.gap_min_ms, 2_100);
+    assert_eq!(model.gap_p50_ms, 2_500);
+    assert_eq!(model.gap_p95_ms, 7_000);
+    assert_eq!(model.gap_max_ms, 7_000);
+    assert_eq!(model.due_late_samples, 3);
+    assert_eq!(model.due_late_min_ms, 100);
+    assert_eq!(model.due_late_p50_ms, 500);
+    assert_eq!(model.due_late_p95_ms, 3_000);
+    assert_eq!(model.due_late_max_ms, 3_000);
+}
+
+#[test]
+fn scheduler_reasons_and_future_urgency_counters_remain_distinct() {
+    let mut engine = MetricsEngine::new(0, 50);
+    engine.tick_infer_not_due("seg-standard");
+    engine.tick_infer_due_but_gated("pose-standard");
+    engine.tick_infer_due_but_no_target("face-yolo");
+    engine.tick_infer_urgent("pose-standard");
+    engine.tick_infer_urgent_expired("pose-standard");
+
+    let (report, _) = engine.take_report().expect("zero-second report");
+
+    assert_eq!(report.infer_not_due, 1);
+    assert_eq!(report.infer_due_but_gated, 1);
+    assert_eq!(report.infer_due_but_no_target, 1);
+    assert_eq!(report.infer_urgent, 1);
+    assert_eq!(report.infer_urgent_expired, 1);
+    assert_eq!(report.model_metrics["seg-standard"].not_due, 1);
+    assert_eq!(report.model_metrics["pose-standard"].due_but_gated, 1);
+    assert_eq!(report.model_metrics["pose-standard"].urgent, 1);
+    assert_eq!(report.model_metrics["pose-standard"].urgent_expired, 1);
+    assert_eq!(report.model_metrics["face-yolo"].due_but_no_target, 1);
+}
+
 /// Aceptación del item "presupuesto de ciclo": un ciclo sintético por
 /// encima del presupuesto incrementa cycle_overruns y sale en el
 /// reporte con p95 y max.

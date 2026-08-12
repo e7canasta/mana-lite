@@ -245,10 +245,28 @@ fn log_infer_line(report: &MetricsReport, model_order: &[String], config: &Metri
     if config.flags.infer_skips && report.infer_skips > 0 {
         flags.push(format!("skips:{}", report.infer_skips));
     }
+    if config.flags.infer_not_due && report.infer_not_due > 0 {
+        flags.push(format!("not_due:{}", report.infer_not_due));
+    }
+    if config.flags.infer_due_but_gated && report.infer_due_but_gated > 0 {
+        flags.push(format!("due_but_gated:{}", report.infer_due_but_gated));
+    }
+    if config.flags.infer_due_but_no_target && report.infer_due_but_no_target > 0 {
+        flags.push(format!(
+            "due_but_no_target:{}",
+            report.infer_due_but_no_target
+        ));
+    }
     // Razón distinta de `skips`, y por eso contador distinto: el modelo no fue
     // salteado por su regla, el estado del FSM no lo pidió.
     if config.flags.infer_gated && report.infer_gated > 0 {
         flags.push(format!("apagados:{}", report.infer_gated));
+    }
+    if config.flags.infer_urgent && report.infer_urgent > 0 {
+        flags.push(format!("urgent:{}", report.infer_urgent));
+    }
+    if config.flags.infer_urgent_expired && report.infer_urgent_expired > 0 {
+        flags.push(format!("urgent_expired:{}", report.infer_urgent_expired));
     }
     if config.flags.infer_empty && report.infer_empty > 0 {
         flags.push(format!("empty:{}", report.infer_empty));
@@ -278,13 +296,19 @@ fn log_infer_line(report: &MetricsReport, model_order: &[String], config: &Metri
     if config.per_model_lines {
         for name in model_order {
             if let Some(m) = report.model_metrics.get(name) {
-                log_per_model(name, m, report.window_s, report.keyframes);
+                log_per_model(name, m, report.window_s, report.keyframes, config);
             }
         }
     }
 }
 
-fn log_per_model(name: &str, m: &PerModelMetrics, window_s: u64, keyframes: u64) {
+fn log_per_model(
+    name: &str,
+    m: &PerModelMetrics,
+    window_s: u64,
+    keyframes: u64,
+    config: &MetricsTextConfig,
+) {
     let m_hz = hz(m.inferences, window_s);
     let m_avg = avg_ms(m.infer_total_us / 1000, m.inferences);
     let m_range = if m.inferences > 0 {
@@ -303,8 +327,33 @@ fn log_per_model(name: &str, m: &PerModelMetrics, window_s: u64, keyframes: u64)
         } else {
             None
         },
+        if m.not_due > 0 {
+            Some(format!("not_due:{}", m.not_due))
+        } else {
+            None
+        },
+        if config.flags.infer_due_but_gated && m.due_but_gated > 0 {
+            Some(format!("due_but_gated:{}", m.due_but_gated))
+        } else {
+            None
+        },
+        if config.flags.infer_due_but_no_target && m.due_but_no_target > 0 {
+            Some(format!("due_but_no_target:{}", m.due_but_no_target))
+        } else {
+            None
+        },
         if m.gated > 0 {
             Some(format!("apagado:{}", m.gated))
+        } else {
+            None
+        },
+        if config.flags.infer_urgent && m.urgent > 0 {
+            Some(format!("urgent:{}", m.urgent))
+        } else {
+            None
+        },
+        if config.flags.infer_urgent_expired && m.urgent_expired > 0 {
+            Some(format!("urgent_expired:{}", m.urgent_expired))
         } else {
             None
         },
@@ -324,9 +373,28 @@ fn log_per_model(name: &str, m: &PerModelMetrics, window_s: u64, keyframes: u64)
     } else {
         format!(" | {}", flags.join(","))
     };
+    let timing_str = if m.gap_samples > 0 {
+        format!(
+            " | interval {}ms | gap n:{} p50:{}ms p95:{}ms max:{}ms | due_late n:{} p50:{}ms p95:{}ms max:{}ms",
+            m.interval_min_ms,
+            m.gap_samples,
+            m.gap_p50_ms,
+            m.gap_p95_ms,
+            m.gap_max_ms,
+            m.due_late_samples,
+            m.due_late_p50_ms,
+            m.due_late_p95_ms,
+            m.due_late_max_ms,
+        )
+    } else {
+        format!(
+            " | interval {}ms | gap n:0 | due_late n:0",
+            m.interval_min_ms
+        )
+    };
 
     log::info!(
-        "  {:>16}: {:.1} Hz | {} calls | {} ({}) | {}{}",
+        "  {:>16}: {:.1} Hz | {} calls | {} ({}) | {}{}{}",
         name,
         m_hz,
         m.inferences,
@@ -334,6 +402,7 @@ fn log_per_model(name: &str, m: &PerModelMetrics, window_s: u64, keyframes: u64)
         m_range,
         m_ratio,
         flag_str,
+        timing_str,
     );
 }
 

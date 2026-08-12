@@ -198,6 +198,7 @@ fn build_cascade(config: &AppConfig, validated: &ValidatedBootstrap) -> Result<C
                 requires_min_area_ratio: None,
                 requires_region: None,
                 requires_region_coverage: None,
+                interval_min_ms: 0,
             }],
             HashMap::new(),
         )

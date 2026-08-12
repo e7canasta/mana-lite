@@ -214,7 +214,17 @@ pub struct MetricsTextFlags {
     #[serde(default = "default_true")]
     pub infer_skips: bool,
     #[serde(default = "default_true")]
+    pub infer_not_due: bool,
+    #[serde(default = "default_true")]
+    pub infer_due_but_gated: bool,
+    #[serde(default = "default_true")]
+    pub infer_due_but_no_target: bool,
+    #[serde(default = "default_true")]
     pub infer_gated: bool,
+    #[serde(default = "default_true")]
+    pub infer_urgent: bool,
+    #[serde(default = "default_true")]
+    pub infer_urgent_expired: bool,
     #[serde(default = "default_true")]
     pub infer_empty: bool,
 }
@@ -230,7 +240,12 @@ impl Default for MetricsTextFlags {
             ingest_ssrc: true,
             ingest_rtp: true,
             infer_skips: true,
+            infer_not_due: true,
+            infer_due_but_gated: true,
+            infer_due_but_no_target: true,
             infer_gated: true,
+            infer_urgent: true,
+            infer_urgent_expired: true,
             infer_empty: true,
         }
     }

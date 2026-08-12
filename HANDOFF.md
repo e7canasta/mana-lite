@@ -3,7 +3,7 @@
 > Para que una sesión nueva retome el trabajo **sin leer nada más**.
 > Lengua del proyecto: español, también en comentarios de código y commits.
 
-*Actualizado: 2026-08-12, al correr la escalera del workshop entera.*
+*Actualizado: 2026-08-12, al cerrar Sprint 2 y preparar Sprint 3.*
 
 ## 1. Qué es esto
 
@@ -56,6 +56,21 @@ La escalera del workshop está corrida y verde, con un arreglo del tracker que
 salió de ahí. Está en §10, y **para operarla el documento es
 [`workshop/MANUAL.md`](workshop/MANUAL.md)** — autocontenido, pensado para
 alguien que llega hoy.
+
+### Handoff actual del scheduler cooperativo
+
+Sprint 1 y Sprint 2 del subproyecto están implementados y verificados. Sprint 2
+agregó gaps por modelo, atraso contra `next_due`, razones de no ejecución,
+contadores de urgencia y el escenario de capacidad en
+`workshop/scenarios/11-inference-capacity/`. La corrida con pesos `640` queda
+pendiente porque esos artefactos no están en el checkout.
+
+Para comenzar Sprint 3, el documento único de entrada es
+[`docs/subprojects/cooperative-inference-scheduler/sprints/sprint-03-handoff.md`](docs/subprojects/cooperative-inference-scheduler/sprints/sprint-03-handoff.md).
+Fija el contrato de `InferenceRequest`, la diferencia entre requests persistentes
+y transitorias, el algoritmo de consumo, anti-starvation, metricas, archivos y
+criterios de aceptacion. No usar `Slot<ControlDirective>` para requests
+transitorias: ese slot es latest-wins por diseño.
 
 ## 3. Cómo se trabaja
 

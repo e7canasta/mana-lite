@@ -19,6 +19,12 @@ ingest_reconnect = true
 ingest_ssrc = true
 ingest_rtp = true
 infer_skips = true
+infer_not_due = true
+infer_due_but_gated = true
+infer_due_but_no_target = true
+infer_gated = true
+infer_urgent = true
+infer_urgent_expired = true
 infer_empty = true
 
 # `fsm_events` y `zone_events` van encendidos: son **transiciones**, no muestras

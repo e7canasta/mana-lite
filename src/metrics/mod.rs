@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
+use crate::cascade::CascadeStartTiming;
 use crate::depth_map::DepthFrame;
 use crate::detection::Detection;
 
@@ -95,6 +96,30 @@ pub struct PerModelMetrics {
     pub infer_max_us: u64,
     pub total_dets: u64,
     pub skips: u64,
+    /// Veces que el modelo estaba habilitado pero su intervalo aun no vencio.
+    pub not_due: u64,
+    /// Veces que el modelo estaba debido, pero el estado no lo solicito.
+    pub due_but_gated: u64,
+    /// Veces que el modelo estaba debido, pero la regla no encontro target.
+    pub due_but_no_target: u64,
+    /// Inicios atendidos por una peticion urgente. Reservado para Sprint 3.
+    pub urgent: u64,
+    /// Peticiones urgentes que vencieron sin ser atendidas.
+    pub urgent_expired: u64,
+    /// Intervalo minimo configurado en el blueprint.
+    pub interval_min_ms: u64,
+    /// Distribucion de gaps entre inicios reales del modelo.
+    pub gap_samples: u64,
+    pub gap_min_ms: u64,
+    pub gap_p50_ms: u64,
+    pub gap_p95_ms: u64,
+    pub gap_max_ms: u64,
+    /// Atraso del inicio respecto de `next_due` para intervalos positivos.
+    pub due_late_samples: u64,
+    pub due_late_min_ms: u64,
+    pub due_late_p50_ms: u64,
+    pub due_late_p95_ms: u64,
+    pub due_late_max_ms: u64,
     /// Veces que el estado del FSM no pidió este modelo. Distinto de `skips`:
     /// el modelo no llegó a mirar la escena.
     pub gated: u64,
@@ -109,6 +134,8 @@ pub struct PerModelMetrics {
     pub depth_empty: u64,
     pub depth_min_m: f64,
     pub depth_max_m: f64,
+    pub(crate) gap_samples_us: Vec<u64>,
+    pub(crate) due_late_samples_us: Vec<u64>,
 }
 
 impl Default for PerModelMetrics {
@@ -120,6 +147,22 @@ impl Default for PerModelMetrics {
             infer_max_us: 0,
             total_dets: 0,
             skips: 0,
+            not_due: 0,
+            due_but_gated: 0,
+            due_but_no_target: 0,
+            urgent: 0,
+            urgent_expired: 0,
+            interval_min_ms: 0,
+            gap_samples: 0,
+            gap_min_ms: 0,
+            gap_p50_ms: 0,
+            gap_p95_ms: 0,
+            gap_max_ms: 0,
+            due_late_samples: 0,
+            due_late_min_ms: 0,
+            due_late_p50_ms: 0,
+            due_late_p95_ms: 0,
+            due_late_max_ms: 0,
             gated: 0,
             empty: 0,
             conf_sum: 0.0,
@@ -132,6 +175,8 @@ impl Default for PerModelMetrics {
             depth_empty: 0,
             depth_min_m: f64::INFINITY,
             depth_max_m: 0.0,
+            gap_samples_us: Vec::new(),
+            due_late_samples_us: Vec::new(),
         }
     }
 }
@@ -175,7 +220,12 @@ pub struct Metrics {
     pub ingest_pframes: u64,
     pub ingest_dup_keyframes: u64,
     pub infer_skips: u64,
+    pub infer_not_due: u64,
+    pub infer_due_but_gated: u64,
+    pub infer_due_but_no_target: u64,
     pub infer_gated: u64,
+    pub infer_urgent: u64,
+    pub infer_urgent_expired: u64,
     pub infer_empty: u64,
     pub infer_total_dets: u64,
     pub model_metrics: HashMap<String, PerModelMetrics>,
@@ -221,7 +271,12 @@ impl Default for Metrics {
             ingest_pframes: 0,
             ingest_dup_keyframes: 0,
             infer_skips: 0,
+            infer_not_due: 0,
+            infer_due_but_gated: 0,
+            infer_due_but_no_target: 0,
             infer_gated: 0,
+            infer_urgent: 0,
+            infer_urgent_expired: 0,
             infer_empty: 0,
             infer_total_dets: 0,
             model_metrics: HashMap::new(),
@@ -240,6 +295,26 @@ fn percentile_us(samples: &[u64], percentile: usize) -> u64 {
         .div_ceil(100)
         .saturating_sub(1);
     samples[idx.min(samples.len() - 1)]
+}
+
+fn finalize_model_timing(model: &mut PerModelMetrics) {
+    model.gap_samples_us.sort_unstable();
+    model.gap_samples = model.gap_samples_us.len() as u64;
+    if model.gap_samples > 0 {
+        model.gap_min_ms = model.gap_samples_us[0] / 1000;
+        model.gap_p50_ms = percentile_us(&model.gap_samples_us, 50) / 1000;
+        model.gap_p95_ms = percentile_us(&model.gap_samples_us, 95) / 1000;
+        model.gap_max_ms = *model.gap_samples_us.last().unwrap_or(&0) / 1000;
+    }
+
+    model.due_late_samples_us.sort_unstable();
+    model.due_late_samples = model.due_late_samples_us.len() as u64;
+    if model.due_late_samples > 0 {
+        model.due_late_min_ms = model.due_late_samples_us[0] / 1000;
+        model.due_late_p50_ms = percentile_us(&model.due_late_samples_us, 50) / 1000;
+        model.due_late_p95_ms = percentile_us(&model.due_late_samples_us, 95) / 1000;
+        model.due_late_max_ms = *model.due_late_samples_us.last().unwrap_or(&0) / 1000;
+    }
 }
 
 impl Metrics {
@@ -272,6 +347,9 @@ impl Metrics {
         let keyframe_gap_count = self.keyframe_gap_samples.len();
         let keyframe_gap_p50_us = percentile_us(&self.keyframe_gap_samples, 50);
         let keyframe_gap_p95_us = percentile_us(&self.keyframe_gap_samples, 95);
+        for model in self.model_metrics.values_mut() {
+            finalize_model_timing(model);
+        }
         MetricsReport {
             window_s,
             cycles: self.cycles,
@@ -353,9 +431,14 @@ impl Metrics {
             ingest_pframes: self.ingest_pframes,
             ingest_dup_keyframes: self.ingest_dup_keyframes,
             infer_skips: self.infer_skips,
+            infer_not_due: self.infer_not_due,
             infer_gated: self.infer_gated,
             infer_empty: self.infer_empty,
             infer_total_dets: self.infer_total_dets,
+            infer_due_but_gated: self.infer_due_but_gated,
+            infer_due_but_no_target: self.infer_due_but_no_target,
+            infer_urgent: self.infer_urgent,
+            infer_urgent_expired: self.infer_urgent_expired,
             model_metrics: self.model_metrics,
         }
     }
@@ -408,7 +491,12 @@ pub struct MetricsReport {
     pub ingest_pframes: u64,
     pub ingest_dup_keyframes: u64,
     pub infer_skips: u64,
+    pub infer_not_due: u64,
+    pub infer_due_but_gated: u64,
+    pub infer_due_but_no_target: u64,
     pub infer_gated: u64,
+    pub infer_urgent: u64,
+    pub infer_urgent_expired: u64,
     pub infer_empty: u64,
     pub infer_total_dets: u64,
     pub model_metrics: HashMap<String, PerModelMetrics>,
@@ -507,6 +595,41 @@ impl MetricsEngine {
         self.current.keyframe_gap_min_us = self.current.keyframe_gap_min_us.min(sample_us);
         self.current.keyframe_gap_max_us = self.current.keyframe_gap_max_us.max(sample_us);
         self.current.keyframe_gap_samples.push(sample_us);
+    }
+
+    fn ensure_model_metrics(&mut self, model_key: &str) -> &mut PerModelMetrics {
+        if !self.model_order.iter().any(|name| name == model_key) {
+            self.model_order.push(model_key.to_string());
+        }
+        self.current
+            .model_metrics
+            .entry(model_key.to_string())
+            .or_default()
+    }
+
+    /// Registra la politica temporal aunque el modelo no llegue a iniciar.
+    pub fn set_model_interval(&mut self, model_key: &str, interval_min_ms: u64) {
+        self.ensure_model_metrics(model_key).interval_min_ms = interval_min_ms;
+    }
+
+    /// Registra el inicio real de una inferencia, antes de entrar al backend.
+    ///
+    /// Los gaps se calculan sobre inicios, no sobre resultados: un backend que
+    /// falla sigue consumiendo una oportunidad y no debe desaparecer de la
+    /// capacidad observada.
+    pub fn tick_inference_start(&mut self, model_key: &str, timing: CascadeStartTiming) {
+        let model = self.ensure_model_metrics(model_key);
+        model.interval_min_ms = timing.interval_min_ms;
+        if let Some(gap) = timing.gap {
+            model
+                .gap_samples_us
+                .push(u64::try_from(gap.as_micros()).unwrap_or(u64::MAX));
+        }
+        if let Some(due_late) = timing.due_late {
+            model
+                .due_late_samples_us
+                .push(u64::try_from(due_late.as_micros()).unwrap_or(u64::MAX));
+        }
     }
 
     pub fn tick_inference_model(
@@ -677,6 +800,80 @@ impl MetricsEngine {
             .or_default();
         m.skips += 1;
         if !self.model_order.iter().any(|n| n == model_key) {
+            self.model_order.push(model_key.to_string());
+        }
+    }
+
+    /// El modelo estaba activo, pero el intervalo cooperativo aun no vencio.
+    /// Es distinto de `skip`, que significa que el gate de la cascada no
+    /// encontro un target valido.
+    pub fn tick_infer_not_due(&mut self, model_key: &str) {
+        self.current.infer_not_due += 1;
+        let m = self
+            .current
+            .model_metrics
+            .entry(model_key.to_string())
+            .or_default();
+        m.not_due += 1;
+        if !self.model_order.iter().any(|n| n == model_key) {
+            self.model_order.push(model_key.to_string());
+        }
+    }
+
+    /// El modelo estaba debido, pero el estado del FSM no lo solicito.
+    pub fn tick_infer_due_but_gated(&mut self, model_key: &str) {
+        self.current.infer_due_but_gated += 1;
+        let m = self
+            .current
+            .model_metrics
+            .entry(model_key.to_string())
+            .or_default();
+        m.due_but_gated += 1;
+        if !self.model_order.iter().any(|name| name == model_key) {
+            self.model_order.push(model_key.to_string());
+        }
+    }
+
+    /// El modelo estaba debido, pero su regla no encontro un target valido.
+    pub fn tick_infer_due_but_no_target(&mut self, model_key: &str) {
+        self.current.infer_due_but_no_target += 1;
+        let m = self
+            .current
+            .model_metrics
+            .entry(model_key.to_string())
+            .or_default();
+        m.due_but_no_target += 1;
+        if !self.model_order.iter().any(|name| name == model_key) {
+            self.model_order.push(model_key.to_string());
+        }
+    }
+
+    /// Registra un inicio atendido por una peticion urgente. El scheduler de
+    /// urgencias se incorpora en Sprint 3; el contador ya forma parte del
+    /// contrato de observabilidad.
+    pub fn tick_infer_urgent(&mut self, model_key: &str) {
+        self.current.infer_urgent += 1;
+        let m = self
+            .current
+            .model_metrics
+            .entry(model_key.to_string())
+            .or_default();
+        m.urgent += 1;
+        if !self.model_order.iter().any(|name| name == model_key) {
+            self.model_order.push(model_key.to_string());
+        }
+    }
+
+    /// Registra una peticion urgente que expiro antes de ser atendida.
+    pub fn tick_infer_urgent_expired(&mut self, model_key: &str) {
+        self.current.infer_urgent_expired += 1;
+        let m = self
+            .current
+            .model_metrics
+            .entry(model_key.to_string())
+            .or_default();
+        m.urgent_expired += 1;
+        if !self.model_order.iter().any(|name| name == model_key) {
             self.model_order.push(model_key.to_string());
         }
     }
