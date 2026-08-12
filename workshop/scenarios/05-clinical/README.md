@@ -79,8 +79,70 @@ umbral de ceguera está midiendo otra cosa que lo que se cree.
 
 ## Números medidos
 
-<!-- Completar con la corrida. -->
+Corridas del 2026-08-12, 180 s cada una. Dos fuentes, por la misma razón que en
+el 04: la cámara de la instalación estaba vacía y un escenario clínico sin
+persona no prueba la parte clínica. `clip1` es un RTSP local con una persona en
+cama, a la misma cadencia de keyframe que la cámara.
 
 |Corrida|`evid` p50/max|`dline` p95 / missed|`cycle` p95 / overruns|transiciones FSM|
 |---|---|---|---|---|
-| | | | | |
+|`home2`, escena vacía|751 / 1224 ms|1,4–3,2 ms / 1|202 ms / 0|0 *(sin persona)*|
+|`clip1`, antes del arreglo|736 / 1661 ms|1,5–6,8 ms / 25|205 ms / 0|**2**|
+|`clip1`, después del arreglo|865 / 1272 ms|1,9–3,0 ms / 5|202 ms / 0|**24**|
+
+**La hipótesis se sostiene.** Con la pila completa —zonas, FSM, presencia,
+ocupancia, reglas de profundidad y los dos modelos de la cascada corriendo— el
+atraso queda en el piso del temporizador, con `0 overruns`, `0 kf_pisados`,
+`0 img_pisadas`, sin reconexiones y 180 keyframes procesados de 180 vistos.
+
+`evid: max` llegó a **1272 ms contra `data_stale_ms = 10 000`**: factor 8, con la
+cámara sana. El hallazgo que este README anticipaba —la edad de la evidencia
+acercándose al umbral de ceguera— no ocurrió.
+
+### El FSM gobierna, y decide lo correcto
+
+|Estado|scans|
+|---|---|
+|`in_bed`|772|
+|`other`|66|
+|`detected`|24|
+|`searching`|10|
+|`idle`|23|
+
+24 transiciones, arrancando en `idle → searching → in_bed`. El estado dominante
+para una persona acostada es `in_bed`, que es lo que corresponde. `cara.presente`
+sale de la cascada en 856 de 895 scans, y el recorte dinámico se mueve: **165
+recortes distintos en 170 llamadas** a `face-yolo`.
+
+### Los dos hallazgos
+
+**1. El escenario no podía producir su propia evidencia.** El criterio de
+aceptación de arriba pide transiciones en el JSONL, y este escenario incluye
+`config/metrics.toml`, que trae:
+
+```toml
+fsm_events        = false
+zone_events       = false
+face_dwell_events = false
+```
+
+Las primeras corridas salieron con **cero** apariciones de `idle`, `blind`, `fsm`
+o `face_dwell` en el JSONL, y por un rato eso se leyó como "el FSM no
+transiciona". Un test contra el catálogo real —`scan_con_una_persona_transiciona_
+el_fsm_de_produccion`, en `mana-control`— pasó, y ahí se dio vuelta el
+diagnóstico: el FSM transicionaba, el instrumento estaba apagado.
+
+Es la regla 5 del HANDOFF en su peor forma: un escenario que declara un criterio
+que su propia configuración vuelve inverificable. **Queda abierto** decidir si
+los eventos clínicos van encendidos por defecto o si este escenario se trae su
+propio archivo de métricas.
+
+**2. La cascada nunca corría.** Con los eventos encendidos, el FSM llegaba hasta
+`other` —*"Persona presente sin cara visible"*— y se quedaba ahí en 561 de 605
+scans, porque `cara.presente` no puede ser `true` si el modelo hijo nunca corre.
+La causa está documentada en el [escenario 04](../04-infer-track/README.md): el
+tracker no confirmaba ningún track. El ciclo de vida de la cara no arrancaba.
+
+Los números de la fila "después del arreglo" son con esa corrección aplicada y
+**sin tocar ninguna otra cosa**: mismos catálogos, mismo blueprint, mismos
+umbrales.

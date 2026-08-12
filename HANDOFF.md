@@ -48,7 +48,12 @@ decisiones en `docs/adrs/033-035`; cómo está construido hoy, en
 Antes de eso: el refactor por tiers, seis sprints (ADR-027, ADR-028), y la tabla
 de señales como contrato ([ADR-032](docs/adrs/032-scene-signals-as-contract.md)).
 
-**Abierto:** nada de arquitectura de ejecución. Lo que queda está en §8 y §9.
+**Abierto:** nada de arquitectura de ejecución. Lo que queda está en §8, §9 y
+§11 — y §11 es lo único con consecuencia clínica: tres decisiones de política
+que hoy están hardcodeadas en percepción en vez de declaradas en un catálogo.
+
+La escalera del workshop está corrida y verde, con un arreglo del tracker que
+salió de ahí. Está en §10.
 
 ## 3. Cómo se trabaja
 
@@ -210,3 +215,104 @@ existía. Es la conversación que abre el trabajo de producto.
 ([ADR-032](docs/adrs/032-scene-signals-as-contract.md)): cambiar cuándo suena una
 alerta es editar un TOML. Si eso se sostiene, el cuello de botella dejó de ser
 la ingeniería y pasó a ser saber qué escenario clínico sigue.
+
+
+## 10. La escalera del workshop
+
+Los cinco peldaños corridos, 2026-08-12. Números en el README de cada uno.
+
+|Peldaño|Estado|
+|---|---|
+|01 ingesta|✓ verde|
+|02 + viz (raw / jpeg)|✓ verde|
+|03 + inferencia|✓ verde|
+|04 + tracking y cascada|✓ verde **después de un arreglo**|
+|05 + zonas, FSM y presencia|✓ verde **después del mismo arreglo**|
+
+**El invariante se sostiene de punta a punta.** Con la pila completa el atraso
+queda en el piso del temporizador: `dline` p95 1,9–3,0 ms, `0 overruns`,
+`0 kf_pisados`, sin reconexiones. Los dos hallazgos anticipados por escrito —
+`kf_pisados` subiendo en el 04, `evid: max` acercándose a `data_stale_ms` en el
+05— **no ocurrieron**: el peor `evid: max` fue 1272 ms contra 10 000.
+
+El costo del segundo modelo de la cascada, medido sobre la misma escena y la
+misma fuente: **+170 ms de edad de evidencia y nada de cadencia**.
+
+### La cámara de la instalación está vacía
+
+Un escenario de cascada o clínico sin persona no ejercita lo que dice ejercitar:
+la compuerta se cierra por la razón correcta y no se distingue de una rota. El
+04 y el 05 se corrieron contra dos fuentes — `home2` como control de cadencia, y
+un RTSP local con una persona en cama a la misma cadencia de keyframe. Las
+configs efectivas quedan materializadas junto a su salida, como en el 02.
+
+### Lo que encontró: el lazo cerrado no gobernaba
+
+`face-yolo` se salteaba en **177 de 177** keyframes con una persona en cuadro.
+`Tracker::age_unmatched` reseteaba `hit_streak` en cada scan sin medición, y la
+confirmación pide una racha de scans consecutivos: a 5 Hz de lazo y 1 Hz de
+evidencia, la racha nunca pasaba de 1 y **ningún track se confirmaba nunca**
+(`confirmed_count = 0` en 894 de 894 scans). Con eso quedaban muertas las dos
+compuertas de la cascada y `confirmed_person_count` de ocupancia — o sea, toda
+cascada con hijo del sistema, no sólo la de estos escenarios.
+
+Arreglado en `scan.rs` + `track.rs`: `associate_observations` sólo corre con
+medición nueva, y los scans sin medición usan `Tracker::age_at`, que envejece la
+vida del track sin contarlo como fallo. `misses` y `hit_streak` se miden en
+mediciones; `max_age_ms` y `tentative_max_age_ms` siguen en tiempo de pared.
+
+### Y una compuerta de instrumento
+
+`config/metrics.toml` —el archivo que los escenarios incluyen— trae
+`fsm_events`, `zone_events` y `face_dwell_events` en `false`. El criterio de
+aceptación del 05 pide "transiciones en el JSONL". Ver §11.
+
+## 11. Lo que queda abierto, y es política
+
+Tres decisiones acopladas, ninguna urgente, ninguna de mecanismo:
+
+1. **La compuerta hardcodeada.** `src/app/inference.rs:106`
+   (`presence_track_count != 1`) duplica `requires_exact_count = 1` del
+   blueprint, pero contra tracks y usando `[presence].class` en vez de
+   `requires_class`. Es la única de las cuatro compuertas de la cascada que no
+   está declarada en ningún catálogo.
+2. **`[fsm.states.idle] models`.** Los catálogos con cascada declaran
+   `["detect-fast", "face-yolo"]` en `idle`. Si la política es "con más de una
+   persona, sólo el detector padre", eso va acá — hoy lo ejecuta la compuerta
+   hardcodeada, que tapa el hueco del catálogo.
+3. **El contador.** Si la política se mueve al FSM, el hijo deja de entrar en
+   `run_child_models` y `skips` deja de contarlo. `skips:177` fue lo que delató
+   todo esto; conviene decidir cómo se distingue "salteado por regla" de "no
+   habilitado por estado" **antes** de romper el instrumento.
+
+Y una observación de mecanismo, para cuando se toque: `TrackerConfig::default()`
+trae `tentative_max_age_ms = 600`, más corto que un intervalo de keyframe. Un
+track tentativo con esos valores no llega a su segunda medición. Los escenarios
+lo pisan con 6000; el default no es alcanzable en este sistema.
+
+## 12. La compuerta del circuito no cubre los tiers
+
+`cargo test --release` corre **sólo el paquete raíz** — 144 tests. Los 159 de
+`mana-control`, que es donde vive el lazo de control, quedan afuera. El defecto
+del tracker vive en un tier que ese comando no toca.
+
+```sh
+cargo test --workspace --release      # 159 + 144 + los de integración
+```
+
+El circuito completo, de cero:
+
+```sh
+cargo test --workspace --release
+timeout 180 cargo run --release -- --config workshop/scenarios/01-ingest-only/mana.toml
+./workshop/scenarios/02-ingest-viz/run-variant.sh b-jpeg-native 180
+./workshop/scenarios/02-ingest-viz/run-variant.sh a-raw-native 180
+timeout 180 cargo run --release -- --config workshop/scenarios/03-ingest-infer/mana.toml
+timeout 180 cargo run --release -- --config workshop/scenarios/04-infer-track/mana.toml
+timeout 180 cargo run --release -- --config workshop/scenarios/05-clinical/mana.toml
+```
+
+Si el 04 o el 05 salen raros, lo primero que hay que mirar no es el atraso sino
+`evid:` y `kf_pisados`. El atraso es síntoma; esos dos son causa. Y si un modelo
+hijo no corre, el número es `confirmed_count` en el JSONL de presencia — no
+`skips`, que sólo dice que no corrió.
