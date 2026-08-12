@@ -53,7 +53,9 @@ de señales como contrato ([ADR-032](docs/adrs/032-scene-signals-as-contract.md)
 que hoy están hardcodeadas en percepción en vez de declaradas en un catálogo.
 
 La escalera del workshop está corrida y verde, con un arreglo del tracker que
-salió de ahí. Está en §10.
+salió de ahí. Está en §10, y **para operarla el documento es
+[`workshop/MANUAL.md`](workshop/MANUAL.md)** — autocontenido, pensado para
+alguien que llega hoy.
 
 ## 3. Cómo se trabaja
 

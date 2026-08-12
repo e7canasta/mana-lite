@@ -2,6 +2,12 @@
 
 Banco de escenarios para homologación funcional y operativa de `mana-lite`.
 
+> **Si llegás hoy al proyecto, leé [`MANUAL.md`](MANUAL.md).** Es el manual
+> operativo del banco: entorno, fuentes de video, los seis peldaños, cómo se lee
+> cada línea del reporte y una tabla de síntoma → dónde mirar. Es autocontenido
+> — este índice y el README de cada escenario son el detalle, no el punto de
+> entrada.
+
 `config/` es la configuración de producción. `workshop/` es donde se prueba una
 cosa por vez, con la configuración completa a la vista y un criterio de
 aceptación escrito **antes** de correr.
