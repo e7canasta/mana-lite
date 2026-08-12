@@ -438,15 +438,24 @@ La razón de dejarlo anotado en vez de arreglarlo preventivamente: contadores po
 etapa fusionados al reporte son más código y más superficie de error para
 resolver un problema que la medición dice que no existe.
 
-### 6.3 El presupuesto cuenta pero no actúa — *abierto*
+### 6.3 ~~El presupuesto cuenta pero no actúa~~ — *sin planta que controlar*
 
-`cycle_overruns` y `scan_deadlines_missed` ya son mediciones reales (§5.1), pero
-contar no es actuar. Un incumplimiento sostenido debería degradar algo —apagar
-viz, bajar calidad— o al menos escalar el aviso.
+`cycle_overruns` y `scan_deadlines_missed` cuentan y no actúan, y eso quedó bien
+así. La deuda suponía un lazo que se bloquea por cosas que puede soltar; después
+de separar las etapas no queda ninguna: el visor no puede frenar a nadie, el lazo
+no espera a la inferencia, y bajar la cadencia cambiaría los tiempos clínicos que
+el sistema existe para respetar.
 
-Con las etapas separadas esto **recién ahora es accionable**: un atraso del lazo
-aislado ya no puede venir de otra etapa, así que significa un problema del lazo y
-de nadie más. Antes no decía de quién era la culpa.
+Medido: 1,3–2,1 ms de atraso contra un periodo de 200 ms, cero incumplimientos,
+en el peor escenario disponible. Un controlador de degradación acá sería un lazo
+de control sin planta.
+
+**Lo que sí queda es un residuo chico de supervisión**, y conviene no
+sobredimensionarlo: las etapas *informan* que murieron (`stage_died`,
+`perception_panic`) y nadie las reinicia. En la práctica son difíciles de matar
+—los pánicos de percepción se atrapan y la etapa sigue; retina reconecta sola—
+así que la superficie real es un pánico fuera del `catch_unwind` del cuerpo del
+hilo. Vale anotarlo, no vale una fase.
 
 ### 6.4 ~~Los modelos se cargan aunque la inferencia esté apagada~~ — *cerrada*
 

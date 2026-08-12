@@ -52,7 +52,7 @@ Aislar el lazo de control. Decidido en
 | **2** | La visualización no puede frenar el control | medio | ✅ **cerrada y verificada** 2026-08-12 |
 | **3** | La cadencia se cumple de verdad | **alto** | ✅ **cerrada** 2026-08-11 |
 | **4** | La clase de bug de cancelación desaparece | medio | ✅ **cerrada** 2026-08-11 |
-| **5** | El sistema declara su degradación | medio | parcial — mide, no actúa |
+| **5** | El sistema declara su degradación | medio | ✅ **superada por la arquitectura** |
 
 ### Reglas del track
 
@@ -161,23 +161,37 @@ Dos efectos de arrastre: `App` dejó de ser genérico sobre el reader —el gen�
 sobrevivía a su motivo— y `FrameReader` pasó a declarar `Send` explícito, que era
 lo que la advertencia del compilador venía pidiendo hace rato.
 
-### Fase 5 — El reloj y la degradación — *parcial*
+### Fase 5 — El reloj y la degradación ✅ *superada*
 
-**Hecho:** el reloj de control ya no depende del comportamiento por defecto de
-`MissedTickBehavior::Burst`. `ScanDeadline` (Fase 1) hace la aritmética
-explícita, anclada en el mismo origen que `ScanTimeline`, con tests que fijan las
-dos formas de deriva silenciosa.
+**El reloj, hecho.** Ya no depende del comportamiento por defecto de
+`MissedTickBehavior::Burst`: `ScanDeadline` hace la aritmética explícita, anclada
+en el mismo origen que `ScanTimeline`, con tests que fijan las dos formas de
+deriva silenciosa.
 
-**Hecho también:** el sistema publica ahora **la edad de la evidencia en el
-momento de decidir** (`evid:`), que es la única magnitud que mide una
-consecuencia clínica y no salud del motor. Viajaba por evento en el JSONL desde
-el esquema v2, pero sin agregado había que reconstruirla parseando evento por
-evento.
+**La degradación: la premisa venció.** El plan decía "el presupuesto pasa de
+contar a actuar". Esa fase suponía un lazo que se bloquea por cosas que puede
+soltar. Después de las fases 2, 3 y 4 **no queda nada que soltar**, y las
+mediciones lo confirman: 1,3–2,1 ms de atraso contra un periodo de 200 ms, cero
+incumplimientos, en el peor escenario que tenemos.
 
-**Falta:** el presupuesto sigue contando sin actuar. Un incumplimiento sostenido
-debería degradar algo o escalar el aviso. Recién ahora es accionable: con las
-etapas separadas, un atraso del lazo no puede venir de otra etapa, así que dice
-de quién es la culpa —antes no.
+Cada acción candidata, una por una:
+
+| Acción | Por qué ya no aplica |
+|---|---|
+| apagar viz | el visor no puede frenar a nadie desde la Fase 2 |
+| saltear inferencia | el lazo no la espera desde la Fase 3 |
+| bajar la cadencia | cambiaría los tiempos clínicos, que es justo lo que protegemos |
+| escalar un aviso | eso es **declarar**, no actuar — y ya existe |
+
+Construir el mecanismo igual sería construir un control sin planta. Lo que la
+fase quería —que el sistema declare su degradación— **ya lo hace**:
+`scan_deadlines_missed`, `stage_died`, `perception_panic`, `blind`, y los
+contadores de descarte de cada borde.
+
+**Lo único que queda de esta fase es una pregunta de configuración, no de
+código:** `data_stale_ms = 10_000` y `stale_warn_ms = 5_000` son números
+clínicos ya elegidos que gobiernan cuándo el sistema se declara ciego. Nadie los
+revisó contra un caso real. Eso es una revisión de umbrales, no una fase.
 
 ---
 
@@ -190,7 +204,7 @@ Independiente del Track A. Ninguna bloquea nada, todas están documentadas.
 | ~~B1~~ | ~~Los modelos ONNX se cargan aunque `pipeline.infer = false`~~ | — | ✅ cerrada 2026-08-11 |
 | ~~B2~~ | ~~`README.md` describe un baseline de 5 ramas y `track = false`~~ | — | ✅ cerrada 2026-08-11 |
 | ~~B3~~ | ~~Comentarios de código en inglés de la Fase 0~~ | — | ✅ cerrada 2026-08-11 |
-| **B4** | `workshop/scenarios/home-1/` es copia byte a byte del escenario 02 | — | **requiere tu decisión** |
+| ~~B4~~ | ~~`workshop/scenarios/home-1/` es copia byte a byte del escenario 02~~ | — | ✅ borrada 2026-08-12 |
 | ~~B7~~ | ~~El `Mutex<MetricsEngine>` en el camino del lazo~~ | — | ✅ descartada 2026-08-12: el piso bajó de 1,5-1,6 ms a 1,3-1,4 ms |
 | B5 | `docs/wiki/6.2` documenta `PipelineObserver` como el fan-out; el trait se borró en la Fase 3 | `docs/wiki/` | cualquier momento |
 | B6 | Hay dos documentos de arquitectura (`ARCHITECTURE.md` de ejecución, `docs/ARCHITECTURE.md` de workspace) y el README ahora los distingue, pero conviene decidir si se funden | — | cualquier momento |
@@ -202,11 +216,20 @@ B2 tenía cinco afirmaciones falsas —`track = false`, el baseline de 5 ramas, 
 link roto a `docs/ROADMAP.md`, "ADRs 001-024" con 35 en el árbol, y el tracker
 descrito como prototipo sin Kalman cuando ya lo tiene.
 
-**Sobre B4.** Una copia idéntica se desincroniza sola —- ya hubo que actualizarla
-a mano en la Fase 0. Si la intención es tener escenarios por despliegue (una
-cámara por cuarto), lo que corresponde no es duplicar el escenario sino separar
-*qué se prueba* de *contra qué se prueba*: el escenario define el test, un
-overlay define la cámara. Requiere decisión.
+**Sobre B4, resuelta.** No era una decisión de estructura: `home-1/02-ingest-viz/
+mana.toml` era **byte a byte idéntico** al original —ni siquiera cambiaba la
+cámara, que es lo único que justificaría un escenario por despliegue— y nada del
+repo lo referenciaba. Un directorio que no expresa ninguna diferencia no es un
+escenario por despliegue: es una copia sin mantener que deriva sola. Ya lo había
+hecho dos veces: en la Fase 0 y otra vez en la Fase 2, cuando el arreglo del
+`grep` de `dline:` entró en un `run-variant.sh` y no en el otro.
+
+Borrada. Está en la historia de git si hace falta.
+
+**Cuando aparezca un segundo despliegue**, la forma correcta ya existe en el
+sistema de configuración: un overlay que traiga sólo `[source]`. El escenario
+define *qué se prueba*, el overlay *contra qué*. Duplicar el archivo entero
+vuelve a poner las dos cosas en el mismo lugar, que es lo que produjo esto.
 
 ---
 
