@@ -164,6 +164,15 @@ pub struct MetricsTextConfig {
     /// presupuesto declarado en [health] `cycle_budget_ms`).
     #[serde(default = "default_true")]
     pub cycle_line: bool,
+    /// Cumplimiento de cadencia del scan (atraso min/p95/max contra el
+    /// vencimiento y cuántos vencimientos se incumplieron). Eje distinto del
+    /// de `cycle_line`, que mide el periodo.
+    #[serde(default = "default_true")]
+    pub deadline_line: bool,
+    /// Edad de la evidencia en el momento de decidir. Es la única línea del
+    /// reporte que mide una magnitud clínica y no salud del motor.
+    #[serde(default = "default_true")]
+    pub evidence_line: bool,
     #[serde(default = "default_true")]
     pub keyframe_gap_line: bool,
     #[serde(default)]
@@ -177,6 +186,8 @@ impl Default for MetricsTextConfig {
             infer_summary: true,
             per_model_lines: true,
             cycle_line: true,
+            deadline_line: true,
+            evidence_line: true,
             keyframe_gap_line: true,
             flags: MetricsTextFlags::default(),
         }

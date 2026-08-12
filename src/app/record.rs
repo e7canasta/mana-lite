@@ -6,11 +6,10 @@ use crate::logger::{DetRecord, Event};
 use crate::metrics::PerClassFrameStats;
 use std::time::Instant;
 
-use super::observer::PipelineObserver;
-use super::{App, CropFrameQueue, FrameSize};
-use crate::ingest::FrameReader;
+use super::perception::PerceptionStage;
+use super::{CropFrameQueue, FrameSize};
 
-impl<R: FrameReader> App<R> {
+impl PerceptionStage {
     pub(super) fn record_model_result(
         &mut self,
         model_key: &str,
@@ -32,7 +31,7 @@ impl<R: FrameReader> App<R> {
             );
         }
         let per_class = PerClassFrameStats::from_detections(&output.detections);
-        self.metrics.tick_inference_model(
+        self.lock_metrics().tick_inference_model(
             model_key,
             output.pipeline_us,
             &output.detections,
@@ -48,7 +47,7 @@ impl<R: FrameReader> App<R> {
             });
         }
         self.observer.emit(Event::detection(
-            self.state.frame_number(),
+            self.frame_number(),
             model_key,
             output.infer_ms,
             output.pipeline_us / 1000,
@@ -130,7 +129,7 @@ impl<R: FrameReader> App<R> {
             depth_summary(output.depth.as_ref(), frame_w, frame_h);
         let map_area = (width as u64) * (height as u64);
         let valid_ratio = (map_area > 0).then(|| valid_pixels as f32 / map_area as f32);
-        self.metrics.tick_inference_depth(
+        self.lock_metrics().tick_inference_depth(
             model_key,
             output.pipeline_us,
             output.depth.as_ref(),
@@ -151,7 +150,7 @@ impl<R: FrameReader> App<R> {
                 .log_model_depth(model_key, output.depth.as_ref());
         }
         self.observer.emit(Event::depth(
-            self.state.frame_number(),
+            self.frame_number(),
             model_key,
             output.infer_ms,
             output.pipeline_us / 1000,
@@ -200,10 +199,10 @@ impl<R: FrameReader> App<R> {
             })
             .collect();
         let results = self.depth_rules.evaluate(&measurements);
-        wire_depth_evidence(&mut self.control_image, &results, now);
+        wire_depth_evidence(&mut self.image, &results, now);
         for result in &results {
             self.observer.emit(Event::depth_region(
-                self.state.frame_number(),
+                self.frame_number(),
                 &result.rule,
                 result.region,
                 &format!("{:?}", result.metric).to_lowercase(),

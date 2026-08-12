@@ -46,6 +46,45 @@ impl Event {
         }
     }
 
+    /// Cumplimiento de cadencia de la ventana, tomado del mismo reporte que
+    /// alimenta la consola para que las dos vistas no puedan discrepar.
+    pub fn scan_deadline(report: &MetricsReport) -> Self {
+        Event::ScanDeadline {
+            window_s: report.window_s,
+            deadlines: report.scan_deadlines,
+            missed: report.scan_deadlines_missed,
+            late_min_us: report.scan_late_min_us,
+            late_p50_us: report.scan_late_p50_us,
+            late_p95_us: report.scan_late_p95_us,
+            late_max_us: report.scan_late_max_us,
+            tolerance_us: report.scan_late_tolerance_us,
+        }
+    }
+
+    /// Pánico de la etapa de percepción. Se registra como salud y no como
+    /// error suelto porque su consecuencia es clínica: si percepción deja de
+    /// producir, la evidencia envejece y el lazo se va a `blind`.
+    pub fn health_perception_panic(message: &str) -> Self {
+        Event::Health {
+            event: "perception_panic".into(),
+            frame_id: None,
+            cycle_us: None,
+            message: Some(message.to_string()),
+        }
+    }
+
+    /// Una etapa del pipeline terminó sola. Es salud y no error suelto porque
+    /// su consecuencia es clínica: sin esa etapa, la evidencia envejece y el
+    /// lazo se va a `blind` — y `blind` sin causa no se puede diagnosticar.
+    pub fn health_stage_died(stage: &str) -> Self {
+        Event::Health {
+            event: "stage_died".into(),
+            frame_id: None,
+            cycle_us: None,
+            message: Some(format!("{stage}: la etapa terminó sola")),
+        }
+    }
+
     pub fn health_blind(ms_since_frame: u64) -> Self {
         Event::Health {
             event: "blind".into(),

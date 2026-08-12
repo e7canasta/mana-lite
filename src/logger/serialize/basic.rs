@@ -54,6 +54,33 @@ pub(super) fn write_health_event(event: &Event, buf: &mut Vec<u8>) {
     }
 }
 
+/// Se emite bajo `"type":"health"` a propósito: el atraso del lazo se lee
+/// junto a `stale` y `blind`, no en la telemetría de rendimiento.
+pub(super) fn write_scan_deadline_event(event: &Event, buf: &mut Vec<u8>) {
+    let Event::ScanDeadline {
+        window_s,
+        deadlines,
+        missed,
+        late_min_us,
+        late_p50_us,
+        late_p95_us,
+        late_max_us,
+        tolerance_us,
+    } = event
+    else {
+        unreachable!()
+    };
+    buf.extend_from_slice(b"\"type\":\"health\",\"event\":\"scan_deadline\"");
+    append_field(buf, "window_s", *window_s);
+    append_field(buf, "deadlines", *deadlines);
+    append_field(buf, "missed", *missed);
+    append_field(buf, "late_min_us", *late_min_us);
+    append_field(buf, "late_p50_us", *late_p50_us);
+    append_field(buf, "late_p95_us", *late_p95_us);
+    append_field(buf, "late_max_us", *late_max_us);
+    append_field(buf, "tolerance_us", *tolerance_us);
+}
+
 pub(super) fn write_frame_event(event: &Event, buf: &mut Vec<u8>) {
     let Event::Frame {
         frame_id,
@@ -86,6 +113,20 @@ pub(super) fn write_metrics_event(event: &Event, buf: &mut Vec<u8>) {
     append_field(buf, "cycle_p95_ms", r.cycle_p95_ms);
     append_field(buf, "cycle_overruns", r.cycle_overruns);
     append_field(buf, "cycle_budget_ms", r.cycle_budget_ms);
+    append_field(buf, "scan_deadlines", r.scan_deadlines);
+    append_field(buf, "scan_late_min_us", r.scan_late_min_us);
+    append_field(buf, "scan_late_p50_us", r.scan_late_p50_us);
+    append_field(buf, "scan_late_p95_us", r.scan_late_p95_us);
+    append_field(buf, "scan_late_max_us", r.scan_late_max_us);
+    append_field(buf, "scan_deadlines_missed", r.scan_deadlines_missed);
+    append_field(buf, "slot_keyframes_dropped", r.slot_keyframes_dropped);
+    append_field(buf, "slot_images_dropped", r.slot_images_dropped);
+    append_field(buf, "slot_viz_dropped", r.slot_viz_dropped);
+    append_field(buf, "evidence_scans", r.evidence_scans);
+    append_field(buf, "evidence_age_min_ms", r.evidence_age_min_ms);
+    append_field(buf, "evidence_age_p50_ms", r.evidence_age_p50_ms);
+    append_field(buf, "evidence_age_p95_ms", r.evidence_age_p95_ms);
+    append_field(buf, "evidence_age_max_ms", r.evidence_age_max_ms);
     append_field(buf, "keyframe_gap_min_ms", r.keyframe_gap_min_ms);
     append_field(buf, "keyframe_gap_p50_ms", r.keyframe_gap_p50_ms);
     append_field(buf, "keyframe_gap_p95_ms", r.keyframe_gap_p95_ms);

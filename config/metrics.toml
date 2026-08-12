@@ -6,6 +6,8 @@ ingest_line = true
 infer_summary = true
 per_model_lines = true
 cycle_line = true
+deadline_line = true
+evidence_line = true
 keyframe_gap_line = true
 
 [metrics.text.flags]

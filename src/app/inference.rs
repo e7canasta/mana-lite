@@ -1,7 +1,7 @@
 //! Inference-cycle stages: schedule models, consolidate, record, publish.
 
 use crate::cascade::{CascadeTarget, GateObservation};
-use crate::config::{AppConfig, CropType};
+use crate::config::CropType;
 use crate::detection::CropRect;
 use crate::detection::{ConsolidatedObservation, DetectionRole, ModelDetections};
 use crate::infer::{InferenceResult, compute_bbox_roi, compute_upper_square_roi};
@@ -10,9 +10,8 @@ use crate::snapshot::FrameBuffer;
 use mana_perception::domain::{ClassName, ModelId};
 use std::time::Instant;
 
-use super::observer::PipelineObserver;
-use super::{App, CycleContext, FrameSize};
-use crate::ingest::FrameReader;
+use super::perception::{PerceptionConfig, PerceptionStage};
+use super::{CycleContext, FrameSize};
 
 #[derive(Debug, Clone)]
 struct ClinicalSample {
@@ -30,9 +29,9 @@ struct PendingModelOutput {
     crop_rect: Option<CropRect>,
 }
 
-impl<R: FrameReader> App<R> {
+impl PerceptionStage {
     /// Runs one inference cycle over a keyframe, in fixed stage order.
-    pub(super) fn run_inference(&mut self, cycle: CycleContext<'_>, config: &AppConfig) {
+    pub(super) fn run_inference(&mut self, cycle: CycleContext<'_>, config: &PerceptionConfig) {
         let fb = cycle.frame;
         #[cfg(feature = "rerun")]
         self.observer.viz.clear_depth_context_boxes();
@@ -55,7 +54,7 @@ impl<R: FrameReader> App<R> {
             .log_consolidated_observations(&observations, frame);
 
         self.record_pending_results(pending, frame, cycle.now);
-        let raw_person_count = observations_person_count(&observations, &config.presence.class);
+        let raw_person_count = observations_person_count(&observations, &config.presence_class);
         self.publish_clinical_sample(
             ClinicalSample {
                 observations,
@@ -95,7 +94,7 @@ impl<R: FrameReader> App<R> {
         &mut self,
         ordered: &[&str],
         fb: &FrameBuffer,
-        config: &AppConfig,
+        config: &PerceptionConfig,
         pending: &mut Vec<PendingModelOutput>,
     ) {
         let children: Vec<String> = ordered
@@ -104,27 +103,33 @@ impl<R: FrameReader> App<R> {
             .map(|model| (*model).to_owned())
             .collect();
         for model_key in children {
-            if self.presence_track_count(&config.presence.class) != 1 {
-                self.metrics.tick_infer_skip(&model_key);
+            if self.presence_track_count(&config.presence_class) != 1 {
+                self.lock_metrics().tick_infer_skip(&model_key);
                 continue;
             }
             let target = self.resolve_cascade_target(&model_key, pending, fb);
             if target.is_none() {
-                self.metrics.tick_infer_skip(&model_key);
+                self.lock_metrics().tick_infer_skip(&model_key);
                 continue;
             }
             self.run_scheduled_model(&model_key, target, fb, pending);
         }
     }
 
+    /// Compuerta de la cascada, resuelta contra la **directiva** de control y
+    /// no contra el tracker.
+    ///
+    /// Es el borde de realimentación del lazo: el tracker vive del lado de
+    /// control y lo muta `scan()` a 5 Hz. Leerlo directo obligaría a un candado
+    /// que el hilo de inferencia podría estar sosteniendo justo cuando el lazo
+    /// tiene que ticar — el bloqueo que esta fase saca, reintroducido con otro
+    /// nombre. La directiva es una muestra: hasta un periodo vieja, y alcanza.
     fn presence_track_count(&self, class: &str) -> usize {
-        self.control.tracker.as_ref().map_or(0, |tracker| {
-            tracker
-                .current_tracks()
-                .into_iter()
-                .filter(|track| track.class.as_str() == class)
-                .count()
-        })
+        self.directive
+            .tracks
+            .iter()
+            .filter(|track| track.class.as_str() == class)
+            .count()
     }
 
     fn resolve_cascade_target(
@@ -147,12 +152,7 @@ impl<R: FrameReader> App<R> {
                         .target_for_detections(model_key, detections, fb.w, fb.h)
                 })
         } else {
-            let current_tracks = self
-                .control
-                .tracker
-                .as_ref()
-                .map_or_else(Vec::new, |tracker| tracker.current_tracks());
-            let observations = gate_observations(&current_tracks);
+            let observations = gate_observations(&self.directive.tracks);
             self.cascade
                 .target_for(model_key, &observations, fb.w, fb.h)
         }
@@ -222,11 +222,11 @@ impl<R: FrameReader> App<R> {
 
     /// Stage: project consolidated sample into the control process image.
     fn publish_clinical_sample(&mut self, sample: ClinicalSample, now: Instant) {
-        self.control_image.observations = Some(mana_control::AgedEvidence::new(
+        self.image.observations = Some(mana_control::AgedEvidence::new(
             project_scene_sample(&sample),
             now,
         ));
-        self.control_image.measurement_pending = true;
+        self.image.measurement_pending = true;
     }
 
     fn run_scheduled_model(
@@ -287,14 +287,13 @@ impl<R: FrameReader> App<R> {
         )
     }
 
-    fn is_model_enabled(&self, config: &AppConfig, name: &str) -> bool {
+    fn is_model_enabled(&self, config: &PerceptionConfig, name: &str) -> bool {
         self.models.enabled(name)
             && self
                 .models
                 .task_of(name)
                 .map(|task| {
                     !config
-                        .inference
                         .disabled_tasks
                         .iter()
                         .any(|disabled| disabled == task.as_str())
@@ -302,11 +301,19 @@ impl<R: FrameReader> App<R> {
                 .unwrap_or(true)
     }
 
-    fn resolve_models(&self, config: &AppConfig) -> Vec<String> {
-        let models = self.control.fsm_engine.as_ref().map_or_else(
-            || self.cascade.all_models().to_vec(),
-            |fsm| fsm.current_models(),
-        );
+    /// Qué modelos correr. El otro brazo de la realimentación: **el FSM decide
+    /// qué mira la percepción**, y el FSM vive del lado de control.
+    ///
+    /// Sin directiva todavía —los primeros keyframes antes del primer scan— se
+    /// cae a la cascada completa, que es lo que hacía el sistema cuando el FSM
+    /// estaba apagado. Arrancar sin modelos sería peor: no habría evidencia con
+    /// la que control pudiera producir la primera directiva.
+    fn resolve_models(&self, config: &PerceptionConfig) -> Vec<String> {
+        let models = if self.directive.models.is_empty() {
+            self.cascade.all_models().to_vec()
+        } else {
+            self.directive.models.clone()
+        };
         models
             .into_iter()
             .filter(|name| self.is_model_enabled(config, name))
@@ -321,7 +328,7 @@ fn observations_person_count(observations: &[ConsolidatedObservation], class: &s
         .count()
 }
 
-fn gate_observations(tracks: &[&mana_control::track::Track]) -> Vec<GateObservation> {
+fn gate_observations(tracks: &[mana_control::track::Track]) -> Vec<GateObservation> {
     tracks
         .iter()
         .map(|t| GateObservation {

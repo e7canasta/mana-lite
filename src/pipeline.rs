@@ -5,10 +5,13 @@ use crate::metrics::{MetricsEngine, MetricsReport, PerModelMetrics};
 use crate::window::ErrorWindow;
 use std::time::Instant;
 
+/// Estado del **lazo de control**: densidad de pánicos y política de reporte.
+///
+/// El conteo de frames y el gap entre keyframes se fueron con la etapa de
+/// percepción (Fase 3): eran coordenadas de percepción viviendo del lado del
+/// programa.
 pub struct PipelineState {
-    frame_count: u64,
     panic_window: ErrorWindow,
-    last_keyframe_at: Instant,
     metrics_text: MetricsTextConfig,
 }
 
@@ -19,15 +22,9 @@ impl PipelineState {
         max_panics_in_window: u32,
     ) -> Self {
         Self {
-            frame_count: 0,
             panic_window: ErrorWindow::new(panic_window_cycles, max_panics_in_window),
-            last_keyframe_at: Instant::now(),
             metrics_text,
         }
-    }
-
-    pub fn frame_number(&self) -> u64 {
-        self.frame_count
     }
 
     /// Un ciclo con keyframe procesado sin panic: la ventana envejece.
@@ -46,39 +43,15 @@ impl PipelineState {
         self.panic_window.record(true)
     }
 
-    pub fn on_keyframe(
-        &mut self,
-        decode_us: u64,
-        metrics: &mut MetricsEngine,
-        log: &mut dyn LogSink,
-        now: Instant,
-    ) -> u64 {
-        self.frame_count += 1;
-        let dt_ms = now.duration_since(self.last_keyframe_at).as_millis() as u64;
-        self.last_keyframe_at = now;
-        metrics.tick_keyframe(dt_ms);
-        metrics.tick_decode(decode_us);
-        if self.frame_count % 5 == 1 {
-            log::info!(
-                "frame #{} ingested (decode {}us)",
-                self.frame_count,
-                decode_us
-            );
-        }
-        log.emit(Event::frame_ingest(
-            self.frame_count,
-            true,
-            decode_us,
-            dt_ms,
-        ));
-        dt_ms
-    }
-
     /// La senal es fresca solo si el keyframe produjo un frame decodificable:
     /// un decode fallido no es informacion, y no debe sacar a Health de blind.
     /// Devuelve el heartbeat si esto marca el retorno de una ceguera — es la
     /// recuperacion real del superloop (evaluate_at ya encuentra las
     /// banderas limpias y nunca emite Recovered).
+    ///
+    /// Desde la Fase 3 lo llama el lazo de control al instalar evidencia nueva
+    /// del slot: percepción sólo publica imagen cuando el decode funcionó, así
+    /// que "hay imagen nueva" *es* la señal de frescura.
     pub fn mark_health_fresh(&mut self, health: &mut Health, log: &mut dyn LogSink, now: Instant) {
         if health.touch_at(now) {
             log.emit(Event::health_heartbeat(0, "ingest", 0));
@@ -91,6 +64,7 @@ impl PipelineState {
     pub fn emit_metrics(&self, log: &mut dyn LogSink, metrics: &mut MetricsEngine) {
         if let Some((report, model_order)) = metrics.take_report() {
             log_report(&report, &model_order, &self.metrics_text);
+            log.emit(Event::scan_deadline(&report));
             log.emit(Event::metrics(report));
         }
     }
@@ -125,6 +99,57 @@ fn log_cycle_line(report: &MetricsReport) {
     );
 }
 
+/// Microsegundos como milisegundos con una decimal: el atraso de un lazo sano
+/// vive por debajo del milisegundo y la división entera lo borraría.
+fn us_as_ms(us: u64) -> f64 {
+    us as f64 / 1000.0
+}
+
+/// El cumplimiento de cadencia: cuánto después de su vencimiento arrancó cada
+/// scan. Es un eje distinto del periodo de la línea `cycle:` — el periodo se
+/// autocorrige con la recuperación en ráfaga y se ve sano aunque el lazo llegue
+/// tarde; el atraso no se autocorrige.
+///
+/// `missed` cuenta los vencimientos por encima de la tolerancia, que se imprime
+/// junto al contador: es el piso del temporizador, no un umbral de política, y
+/// la distribución que está a su izquierda va sin recortar.
+fn log_deadline_line(report: &MetricsReport) {
+    log::info!(
+        "dline: {} deadlines in {}s | late min {:.1}ms p50 {:.1}ms p95 {:.1}ms max {:.1}ms | {} missed (>{:.1}ms)",
+        report.scan_deadlines,
+        report.window_s,
+        us_as_ms(report.scan_late_min_us),
+        us_as_ms(report.scan_late_p50_us),
+        us_as_ms(report.scan_late_p95_us),
+        us_as_ms(report.scan_late_max_us),
+        report.scan_deadlines_missed,
+        us_as_ms(report.scan_late_tolerance_us),
+    );
+}
+
+/// **El número clínico.** Cuán vieja era la evidencia sobre la que cada scan
+/// decidió, contra el reloj de control.
+///
+/// Las demás líneas dicen si la máquina está sana. Ésta dice si la decisión se
+/// tomó sobre algo actual, que es una pregunta distinta y es la que le importa
+/// a una revisión de incidente.
+///
+/// El piso no es cero y no debería serlo: con keyframes a 1 Hz y un lazo a
+/// 5 Hz, cuatro de cada cinco scans deciden sobre evidencia que ya tenían. Un
+/// p50 cercano a medio intervalo de keyframe es lo sano; lo que hay que mirar
+/// es el `max` contra `health.data_stale_ms`.
+fn log_evidence_line(report: &MetricsReport) {
+    log::info!(
+        "evid:  {} scans con evidencia in {}s | edad min {}ms p50 {}ms p95 {}ms max {}ms",
+        report.evidence_scans,
+        report.window_s,
+        report.evidence_age_min_ms,
+        report.evidence_age_p50_ms,
+        report.evidence_age_p95_ms,
+        report.evidence_age_max_ms,
+    );
+}
+
 fn log_ingest_line(report: &MetricsReport, config: &MetricsTextConfig) {
     let decode_avg = avg_ms(report.decode_total_ms, report.keyframes);
     let gap_str = if config.keyframe_gap_line && report.keyframes > 0 {
@@ -147,6 +172,20 @@ fn log_ingest_line(report: &MetricsReport, config: &MetricsTextConfig) {
     }
     if config.flags.ingest_keyframe_drops && report.keyframes_dropped > 0 {
         flags.push(format!("kf_dropped:{}", report.keyframes_dropped));
+    }
+    // Bordes entre etapas (ADR-034). `kf_pisados` significa que percepción no
+    // dio abasto con la cámara; `img_pisadas`, que produjo dos evidencias entre
+    // dos scans. Se publican junto al resto de los descartes porque es donde un
+    // lector busca "qué se tiró": un borde sin instrumentar es un borde sobre
+    // el que no se puede razonar cuando algo va mal.
+    if report.slot_keyframes_dropped > 0 {
+        flags.push(format!("kf_pisados:{}", report.slot_keyframes_dropped));
+    }
+    if report.slot_images_dropped > 0 {
+        flags.push(format!("img_pisadas:{}", report.slot_images_dropped));
+    }
+    if report.slot_viz_dropped > 0 {
+        flags.push(format!("viz_pisados:{}", report.slot_viz_dropped));
     }
     if config.flags.ingest_timeouts && report.timeouts > 0 {
         flags.push(format!("timeouts:{}", report.timeouts));
@@ -277,6 +316,12 @@ fn log_per_model(name: &str, m: &PerModelMetrics, window_s: u64, keyframes: u64)
 fn log_report(report: &MetricsReport, model_order: &[String], config: &MetricsTextConfig) {
     if config.cycle_line {
         log_cycle_line(report);
+    }
+    if config.deadline_line {
+        log_deadline_line(report);
+    }
+    if config.evidence_line {
+        log_evidence_line(report);
     }
     if config.ingest_line {
         log_ingest_line(report, config);

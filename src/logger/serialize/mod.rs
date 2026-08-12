@@ -5,9 +5,10 @@ mod control;
 mod detection;
 mod writers;
 
-pub use writers::{write_f32, write_f64, write_json_string, write_u64};
-
-use basic::{write_frame_event, write_health_event, write_meta_event, write_metrics_event};
+use basic::{
+    write_frame_event, write_health_event, write_meta_event, write_metrics_event,
+    write_scan_deadline_event,
+};
 use control::{
     write_entity_event, write_face_dwell_event, write_fsm_event, write_presence_event,
     write_scene_signals_event, write_zone_event,
@@ -25,6 +26,7 @@ pub fn write_event(event: &Event, ts: &str, buf: &mut Vec<u8>) {
     match event {
         Event::Meta { .. } => write_meta_event(event, buf),
         Event::Health { .. } => write_health_event(event, buf),
+        Event::ScanDeadline { .. } => write_scan_deadline_event(event, buf),
         Event::Frame { .. } => write_frame_event(event, buf),
         Event::Detection { .. } => write_detection_event(event, buf),
         Event::Depth { .. } => write_depth_event(event, buf),

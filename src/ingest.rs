@@ -5,8 +5,14 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::time::Instant;
 
-pub trait FrameReader {
-    async fn next_frame(&mut self) -> Option<Frame>;
+pub trait FrameReader: Send + 'static {
+    /// Desazucarado a propósito en vez de `async fn`.
+    ///
+    /// Un `async fn` en trait no deja declarar cotas auto sobre el future que
+    /// devuelve, y desde la Fase 4 la ingesta corre en su propia task: sin
+    /// `Send` explícito, `tokio::spawn` no la acepta. Es el arreglo que la
+    /// propia advertencia del compilador venía pidiendo.
+    fn next_frame(&mut self) -> impl std::future::Future<Output = Option<Frame>> + Send;
 
     /// Optional Retina-specific counters; default readers return `None`.
     fn take_retina_counters(&mut self) -> Option<RetinaCounters> {
@@ -57,13 +63,18 @@ pub struct IngestEngine<R: FrameReader> {
     pending_keyframes_seen: u64,
     pending_keyframes_dropped: u64,
     last_keyframe_at: Instant,
-    /// Freshest keyframe drained but not yet emitted.
+    /// El keyframe más fresco ya drenado pero todavía no emitido.
     ///
-    /// This lives on the engine rather than on the stack of
-    /// [`Self::poll_freshest_keyframe`] because that future is polled inside a
-    /// `tokio::select!`, which drops the losing branch. A keyframe held in a
-    /// local would be counted in `keyframes_seen` and then silently discarded
-    /// when the scan tick wins the race.
+    /// Vive en el engine y no en la pila de
+    /// [`Self::poll_freshest_keyframe`] porque ese future se puede cancelar a
+    /// mitad de un drenaje. Un keyframe guardado en un local se contaría en
+    /// `keyframes_seen` y se descartaría en silencio al cancelarse.
+    ///
+    /// Hasta la Fase 4 lo cancelaba el `tokio::select!` del lazo, en cada tick
+    /// de scan que ganaba la carrera — era el bug más caro de esta base de
+    /// código. Ahora la ingesta tiene su propia task y lo único que la cancela
+    /// es el aborto del apagado, así que esto ya no protege contra un bug de
+    /// diseño sino contra perder un keyframe al terminar.
     staged: Option<Frame>,
     /// Cuánto puede suprimirse un keyframe idéntico antes de emitirlo igual.
     /// Ver [`should_suppress`].
@@ -108,14 +119,15 @@ impl<R: FrameReader> IngestEngine<R> {
         }
     }
 
-    /// Drain all buffered frames and return the freshest IDR keyframe, or
-    /// `None` if no new keyframe arrived before the reader timed out.
-    /// Duplicate consecutive keyframes (same 64-bit digest) are suppressed.
+    /// Drena todos los frames en buffer y devuelve el keyframe IDR más fresco,
+    /// o `None` si no llegó ninguno nuevo antes de que el reader diera timeout.
+    /// Los keyframes duplicados consecutivos (mismo digest de 64 bits) se
+    /// suprimen.
     ///
-    /// **Cancellation-safe.** Every observation is committed to `self` as soon
-    /// as it is made, so dropping this future — which `tokio::select!` does on
-    /// every scan tick that wins the race — loses no work. A keyframe already
-    /// drained stays staged and is emitted by the next call.
+    /// **Cancelación-segura.** Cada observación se compromete a `self` en el
+    /// momento en que se hace, así que descartar este future no pierde trabajo:
+    /// un keyframe ya drenado queda en `staged` y lo emite la llamada
+    /// siguiente.
     pub async fn poll_freshest_keyframe(&mut self) -> Option<RawKeyframe> {
         loop {
             match self.reader.next_frame().await {
@@ -455,11 +467,12 @@ mod tests {
         IngestEngine::new(SyntheticReader::new(frames), TEST_SUPPRESS_MS)
     }
 
-    /// Yields its queue, then pends forever instead of reporting exhaustion.
+    /// Entrega su cola y después queda pendiente para siempre, en vez de
+    /// reportar agotamiento.
     ///
-    /// Models the real condition on a live stream: frames keep arriving faster
-    /// than `poll_timeout_ms`, so the drain loop never terminates on its own
-    /// and is always ended by `select!` cancelling it.
+    /// Modela la condición real de un stream vivo: los frames llegan más rápido
+    /// que `poll_timeout_ms`, así que el bucle de drenaje nunca termina solo y
+    /// siempre lo corta una cancelación desde afuera.
     struct PendingReader {
         frames: std::collections::VecDeque<Frame>,
         pending: bool,
@@ -488,7 +501,7 @@ mod tests {
             TEST_SUPPRESS_MS,
         );
 
-        // Cancel the drain the way `tokio::select!` does when the scan tick wins.
+        // Cancela el drenaje igual que lo hace el aborto del apagado.
         let cancelled = tokio::time::timeout(
             std::time::Duration::from_millis(20),
             engine.poll_freshest_keyframe(),
@@ -496,17 +509,17 @@ mod tests {
         .await;
         assert!(
             cancelled.is_err(),
-            "the drain must still be running when it is cancelled"
+            "el drenaje tiene que seguir corriendo cuando se lo cancela"
         );
-        assert_eq!(engine.keyframes_seen, 1, "the keyframe was observed");
+        assert_eq!(engine.keyframes_seen, 1, "el keyframe se observó");
 
-        // Letting the reader report exhaustion must surface that same keyframe:
-        // a cancellation is not allowed to consume it.
+        // Dejar que el reader reporte agotamiento tiene que sacar ese mismo
+        // keyframe: una cancelación no puede consumirlo.
         engine.reader.pending = false;
         let kf = engine
             .poll_freshest_keyframe()
             .await
-            .expect("keyframe staged before cancellation must survive");
+            .expect("el keyframe staged antes de la cancelación debe sobrevivir");
         assert_eq!(kf.h264, vec![9u8; 64]);
         assert_eq!(
             engine.keyframes_seen, 1,

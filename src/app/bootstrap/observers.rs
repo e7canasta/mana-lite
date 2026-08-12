@@ -6,7 +6,7 @@ use crate::ingest::{FrameReader, IngestEngine};
 use crate::logger::{Event, JsonlLevel, LogManager, LogSink};
 use crate::metrics::MetricsEngine;
 use crate::pipeline::PipelineState;
-use crate::snapshot::{FrameDecoder, SnapshotSaver};
+use crate::snapshot::SnapshotSaver;
 #[cfg(feature = "rerun")]
 use crate::viz::VizBridge;
 
@@ -18,7 +18,6 @@ pub(super) struct WiredObservers<R: FrameReader> {
     pub(super) log: Box<dyn LogSink>,
     pub(super) ingest: IngestEngine<R>,
     pub(super) metrics: MetricsEngine,
-    pub(super) decoder: FrameDecoder,
     pub(super) snapshots: SnapshotSaver,
     pub(super) state: PipelineState,
     #[cfg(feature = "rerun")]
@@ -72,7 +71,10 @@ pub(super) fn wire_observers_and_sinks<R: FrameReader>(
         validated.metrics_log.metrics.report_interval_s,
         config.health.cycle_budget_ms,
     );
-    let decoder = FrameDecoder::new()?;
+    // El decoder ya no se construye acá: lo arma el hilo de percepción, que es
+    // el único que puede tenerlo (el escalador de ffmpeg es `!Send`). El fallo
+    // de construcción sigue siendo falla de arranque porque `perception::spawn`
+    // espera la confirmación del hilo antes de que `bootstrap` devuelva.
     let snapshots = SnapshotSaver::new(
         config.output.snapshot_dir.clone(),
         config.output.snapshot_verbose,
@@ -117,7 +119,6 @@ pub(super) fn wire_observers_and_sinks<R: FrameReader>(
         log,
         ingest,
         metrics,
-        decoder,
         snapshots,
         state,
         #[cfg(feature = "rerun")]

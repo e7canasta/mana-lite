@@ -34,7 +34,19 @@ pub(super) fn build_perception_engines(
     validated: &ValidatedBootstrap,
 ) -> Result<PerceptionEngines> {
     let rois = build_static_rois(validated);
-    let infer = InferEngine::from_catalog(&validated.runtime_catalog)?;
+    // `pipeline.infer = false` cortaba la ejecución pero no la carga: un
+    // despliegue sin inferencia pagaba igual el arranque y la VRAM de la sesión
+    // ONNX. La validación del catálogo y del blueprint ya corrió en la etapa 2,
+    // así que saltear la construcción no debilita ninguna verificación de
+    // arranque — sólo evita construir sesiones que nadie va a llamar.
+    let infer = if config.pipeline.infer {
+        InferEngine::from_catalog(&validated.runtime_catalog)?
+    } else {
+        log::info!("inference: pipeline.infer=false — no se construye ninguna sesión ONNX");
+        InferEngine::from_catalog(&crate::config::ModelCatalog {
+            models: HashMap::new(),
+        })?
+    };
     log::info!("inference: {} model(s) loaded", infer.model_count());
     ultralytics_inference::logging::set_verbose(false);
 

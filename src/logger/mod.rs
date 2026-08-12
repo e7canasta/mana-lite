@@ -316,7 +316,12 @@ impl MetricsJsonlConfig {
             Event::FaceDwell { .. } => self.face_dwell_events,
             Event::SceneSignals { .. } => self.scene_signals_events,
             Event::Metrics(_) => self.metrics_event,
-            Event::Meta { .. } | Event::Health { .. } | Event::Entity { .. } => true,
+            // `ScanDeadline` es salud, no telemetría: sale aunque
+            // `metrics_event` esté apagado, igual que `stale` y `blind`.
+            Event::Meta { .. }
+            | Event::Health { .. }
+            | Event::ScanDeadline { .. }
+            | Event::Entity { .. } => true,
         }
     }
 }

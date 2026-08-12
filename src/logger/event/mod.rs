@@ -30,6 +30,25 @@ pub enum Event {
         cycle_us: Option<u64>,
         message: Option<String>,
     },
+    /// Cumplimiento de cadencia del lazo sobre una ventana de reporte.
+    ///
+    /// Es un evento de salud y no de métricas: la pregunta que contesta en una
+    /// revisión de incidente —*¿el lazo estaba corriendo a tiempo cuando pasó
+    /// esto?*— es del mismo orden que `stale` o `blind`, y como ellos sale
+    /// siempre, sin depender de que la telemetría verbosa esté encendida.
+    ///
+    /// Los números van como campos y no dentro de `message`: un atraso metido
+    /// en una cadena de prosa no se puede consultar.
+    ScanDeadline {
+        window_s: u64,
+        deadlines: u64,
+        missed: u64,
+        late_min_us: u64,
+        late_p50_us: u64,
+        late_p95_us: u64,
+        late_max_us: u64,
+        tolerance_us: u64,
+    },
     Frame {
         frame_id: u64,
         is_keyframe: bool,
@@ -184,6 +203,7 @@ impl Event {
         match self {
             Event::Meta { .. } => JsonlLevel::Info,
             Event::Health { .. } => JsonlLevel::Info,
+            Event::ScanDeadline { .. } => JsonlLevel::Info,
             Event::Fsm { .. } => JsonlLevel::Info,
             Event::Presence { .. } => JsonlLevel::Debug,
             Event::SceneSignals { .. } => JsonlLevel::Info,

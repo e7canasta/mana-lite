@@ -1,8 +1,45 @@
 use std::collections::HashMap;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crate::depth_map::DepthFrame;
 use crate::detection::Detection;
+
+/// Piso de medición del atraso de vencimiento, en microsegundos.
+///
+/// El temporizador de tokio es una rueda jerárquica: un `sleep_until` nunca se
+/// despierta antes del vencimiento, pero se despierta sistemáticamente algo
+/// después aunque el lazo esté completamente ocioso. Contar eso como
+/// incumplimiento haría que **todos** los vencimientos figuraran incumplidos
+/// siempre, y un contador que vale 100% en reposo no distingue nada.
+///
+/// **El valor es medido, no elegido.** Corrida de 180 s del escenario 01
+/// —ingesta sola, nada que pueda bloquear el lazo— sobre 487 vencimientos:
+///
+/// ```text
+/// late_min_us   800 … 1_145
+/// late_p95_us 1_879 … 2_083
+/// late_max_us 1_957 … 2_117   ← ningún vencimiento de la corrida lo superó
+/// ```
+///
+/// El piso es ~2,1 ms y es muy estable. La primera versión de esta constante
+/// valía 1 ms —debajo del piso— y producía 470 incumplimientos de 487 en el
+/// escenario *de control*, contra 321 de 332 en el escenario con inferencia
+/// bloqueando 188 ms: el contador no distinguía un lazo sano de uno roto. Está
+/// en 5 ms, 2,4× el piso medido y 2,5% del periodo de 200 ms.
+///
+/// **Compuerta que lo mantiene honesto:** el escenario 01 debe informar
+/// `missed 0`. Si vuelve a informar incumplimientos sin que nada bloquee el
+/// lazo, el piso se movió y esta constante hay que volver a medirla — no
+/// subirla hasta que el número quede lindo.
+///
+/// Si alguien baja `scan.period_ms` a menos de ~20 ms, esta tolerancia deja de
+/// ser despreciable frente al periodo y hay que revisarla.
+///
+/// La tolerancia gobierna sólo el **contador**. La distribución de atraso
+/// (`min`/`p50`/`p95`/`max`) se publica en microsegundos y sin recortar: el
+/// piso del instrumento queda a la vista en el reporte en vez de esconderse
+/// detrás del umbral.
+pub const SCAN_DEADLINE_TOLERANCE_US: u64 = 5_000;
 
 // ── Per-frame per-class stats (transient, computed each keyframe) ──
 
@@ -102,6 +139,16 @@ pub struct Metrics {
     pub cycle_max_us: u64,
     pub cycle_overruns: u64,
     pub cycle_samples: Vec<u64>,
+    pub scan_late_min_us: u64,
+    pub scan_late_max_us: u64,
+    pub scan_late_samples: Vec<u64>,
+    pub scan_deadlines_missed: u64,
+    pub slot_keyframes_dropped: u64,
+    pub slot_images_dropped: u64,
+    pub slot_viz_dropped: u64,
+    pub evidence_age_min_ms: u64,
+    pub evidence_age_max_ms: u64,
+    pub evidence_age_samples: Vec<u64>,
     pub keyframe_gap_min_us: u64,
     pub keyframe_gap_max_us: u64,
     pub keyframe_gap_samples: Vec<u64>,
@@ -137,6 +184,16 @@ impl Default for Metrics {
             cycle_max_us: 0,
             cycle_overruns: 0,
             cycle_samples: Vec::new(),
+            scan_late_min_us: u64::MAX,
+            scan_late_max_us: 0,
+            scan_late_samples: Vec::new(),
+            scan_deadlines_missed: 0,
+            slot_keyframes_dropped: 0,
+            slot_images_dropped: 0,
+            slot_viz_dropped: 0,
+            evidence_age_min_ms: u64::MAX,
+            evidence_age_max_ms: 0,
+            evidence_age_samples: Vec::new(),
             keyframe_gap_min_us: u64::MAX,
             keyframe_gap_max_us: 0,
             keyframe_gap_samples: Vec::new(),
@@ -183,6 +240,8 @@ impl Metrics {
     fn with_cycle_capacity(cycle_capacity: usize) -> Self {
         let mut metrics = Self::default();
         metrics.cycle_samples = Vec::with_capacity(cycle_capacity);
+        metrics.scan_late_samples = Vec::with_capacity(cycle_capacity);
+        metrics.evidence_age_samples = Vec::with_capacity(cycle_capacity);
         metrics.keyframe_gap_samples = Vec::with_capacity(cycle_capacity);
         metrics
     }
@@ -190,6 +249,19 @@ impl Metrics {
     pub fn into_report(mut self, window_s: u64, cycle_budget_ms: u64) -> MetricsReport {
         self.cycle_samples.sort_unstable();
         let cycle_p95_us = percentile_us(&self.cycle_samples, 95);
+        self.scan_late_samples.sort_unstable();
+        let scan_deadlines = self.scan_late_samples.len() as u64;
+        // p50 junto a p95 porque el atraso es **bimodal** por construcción: los
+        // ciclos que no chocan con trabajo se quedan en el piso del
+        // temporizador y los que sí, saltan a la latencia de la etapa que los
+        // bloqueó. Sin la mediana, un p95 de 115 ms parece un lazo degradado en
+        // vez de uno que cumple el 80% de las veces y se bloquea el resto.
+        let scan_late_p50_us = percentile_us(&self.scan_late_samples, 50);
+        let scan_late_p95_us = percentile_us(&self.scan_late_samples, 95);
+        self.evidence_age_samples.sort_unstable();
+        let evidence_scans = self.evidence_age_samples.len() as u64;
+        let evidence_age_p50_ms = percentile_us(&self.evidence_age_samples, 50);
+        let evidence_age_p95_ms = percentile_us(&self.evidence_age_samples, 95);
         self.keyframe_gap_samples.sort_unstable();
         let keyframe_gap_count = self.keyframe_gap_samples.len();
         let keyframe_gap_p50_us = percentile_us(&self.keyframe_gap_samples, 50);
@@ -210,6 +282,32 @@ impl Metrics {
             cycle_p95_ms: cycle_p95_us / 1000,
             cycle_overruns: self.cycle_overruns,
             cycle_budget_ms,
+            scan_deadlines,
+            // En microsegundos y sin dividir: en un lazo sano el atraso vive
+            // por debajo del milisegundo, y en ms el reporte diría 0 tanto
+            // cuando el lazo cumple como cuando el instrumento está roto.
+            scan_late_min_us: if scan_deadlines > 0 {
+                self.scan_late_min_us
+            } else {
+                0
+            },
+            scan_late_p50_us,
+            scan_late_p95_us,
+            scan_late_max_us: self.scan_late_max_us,
+            scan_deadlines_missed: self.scan_deadlines_missed,
+            scan_late_tolerance_us: SCAN_DEADLINE_TOLERANCE_US,
+            slot_keyframes_dropped: self.slot_keyframes_dropped,
+            slot_images_dropped: self.slot_images_dropped,
+            slot_viz_dropped: self.slot_viz_dropped,
+            evidence_scans,
+            evidence_age_min_ms: if evidence_scans > 0 {
+                self.evidence_age_min_ms
+            } else {
+                0
+            },
+            evidence_age_p50_ms,
+            evidence_age_p95_ms,
+            evidence_age_max_ms: self.evidence_age_max_ms,
             keyframe_gap_min_ms: if keyframe_gap_count > 0 {
                 self.keyframe_gap_min_us / 1000
             } else {
@@ -265,6 +363,21 @@ pub struct MetricsReport {
     pub cycle_p95_ms: u64,
     pub cycle_overruns: u64,
     pub cycle_budget_ms: u64,
+    pub scan_deadlines: u64,
+    pub scan_late_min_us: u64,
+    pub scan_late_p50_us: u64,
+    pub scan_late_p95_us: u64,
+    pub scan_late_max_us: u64,
+    pub scan_deadlines_missed: u64,
+    pub scan_late_tolerance_us: u64,
+    pub slot_keyframes_dropped: u64,
+    pub slot_images_dropped: u64,
+    pub slot_viz_dropped: u64,
+    pub evidence_scans: u64,
+    pub evidence_age_min_ms: u64,
+    pub evidence_age_p50_ms: u64,
+    pub evidence_age_p95_ms: u64,
+    pub evidence_age_max_ms: u64,
     pub keyframe_gap_min_ms: u64,
     pub keyframe_gap_p50_ms: u64,
     pub keyframe_gap_p95_ms: u64,
@@ -352,6 +465,30 @@ impl MetricsEngine {
         self.current.cycle_samples.push(delta_us);
         if delta_us > self.cycle_budget_us {
             self.current.cycle_overruns += 1;
+        }
+    }
+
+    /// Registra cuánto después de su vencimiento arrancó un scan.
+    ///
+    /// Mide un eje distinto del de [`tick_cycle_at`](Self::tick_cycle_at) y las
+    /// dos conviven porque responden preguntas distintas:
+    ///
+    /// - **periodo**: cuánto pasó entre dos scans. Con recuperación en ráfaga
+    ///   se autocorrige — un scan que arrancó tarde se compensa con el
+    ///   siguiente, que arranca inmediatamente — así que el promedio se ve sano
+    ///   incluso cuando el lazo incumplió.
+    /// - **atraso**: cuánto después de su vencimiento arrancó cada scan. Eso no
+    ///   se autocorrige, y es lo que en un PLC se llama incumplimiento.
+    ///
+    /// Por eso `cycle_budget_ms` no sirve para esto: es un umbral sobre el
+    /// periodo, y el periodo es justamente la magnitud que la ráfaga repara.
+    pub fn tick_scan_deadline(&mut self, late: Duration) {
+        let late_us = u64::try_from(late.as_micros()).unwrap_or(u64::MAX);
+        self.current.scan_late_min_us = self.current.scan_late_min_us.min(late_us);
+        self.current.scan_late_max_us = self.current.scan_late_max_us.max(late_us);
+        self.current.scan_late_samples.push(late_us);
+        if late_us > SCAN_DEADLINE_TOLERANCE_US {
+            self.current.scan_deadlines_missed += 1;
         }
     }
 
@@ -465,6 +602,48 @@ impl MetricsEngine {
 
     pub fn tick_blind(&mut self) {
         self.current.blind_cycles += 1;
+    }
+
+    /// Cuán vieja era la evidencia sobre la que el control acaba de decidir.
+    ///
+    /// **Es la única magnitud del sistema con consecuencia clínica directa.**
+    /// Todo lo demás que se mide acá —periodo, atraso, latencia de inferencia,
+    /// descartes— es salud del motor: dice si la máquina está sana, no si la
+    /// decisión fue tomada sobre algo actual.
+    ///
+    /// La pregunta que contesta es la que hace un revisor de incidente: *cuando
+    /// el FSM dijo `bed_alert`, ¿de cuándo era lo que vio?* El dato viajaba por
+    /// evento en el JSONL desde el esquema v2, pero sin agregado había que
+    /// reconstruirlo parseando evento por evento.
+    ///
+    /// Se mide contra el reloj de control —`ScanTimeline`— y no contra el de
+    /// pared, porque es la edad tal como la percibió la decisión.
+    ///
+    /// Sólo se registra cuando hay evidencia: sin observaciones la edad es
+    /// `u64::MAX`, y meter ese centinela en una distribución la arruina. La
+    /// ausencia de evidencia ya la cuenta `blind_cycles`.
+    pub fn tick_evidence_age(&mut self, age_ms: u64) {
+        self.current.evidence_age_min_ms = self.current.evidence_age_min_ms.min(age_ms);
+        self.current.evidence_age_max_ms = self.current.evidence_age_max_ms.max(age_ms);
+        self.current.evidence_age_samples.push(age_ms);
+    }
+
+    /// Muestras pisadas en los bordes entre etapas (ADR-034).
+    ///
+    /// `keyframes` pisados significa que percepción no llegó a tomar el
+    /// anterior — la inferencia va más lenta que la cámara. `images` pisadas
+    /// significa que percepción produjo dos evidencias entre dos scans, que a
+    /// las cadencias reales no debería pasar nunca. `viz` pisados es el enlace
+    /// del visor sin dar abasto, y es el contador que **debe** subir cuando el
+    /// enlace satura: es la prueba de que se descarta en vez de bloquear.
+    ///
+    /// Descartar es la degradación correcta para una muestra; **descartarla en
+    /// silencio no lo es**, y un borde sin instrumentar es un borde sobre el
+    /// que no se puede razonar cuando algo va mal.
+    pub fn tick_slot_drops(&mut self, keyframes: u64, images: u64, viz: u64) {
+        self.current.slot_keyframes_dropped += keyframes;
+        self.current.slot_images_dropped += images;
+        self.current.slot_viz_dropped += viz;
     }
 
     pub fn tick_infer_skip(&mut self, model_key: &str) {
