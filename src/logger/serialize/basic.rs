@@ -187,10 +187,22 @@ pub(super) fn write_metrics_models(
         buf.extend_from_slice(b"\":{");
         append_field(buf, "calls", m.inferences);
         append_field(buf, "total_ms", m.infer_total_us / 1000);
-        append_field(buf, "min_ms", m.infer_min_us / 1000);
-        append_field(buf, "max_ms", m.infer_max_us / 1000);
+        // Sin llamadas no hay mínimo ni máximo, y ausencia no es cero: el
+        // acumulador de mínimo arranca en `u64::MAX` y emitirlo publicaba
+        // `"min_ms":18446744073709551` como si fuera una latencia medida. Un
+        // modelo que el estado del FSM no pidió entra igual en este mapa con
+        // cero llamadas, así que el caso es normal, no un borde.
+        if m.inferences > 0 {
+            append_field(buf, "min_ms", m.infer_min_us / 1000);
+            append_field(buf, "max_ms", m.infer_max_us / 1000);
+        }
         append_field(buf, "dets", m.total_dets);
         append_field(buf, "skips", m.skips);
+        // Razón distinta de `skips`, y por eso clave distinta: el modelo no fue
+        // salteado por su regla, el estado del FSM no lo pidió. Sin separarlas,
+        // una autopsia no puede distinguir "la escena no aplicaba" de "la
+        // política lo apagó", que llevan a lugares opuestos del sistema.
+        append_field(buf, "gated", m.gated);
         append_field(buf, "empty", m.empty);
         if m.depth_frames > 0 {
             append_field(buf, "depth_frames", m.depth_frames);
@@ -230,4 +242,96 @@ pub(super) fn write_metrics_models(
         buf.extend_from_slice(b"}");
     }
     buf.extend_from_slice(b"}");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `skips` y `gated` son razones distintas por las que un modelo no corrió,
+    /// y el JSONL tiene que poder distinguirlas: una autopsia que las confunde
+    /// busca el problema en la escena cuando estaba en la política, o al revés.
+    ///
+    /// Este bloque de serialización no tenía ningún test — se emite sólo con
+    /// `per_model_in_window`, que viene apagado, así que la suite pasaba sin
+    /// ejecutarlo nunca.
+    #[test]
+    fn el_bloque_por_modelo_distingue_salteado_de_apagado() {
+        let mut models = HashMap::new();
+        models.insert(
+            "face-yolo".to_string(),
+            PerModelMetrics {
+                inferences: 7,
+                total_dets: 5,
+                skips: 3,
+                gated: 11,
+                empty: 1,
+                ..PerModelMetrics::default()
+            },
+        );
+        let mut buf = Vec::new();
+        write_metrics_models(&models, &mut buf);
+        let json = String::from_utf8(buf).expect("el serializador emite UTF-8");
+
+        assert!(json.contains(r#""skips":3"#), "falta `skips` en {json}");
+        assert!(json.contains(r#""gated":11"#), "falta `gated` en {json}");
+        assert!(json.contains(r#""calls":7"#), "falta `calls` en {json}");
+        assert!(
+            json.contains(r#""min_ms":"#),
+            "con llamadas tiene que haber mínimo"
+        );
+    }
+
+    /// Un modelo sin llamadas no tiene mínimo ni máximo de latencia, y el
+    /// acumulador de mínimo arranca en `u64::MAX`. Emitirlo publicaba
+    /// `"min_ms":18446744073709551` como si fuera una medición.
+    ///
+    /// No es un borde: un modelo que el estado del FSM no pidió entra en este
+    /// mapa con cero llamadas en cada ventana en la que estuvo apagado.
+    #[test]
+    fn un_modelo_sin_llamadas_no_publica_latencias() {
+        let mut models = HashMap::new();
+        models.insert(
+            "face-yolo".to_string(),
+            PerModelMetrics {
+                gated: 5,
+                ..PerModelMetrics::default()
+            },
+        );
+        let mut buf = Vec::new();
+        write_metrics_models(&models, &mut buf);
+        let json = String::from_utf8(buf).expect("el serializador emite UTF-8");
+
+        assert!(
+            !json.contains("18446744073709551"),
+            "el centinela del acumulador se está publicando como latencia: {json}"
+        );
+        assert!(
+            !json.contains(r#""min_ms":"#),
+            "sin llamadas no hay mínimo: {json}"
+        );
+        assert!(
+            !json.contains(r#""max_ms":"#),
+            "sin llamadas no hay máximo: {json}"
+        );
+        assert!(
+            json.contains(r#""gated":5"#),
+            "el contador sí tiene que salir"
+        );
+    }
+
+    /// Un modelo que nunca fue apagado ni salteado igual publica los dos
+    /// contadores en cero: un campo ausente y un cero se leen distinto, y quien
+    /// consulta el JSONL no debería tener que adivinar cuál es cuál.
+    #[test]
+    fn los_contadores_salen_aunque_esten_en_cero() {
+        let mut models = HashMap::new();
+        models.insert("detect-fast".to_string(), PerModelMetrics::default());
+        let mut buf = Vec::new();
+        write_metrics_models(&models, &mut buf);
+        let json = String::from_utf8(buf).expect("el serializador emite UTF-8");
+
+        assert!(json.contains(r#""skips":0"#), "falta `skips` en {json}");
+        assert!(json.contains(r#""gated":0"#), "falta `gated` en {json}");
+    }
 }

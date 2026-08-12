@@ -320,10 +320,14 @@ Y dos cosas que salieron de correr la escalera y ya están cerradas:
 - **La wiki generada** (§8). Las 29 páginas quedaron marcadas con su errata
   específica, así que ninguna miente en silencio; lo que falta es regenerarla, y
   la herramienta que la produjo no está en el repo.
-- **`gated` no sale al JSONL.** El contador nuevo distingue "el estado no pidió
-  este modelo" de "la regla lo salteó" en el reporte de texto, pero la
-  serialización por modelo sigue emitiendo sólo `skips`. Ampliar el JSONL es
-  tocar un contrato, así que queda como decisión y no como olvido.
+Y `gated` ya sale al JSONL: es aditivo —clave nueva, ninguna existente cambia de
+significado— así que `JSONL_SCHEMA_VERSION` sigue en 2. Escribir su test
+descubrió que el bloque por modelo publicaba `"min_ms":18446744073709551` cuando
+un modelo no había tenido llamadas: el centinela `u64::MAX` del acumulador,
+dividido por mil, emitido como si fuera una latencia medida. Un modelo apagado
+por el estado entra en ese mapa con cero llamadas, así que el caso pasó de raro
+a normal justo con este cambio. Corregido: sin llamadas no se emite ni `min_ms`
+ni `max_ms`.
 
 ## 12. La compuerta del circuito no cubre los tiers
 
