@@ -27,6 +27,7 @@ pub use mana_control::occupancy;
 pub mod pipeline;
 pub use mana_control::presence;
 pub use mana_control::scan;
+pub mod slot;
 pub mod snapshot;
 pub use mana_control::timing;
 pub use mana_control::track;
