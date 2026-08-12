@@ -321,6 +321,7 @@ impl MetricsJsonlConfig {
             Event::Meta { .. }
             | Event::Health { .. }
             | Event::ScanDeadline { .. }
+            | Event::EvidenceAge { .. }
             | Event::Entity { .. } => true,
         }
     }

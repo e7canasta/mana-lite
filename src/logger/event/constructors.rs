@@ -61,6 +61,21 @@ impl Event {
         }
     }
 
+    /// Edad de la evidencia de la ventana, del mismo reporte que alimenta la
+    /// consola para que las dos vistas no puedan discrepar. `None` cuando
+    /// ningún scan tuvo evidencia: un evento con ceros diría que la evidencia
+    /// era fresca, que es lo contrario de lo que pasó.
+    pub fn evidence_age(report: &MetricsReport) -> Option<Self> {
+        (report.evidence_scans > 0).then(|| Event::EvidenceAge {
+            window_s: report.window_s,
+            scans: report.evidence_scans,
+            min_ms: report.evidence_age_min_ms,
+            p50_ms: report.evidence_age_p50_ms,
+            p95_ms: report.evidence_age_p95_ms,
+            max_ms: report.evidence_age_max_ms,
+        })
+    }
+
     /// Pánico de la etapa de percepción. Se registra como salud y no como
     /// error suelto porque su consecuencia es clínica: si percepción deja de
     /// producir, la evidencia envejece y el lazo se va a `blind`.

@@ -65,6 +65,9 @@ impl PipelineState {
         if let Some((report, model_order)) = metrics.take_report() {
             log_report(&report, &model_order, &self.metrics_text);
             log.emit(Event::scan_deadline(&report));
+            if let Some(event) = Event::evidence_age(&report) {
+                log.emit(event);
+            }
             log.emit(Event::metrics(report));
         }
     }

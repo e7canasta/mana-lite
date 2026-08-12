@@ -81,6 +81,27 @@ pub(super) fn write_scan_deadline_event(event: &Event, buf: &mut Vec<u8>) {
     append_field(buf, "tolerance_us", *tolerance_us);
 }
 
+pub(super) fn write_evidence_age_event(event: &Event, buf: &mut Vec<u8>) {
+    let Event::EvidenceAge {
+        window_s,
+        scans,
+        min_ms,
+        p50_ms,
+        p95_ms,
+        max_ms,
+    } = event
+    else {
+        unreachable!()
+    };
+    buf.extend_from_slice(b"\"type\":\"health\",\"event\":\"evidence_age\"");
+    append_field(buf, "window_s", *window_s);
+    append_field(buf, "scans", *scans);
+    append_field(buf, "min_ms", *min_ms);
+    append_field(buf, "p50_ms", *p50_ms);
+    append_field(buf, "p95_ms", *p95_ms);
+    append_field(buf, "max_ms", *max_ms);
+}
+
 pub(super) fn write_frame_event(event: &Event, buf: &mut Vec<u8>) {
     let Event::Frame {
         frame_id,

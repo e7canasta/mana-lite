@@ -49,6 +49,22 @@ pub enum Event {
         late_max_us: u64,
         tolerance_us: u64,
     },
+    /// Edad de la evidencia sobre la que se decidió, por ventana.
+    ///
+    /// Sale como `health` y no dentro de `metrics` por la misma razón que
+    /// [`Event::ScanDeadline`], sólo que acá pesa más: `metrics_event` está
+    /// apagado en los despliegues reales, y ésta es **la única magnitud del
+    /// sistema con consecuencia clínica directa**. Una revisión de incidente
+    /// que no pueda contestar *"¿de cuándo era lo que vio?"* no puede concluir
+    /// nada.
+    EvidenceAge {
+        window_s: u64,
+        scans: u64,
+        min_ms: u64,
+        p50_ms: u64,
+        p95_ms: u64,
+        max_ms: u64,
+    },
     Frame {
         frame_id: u64,
         is_keyframe: bool,
@@ -204,6 +220,7 @@ impl Event {
             Event::Meta { .. } => JsonlLevel::Info,
             Event::Health { .. } => JsonlLevel::Info,
             Event::ScanDeadline { .. } => JsonlLevel::Info,
+            Event::EvidenceAge { .. } => JsonlLevel::Info,
             Event::Fsm { .. } => JsonlLevel::Info,
             Event::Presence { .. } => JsonlLevel::Debug,
             Event::SceneSignals { .. } => JsonlLevel::Info,
