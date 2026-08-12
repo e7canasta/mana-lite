@@ -21,14 +21,25 @@ ingest_rtp = true
 infer_skips = true
 infer_empty = true
 
+# `fsm_events` y `zone_events` van encendidos: son **transiciones**, no muestras
+# por scan, y son el único registro de qué decidió el sistema. Cuestan 2,1 y
+# 4,6 MB/día contra los ~600 MB/día que ya escriben los eventos por scan que
+# están encendidos acá abajo — el 1%.
+#
+# Venían apagados, y por eso el escenario 05 declaraba un criterio de aceptación
+# ("transiciones en el JSONL") que su propia configuración volvía inverificable.
+# Una autopsia sin las transiciones no puede reconstruir la decisión clínica.
 [metrics.jsonl]
 frame_events = false
 detection_events = true
 presence_events = true
+# Apagado: lleva la foto de señales completa en cada scan, 175 MB/día. Es un
+# instrumento de diagnóstico, no un registro. Los escenarios que lo necesitan lo
+# encienden (ver `workshop/scenarios/06-clinical-viz/metrics.toml`).
 face_dwell_events = false
 scene_signals_events = true
-zone_events = false
-fsm_events = false
+zone_events = true
+fsm_events = true
 metrics_event = false
 per_model_in_window = false
 class_counts_in_window = false

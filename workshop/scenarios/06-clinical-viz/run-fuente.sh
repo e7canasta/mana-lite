@@ -77,7 +77,7 @@ grep -oE 'late min [0-9.]+ms p50 [0-9.]+ms p95 [0-9.]+ms max [0-9.]+ms' "$LOG" \
 # Es la degradación correcta —el lazo no espera al visor— y es el segundo
 # número que este escenario produce. Los otros dos sí son compuertas: si
 # percepción o control empiezan a pisar, el visor está costando evidencia.
-printf 'viz_pisados         %s (cuántas muestras no llegaron al visor)\n' \
+printf 'viz_pisados         %s (varía 0-130 entre corridas idénticas; no es compuerta)\n' \
   "$(grep -oE 'viz_pisados:[0-9]+' "$LOG" | awk -F: '{s+=$2} END{print s+0}')"
 for f in kf_pisados img_pisadas; do
   printf '%-19s %s (esperado: 0)\n' "$f" \

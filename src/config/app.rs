@@ -396,8 +396,11 @@ fn default_tracking_max_age_ms() -> u64 {
     4_000
 }
 
+/// Varios intervalos de keyframe, no varios periodos de scan: la evidencia
+/// llega a la cadencia de la cámara. Un valor menor a un intervalo hace que
+/// ningún track llegue a su segunda medición, y con eso ninguno se confirma.
 fn default_tracking_tentative_max_age_ms() -> u64 {
-    600
+    6_000
 }
 
 fn default_tracking_iou() -> f32 {

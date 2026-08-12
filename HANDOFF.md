@@ -3,7 +3,7 @@
 > Para que una sesión nueva retome el trabajo **sin leer nada más**.
 > Lengua del proyecto: español, también en comentarios de código y commits.
 
-*Actualizado: 2026-08-10, al cerrar el refactor por tiers.*
+*Actualizado: 2026-08-12, al correr la escalera del workshop entera.*
 
 ## 1. Qué es esto
 
@@ -95,7 +95,9 @@ cargo test --workspace --no-default-features --features ffmpeg \
   -- --skip bootstrap_with_reader_wires_real_catalogs      # 352 tests, 264 crates
 ```
 
-Con `MANA_MODELS_HOME` apuntado, la suite completa: 366 debug / 365 release.
+Con `MANA_MODELS_HOME` apuntado, la suite completa del workspace: **437 tests
+en 22 suites** (`cargo test --workspace --release`). Ojo con el `--workspace`:
+sin él se corre sólo el paquete raíz, y los tiers quedan afuera. Ver §12.
 
 `--no-default-features` apaga `rerun` y baja el build de 510 a 264 crates. Para
 iterar sobre el lazo de control, es la forma rápida.
@@ -290,19 +292,31 @@ corresponde:
    línea por modelo, con su flag en `[metrics.text.flags]`. Medido en el 06:
    `apagados:4` aparece exactamente en la ventana donde el FSM estaba en `idle`.
 
+Y dos cosas que salieron de correr la escalera y ya están cerradas:
+
+- **Los eventos clínicos, encendidos por defecto.** `fsm_events` y `zone_events`
+  venían en `false` en `config/metrics.toml`, y por eso el 05 declaraba un
+  criterio que su propia configuración volvía inverificable. Son transiciones,
+  no muestras por scan: cuestan 2,1 y 4,6 MB/día contra los ~600 MB/día que ya
+  escriben los eventos por scan que sí estaban encendidos. `face_dwell_events`
+  queda apagado —175 MB/día, lleva la foto de señales completa en cada scan— y
+  lo enciende el escenario que lo necesita.
+- **El default del tracker, alcanzable.** `tentative_max_age_ms` valía 600 ms,
+  más corto que un intervalo de keyframe: con la configuración por defecto
+  ningún track llegaba a su segunda medición. Todos los escenarios lo pisaban,
+  así que sólo podía morder a quien escribiera un `mana.toml` sin bloque
+  `[tracking]` — y le habría dejado la cascada muerta sin un solo error. Ahora
+  vale 6000 en los dos lugares donde estaba, y
+  `el_default_del_tracker_confirma_a_la_cadencia_de_la_evidencia` lo fija.
+
 **Sigue abierto**, y no bloquea nada:
 
-- **Los eventos clínicos en `config/metrics.toml`.** `fsm_events`, `zone_events`
-  y `face_dwell_events` vienen en `false` en el archivo de mecanismo, y por eso
-  el 05 no podía verificar su propio criterio. El 06 se trae su propio archivo
-  con las desviaciones. Falta decidir si el default del dispositivo cambia.
-- **`viz_pisados` sin explicar.** Dos corridas del 06 contra la misma fuente y
-  el mismo visor dieron 0 y 127. No le cuesta nada al sistema —`kf_pisados` e
-  `img_pisadas` en cero en las dos— pero no está entendido. Ver el README del 06.
-- **`TrackerConfig::default()`** trae `tentative_max_age_ms = 600`, más corto
-  que un intervalo de keyframe: un track tentativo con el default no llega a su
-  segunda medición. Los escenarios lo pisan con 6000; el default no es
-  alcanzable en este sistema.
+- **`viz_pisados` disperso.** Cuatro corridas del 06 en condiciones idénticas
+  dieron 0, 37, 97 y 127. No le cuesta nada al sistema —`kf_pisados` e
+  `img_pisadas` en cero en las cuatro—, así que la dispersión vive del lado del
+  visor. Caracterizado, no explicado. Ver el README del 06.
+- **La wiki generada**, 21 archivos contra un commit viejo (§8). Se regenera, no
+  se edita.
 
 ## 12. La compuerta del circuito no cubre los tiers
 

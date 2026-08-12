@@ -111,28 +111,34 @@ Contrasta con la Fase 0, donde el visor bloqueaba el lazo 41 segundos y forzaba
 147 reconexiones (`ARCHITECTURE.md` §3.1). No es que el bridge haya mejorado: el
 lazo dejó de esperarlo.
 
-### `viz_pisados`: medido, no explicado
+### `viz_pisados`: varía corrida a corrida, y no cuesta nada
 
-Esta corrida dio **127** muestras pisadas, unas 5 por ventana, repartidas parejo
-de punta a punta. Una corrida anterior del mismo escenario, contra la misma
-fuente y con el mismo visor, dio **0**.
+Cuatro corridas del mismo escenario, contra la misma fuente, con el mismo visor
+y el mismo binario:
 
-No sé por qué. Las hipótesis que tuve —el compilador comiéndose la máquina
-durante la corrida, el payload de la pila completa contra el del 02— no las
-puedo sostener: la corrida de cero también tenía la pila completa, y la de 127
-no tenía nada más corriendo en la máquina. **No está explicado, y queda escrito
-así en vez de con la primera explicación que sonaba bien.**
+|corrida|`viz_pisados`|`kf_pisados`|`img_pisadas`|`overruns`|
+|---|---|---|---|---|
+|1|**0**|0|0|0|
+|2|**127**|0|0|0|
+|3|**97**|0|0|0|
+|4|**37**|0|0|0|
 
-Lo que sí se puede afirmar: no le cuesta nada al sistema. En las dos corridas
-`kf_pisados` e `img_pisadas` quedaron en cero, o sea que la variabilidad vive
-del lado del bridge y del visor, no del lado del lazo. Que se pise una muestra
-es la degradación correcta — el visor recibe muestras, no una cola.
+Las dos últimas se corrieron **una atrás de la otra**, sin nada compilando ni
+cambiando en el medio. Así que no es el compilador —mi primera explicación, que
+resultó falsa— ni el payload de la pila completa: es variabilidad del lado del
+consumidor, entre cero y unas 130 muestras en dos minutos.
 
-Para la próxima, lo que hay que aislar es **el consumidor**: la misma corrida
-con el visor cerrado, y después con un visor recién abierto contra uno que ya
-acumuló varias corridas. Por eso el runner ahora guarda un log por corrida con
-su marca de tiempo: la corrida de cero se perdió al sobrescribirse, y sin las
-dos al lado no hay comparación posible.
+Lo que sí es constante, y es lo que importa: **`kf_pisados` e `img_pisadas` en
+cero en las cuatro**. La variabilidad no cruza la frontera hacia el sistema. El
+visor recibe muestras y el lazo no lo espera; que se pierda una es la
+degradación que el diseño elige.
+
+Por eso `viz_pisados` no es una compuerta, y por eso el runner guarda un log por
+corrida: la primera corrida, la de cero, se perdió al sobrescribirse, y sin las
+cuatro al lado esto se leía como un misterio en vez de como dispersión.
+
+Si algún día hace falta explicarlo, lo que hay que aislar es el consumidor: un
+visor recién abierto contra uno que ya acumuló varias corridas.
 
 ### Lo que sería un hallazgo
 

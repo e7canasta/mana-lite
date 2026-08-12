@@ -91,7 +91,12 @@ impl Default for TrackerConfig {
         Self {
             min_hits: 2,
             max_age_ms: 4_000,
-            tentative_max_age_ms: 600,
+            // Un track tentativo tiene que sobrevivir al hueco entre dos
+            // mediciones o no llega nunca a su segunda: la evidencia llega a la
+            // cadencia del keyframe, del orden de 1 s, no a la del scan. Con
+            // 600 ms este default era inalcanzable —ningún track se confirmaba—
+            // y todos los escenarios lo pisaban con este mismo valor.
+            tentative_max_age_ms: 6_000,
             iou_threshold: 0.2,
             mahalanobis_threshold: 9.5,
             ghost_max_ms: 6_000,
@@ -735,6 +740,35 @@ mod tests {
         );
     }
 
+    /// El default del mecanismo tiene que ser **alcanzable**.
+    ///
+    /// `tentative_max_age_ms` valía 600 ms, más corto que un intervalo de
+    /// keyframe: con la configuración por defecto ningún track llegaba a su
+    /// segunda medición y ninguno se confirmaba. Todos los escenarios lo
+    /// pisaban, así que el default sólo podía morder a quien escribiera un
+    /// `mana.toml` sin bloque `[tracking]` — y le habría dejado la cascada
+    /// muerta sin un solo error.
+    #[test]
+    fn el_default_del_tracker_confirma_a_la_cadencia_de_la_evidencia() {
+        let mut tracker = Tracker::new();
+        let det = observation("person", [100.0, 100.0, 200.0, 300.0]);
+
+        for _ in 0..3 {
+            tracker.predict_at(DT_MS);
+            tracker.associate_and_update(std::slice::from_ref(&det), false, DT_MS);
+            for _ in 0..SCANS_SIN_MEDICION {
+                tracker.predict_at(DT_MS);
+                tracker.age_at(DT_MS);
+            }
+        }
+
+        assert_eq!(
+            tracker.current_tracks().len(),
+            1,
+            "con la configuración por defecto un track tiene que poder confirmarse"
+        );
+    }
+
     /// La contracara: los scans sin medición no confirman nada, pero tampoco
     /// eternizan un track. Si la evidencia deja de llegar, el track expira por
     /// tiempo de pared igual que antes — `max_age_ms` no se mide en mediciones.
@@ -805,7 +839,12 @@ mod tests {
         let mut tracker = Tracker::with_config(TrackerConfig {
             min_hits: 2,
             max_age_ms: 4_000,
-            tentative_max_age_ms: 600,
+            // Un track tentativo tiene que sobrevivir al hueco entre dos
+            // mediciones o no llega nunca a su segunda: la evidencia llega a la
+            // cadencia del keyframe, del orden de 1 s, no a la del scan. Con
+            // 600 ms este default era inalcanzable —ningún track se confirmaba—
+            // y todos los escenarios lo pisaban con este mismo valor.
+            tentative_max_age_ms: 6_000,
             iou_threshold: 0.2,
             ..TrackerConfig::default()
         });
