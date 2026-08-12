@@ -164,6 +164,27 @@ impl Tracker {
         self.predict_all(dt_ms);
     }
 
+    /// Envejece los tracks contra el reloj de pared, sin asociar nada.
+    ///
+    /// Es lo que corresponde a un scan **sin medición nueva**: el lazo tica más
+    /// rápido que la evidencia, y esos ticks no son fallos de detección — no
+    /// hubo observación contra la cual el track pudiera haber matcheado.
+    /// Cuentan para la vida del track (`max_age_ms`, `tentative_max_age_ms`,
+    /// que son tiempo de pared) y no para `misses` ni para la racha de
+    /// confirmación, que se miden en mediciones.
+    ///
+    /// Tratarlos como fallos era el defecto: a 5 Hz de scan y 1 Hz de
+    /// evidencia, `hit_streak` se reseteaba entre cada par de mediciones y
+    /// ningún track llegaba nunca a confirmarse.
+    pub fn age_at(&mut self, dt_ms: u64) -> Vec<TrackEvent> {
+        let mut events = Vec::new();
+        for track in self.tracks.values_mut() {
+            track.time_since_update_ms += dt_ms;
+        }
+        self.delete_expired(&mut events);
+        events
+    }
+
     /// Associate observations against already-predicted tracks, then correct,
     /// age, delete, and create tracks.
     pub fn associate_and_update(
@@ -658,6 +679,125 @@ mod tests {
         tracker.update(&[], DT_MS);
         assert!(tracker.current_tracks().is_empty());
         assert_eq!(tracker.active_tracks().len(), 1);
+    }
+
+    /// El lazo tica cada `DT_MS` y la evidencia llega cada keyframe. Esa
+    /// relación es una propiedad del sistema —dos tasas, no una— y es lo que
+    /// estos tests ejercitan. No son números de escenario: ninguna política de
+    /// `[tracking]` entra acá.
+    const INTERVALO_EVIDENCIA_MS: u64 = 1_000;
+    const SCANS_SIN_MEDICION: u32 = (INTERVALO_EVIDENCIA_MS / DT_MS) as u32 - 1;
+
+    /// Lo único que esta propiedad necesita del mecanismo es que un track viva
+    /// más que el hueco entre dos mediciones; si no, lo que se estaría midiendo
+    /// es la política de vida y no la cadencia. Se deriva del intervalo en vez
+    /// de copiar los valores de un TOML.
+    fn tracker_con_evidencia_cada(intervalo_ms: u64) -> Tracker {
+        Tracker::with_config(TrackerConfig {
+            tentative_max_age_ms: intervalo_ms * 2,
+            max_age_ms: intervalo_ms * 4,
+            ..TrackerConfig::default()
+        })
+    }
+
+    /// La cadencia real del sistema: el lazo scanea a 5 Hz y la evidencia llega
+    /// a 1 Hz, así que de cada cinco scans **uno** trae medición.
+    ///
+    /// `misses` y `hit_streak` se cuentan en mediciones, no en scans. Cuando se
+    /// contaban en scans, la racha se reseteaba entre cada par de mediciones y
+    /// ningún track llegaba a confirmarse — con eso `current_tracks()` quedaba
+    /// vacío para siempre, y con él la compuerta de la cascada y
+    /// `confirmed_person_count` de ocupancia.
+    #[test]
+    fn track_confirms_con_evidencia_mas_lenta_que_la_cadencia_de_scan() {
+        let mut tracker = tracker_con_evidencia_cada(INTERVALO_EVIDENCIA_MS);
+        let det = observation("person", [100.0, 100.0, 200.0, 300.0]);
+
+        // Una persona quieta durante diez keyframes.
+        for _ in 0..10 {
+            tracker.predict_at(DT_MS);
+            tracker.associate_and_update(std::slice::from_ref(&det), false, DT_MS);
+            for _ in 0..SCANS_SIN_MEDICION {
+                tracker.predict_at(DT_MS);
+                tracker.age_at(DT_MS);
+            }
+        }
+
+        assert_eq!(
+            tracker.track_count(),
+            1,
+            "la persona quieta tiene que producir un solo track"
+        );
+        assert_eq!(
+            tracker.current_tracks().len(),
+            1,
+            "diez mediciones sobre la misma persona tienen que confirmar el track"
+        );
+    }
+
+    /// La contracara: los scans sin medición no confirman nada, pero tampoco
+    /// eternizan un track. Si la evidencia deja de llegar, el track expira por
+    /// tiempo de pared igual que antes — `max_age_ms` no se mide en mediciones.
+    #[test]
+    fn age_at_expira_el_track_cuando_la_evidencia_deja_de_llegar() {
+        let mut tracker = tracker_con_evidencia_cada(INTERVALO_EVIDENCIA_MS);
+        let det = observation("person", [100.0, 100.0, 200.0, 300.0]);
+
+        for _ in 0..2 {
+            tracker.predict_at(DT_MS);
+            tracker.associate_and_update(std::slice::from_ref(&det), false, DT_MS);
+        }
+        assert_eq!(
+            tracker.current_tracks().len(),
+            1,
+            "dos mediciones confirman"
+        );
+
+        // Percepción muere: scans a cadencia fija, sin una sola medición, más
+        // allá de la vida máxima de un track confirmado.
+        let scans_hasta_expirar = tracker.max_age_ms / DT_MS + 1;
+        for _ in 0..scans_hasta_expirar {
+            tracker.predict_at(DT_MS);
+            tracker.age_at(DT_MS);
+        }
+
+        assert_eq!(
+            tracker.track_count(),
+            0,
+            "pasado `max_age_ms` sin evidencia el track tiene que morir"
+        );
+    }
+
+    /// Y una medición que llega y no matchea **sí** es un fallo: cuenta como
+    /// `miss` y saca al track de `current_tracks()` en el acto. Es la distinción
+    /// que el arreglo preserva — hueco de evidencia no es lo mismo que persona
+    /// que no está donde el track dice.
+    #[test]
+    fn una_medicion_sin_match_sigue_contando_como_miss() {
+        let mut tracker = tracker_con_evidencia_cada(INTERVALO_EVIDENCIA_MS);
+        let det = observation("person", [100.0, 100.0, 200.0, 300.0]);
+
+        for _ in 0..2 {
+            tracker.predict_at(DT_MS);
+            tracker.associate_and_update(std::slice::from_ref(&det), false, DT_MS);
+        }
+        assert_eq!(tracker.current_tracks().len(), 1);
+
+        tracker.predict_at(DT_MS);
+        tracker.age_at(DT_MS);
+        assert_eq!(
+            tracker.current_tracks().len(),
+            1,
+            "un scan sin medición no es un fallo del detector"
+        );
+
+        tracker.predict_at(DT_MS);
+        tracker.associate_and_update(&[], false, DT_MS);
+        assert!(
+            tracker.current_tracks().is_empty(),
+            "una medición vacía sí lo es"
+        );
+        assert_eq!(tracker.active_tracks().len(), 1, "pero el track sigue vivo");
     }
 
     #[test]

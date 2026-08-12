@@ -222,15 +222,20 @@ fn update_tracking(
         &presence.observations
     };
     if let Some(t) = state.tracker.as_mut() {
-        let allow = input.sample.raw_person_count == 1
-            && tracking.len() == 1
-            && tracking[0].class == state.policy.person_class;
-        let input_obs = if image.measurement_pending {
-            tracking
+        // Asociar sólo cuando hay medición nueva. El lazo tica a cadencia fija
+        // y la evidencia llega a la del keyframe, así que la mayoría de los
+        // scans no traen nada con qué asociar; hacerlo igual contra una lista
+        // vacía convertía cada tick en un fallo de detección inventado.
+        // `predict_at` ya extrapoló el movimiento a la cadencia del lazo.
+        let track_events = if image.measurement_pending {
+            let allow = input.sample.raw_person_count == 1
+                && tracking.len() == 1
+                && tracking[0].class == state.policy.person_class;
+            t.associate_observations(tracking, allow, dt)
         } else {
-            &[]
+            t.age_at(dt)
         };
-        for event in t.associate_observations(input_obs, allow && image.measurement_pending, dt) {
+        for event in track_events {
             events.push(SceneEvent::Track {
                 event,
                 stamp: input.stamp,
@@ -668,6 +673,62 @@ mod tests {
         assert!(second.is_absent(&SignalTag::new("cara.confianza")));
         assert_bool(second, "cara.en_dwell", false);
         assert_bool(second, "cara.modelo_corrio", false);
+    }
+
+    /// Con el catálogo de FSM que corre en producción y una persona en la
+    /// escena, `scan()` tiene que transicionar.
+    ///
+    /// Existe porque una corrida del escenario 05 salió con 895 scans en
+    /// `ocupacion.cardinalidad = single` y cero transiciones en el JSONL, y eso
+    /// se leyó como un FSM que no gobierna. Este test pasó desde el primer
+    /// intento: lo que estaba apagado era `fsm_events` en `config/metrics.toml`,
+    /// no el FSM. Queda como el detector de esa confusión.
+    #[test]
+    fn scan_con_una_persona_transiciona_el_fsm_de_produccion() {
+        const PERIODO_MS: u64 = 200;
+        let start = Instant::now(); // cfg(test)
+        let mut timeline = ScanTimeline::new(LoopId::default_loop(), start, PERIODO_MS);
+        let mut state = control_state(start, 10_000);
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let path = root.join("config/blueprints/detect-room-face/fsm.toml");
+        let catalog: FsmCatalog = toml::from_str(
+            &std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {path:?}: {e}")),
+        )
+        .unwrap_or_else(|e| panic!("parse {path:?}: {e}"));
+        let program = crate::fsm::FsmProgram::compile_lenient(&catalog, &ZoneCatalog::default())
+            .expect("el catálogo de producción tiene que compilar");
+        state.fsm_engine = Some(FsmEngine::from_program_at(program, start));
+
+        let mut transitions = Vec::new();
+        for tick in 0..20u64 {
+            if tick > 0 {
+                timeline.advance();
+            }
+            let image = ProcessImage {
+                observations: Some(AgedEvidence::new(
+                    SceneSample {
+                        observations: vec![person()],
+                        signal_valid: true,
+                        raw_person_count: 1,
+                        frame_number: tick,
+                        face_model_ran: false,
+                    },
+                    start + Duration::from_millis(PERIODO_MS * tick),
+                )),
+                depth: None,
+                measurement_pending: true,
+            };
+            for event in scan(&mut state, &image, &timeline) {
+                if let SceneEvent::FsmTransition(t) = event {
+                    transitions.push(t.to);
+                }
+            }
+        }
+
+        assert!(
+            !transitions.is_empty(),
+            "veinte scans con una persona presente y el FSM no transicionó nunca"
+        );
     }
 
     #[test]
