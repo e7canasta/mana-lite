@@ -50,9 +50,10 @@ mana-lite/
 │   ├── operations.md       # guia para administradores y operadores
 │   ├── observability.md    # guia completa de metricas + viz + rerun
 │   ├── roi.md              # crops por modelo — static y dinamico
-│   ├── ARCHITECTURE.md     # modulos, ownership y ciclo principal
-│   ├── ROADMAP.md          # estado actual y proximas etapas
-│   ├── adrs/               # decisiones de diseno (001-024)
+│   ├── ARCHITECTURE.md     # workspace por crates (el de ejecucion esta en la raiz)
+│   ├── adrs/               # decisiones de diseno (001-035)
+│   ├── archive/            # registros de trabajos terminados
+│   ├── wiki/               # generada; desactualizada, ver su indice
 │   └── specs/              # blueprints y contratos (depth, seg, mask)
 └── logs/
     └── mana-YYYYMMDDTHH.jsonl

@@ -66,7 +66,7 @@ cargo run --release -- --config workshop/scenarios/01-ingest-only/mana.toml
   invariantes. Es la que hay que leer antes de tocar el lazo.
 - [Arquitectura del workspace](docs/ARCHITECTURE.md): partición en crates por
   tier (ADR-027, ADR-028).
-- [Roadmap](ROADMAP.md): estado y siguientes etapas.
+- [Handoff](HANDOFF.md): dónde estamos, qué falta y cómo retomar.
 - [Observabilidad](docs/observability.md): metricas, toggles y blueprint.
 - [ROI y crops](docs/roi.md): crops estaticos y dinamicos.
 - [ADRs](docs/adrs/): decisiones de diseño (001-035).

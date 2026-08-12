@@ -15,7 +15,7 @@
 > Mientras tanto, la fuente autorizada sobre ejecución es
 > [ARCHITECTURE.md](../../ARCHITECTURE.md) —verificada contra el código, con
 > referencia a archivo y línea— y sobre estado y decisiones,
-> [ROADMAP.md](../../ROADMAP.md) y `docs/adrs/`.
+> [HANDOFF.md](../../HANDOFF.md) y `docs/adrs/`.
 
 La plataforma **mana-lite** se presenta como una infraestructura avanzada de **visión computacional de alto rendimiento** diseñada para transformar transmisiones de video en vivo en datos analíticos procesables. El sistema opera mediante una división clara entre la **percepción**, que gestiona la decodificación y el análisis mediante redes neuronales, y el **control**, que estabiliza la información para ejecutar una lógica de negocio basada en estados. Para garantizar la precisión técnica, el software emplea un **vocabulario de dominio estricto** y un sistema de identificadores que previenen errores en la categorización de objetos o zonas espaciales. Finalmente, la flexibilidad del motor reside en sus **blueprints o planos de configuración**, los cuales permiten orquestar modelos de inteligencia artificial en cascada para monitorear comportamientos complejos de forma automática y determinista.
 

@@ -26,16 +26,29 @@ programa. No → T1 campo.
 
 ## 2. Dónde estamos
 
-**Terminado y archivado:** el refactor por tiers, seis sprints. Ver
-[`docs/archive/2026-08-refactor-por-tiers/`](docs/archive/2026-08-refactor-por-tiers/README.md).
+**Terminado:** el lazo de control corre aislado. Tres etapas con dueños de
+ejecución distintos —ingesta, percepción, control— unidas por bordes que no
+bloquean. **El sistema cumple su invariante por primera vez**: mantiene cadencia
+aunque la inferencia tarde más de un periodo, aunque el visor sature el enlace o
+aunque percepción entre en pánico.
 
-Estado medido: 6 paquetes, **366 tests**, `scan()` en ocho pasos nombrados,
-cero funciones de producción sobre 80 líneas, cero archivos de `src/` sobre 600,
-reloj sellado por tipo, CI corriendo la compuerta.
+Verificado en campo, no por argumento:
 
-**Abierto:** [`docs/scene-signals/`](docs/scene-signals/README.md) — la tabla de
-señales. Sin empezar. El plan son cuatro etapas en
-[2-sprints.md](docs/scene-signals/2-sprints.md).
+| | antes | después |
+|---|---|---|
+| atraso del lazo, p95 | 101–154 ms | **1,4–3,3 ms** |
+| con el visor saturado | 41 s de bloqueo, 147 reconexiones | **0 y 0** |
+| latencia de inferencia | 194–217 ms | 194–217 ms (igual) |
+
+No se optimizó nada: la inferencia dejó de cobrárselo al lazo. Registro completo
+en [`docs/archive/2026-08-lazo-aislado/`](docs/archive/2026-08-lazo-aislado/README.md);
+decisiones en `docs/adrs/033-035`; cómo está construido hoy, en
+[ARCHITECTURE.md](ARCHITECTURE.md).
+
+Antes de eso: el refactor por tiers, seis sprints (ADR-027, ADR-028), y la tabla
+de señales como contrato ([ADR-032](docs/adrs/032-scene-signals-as-contract.md)).
+
+**Abierto:** nada de arquitectura de ejecución. Lo que queda está en §8 y §9.
 
 ## 3. Cómo se trabaja
 
@@ -113,7 +126,7 @@ hace cumplir `core/mana-control/Cargo.toml`: tres dependencias, `mana-id`,
 `mana-geometry`, `serde`. Agregar `mana-perception` ahí no rompe una convención,
 rompe la compilación.
 
-## 7. Las cuatro reglas que costaron caro
+## 7. Las cinco reglas que costaron caro
 
 **1. Verificá que la compuerta falle cuando debe fallar.** Dos pasaron en vacío
 durante sprints enteros: `git diff tests/golden/` sobre un fixture sin trackear,
@@ -131,26 +144,68 @@ mirando warnings que aparecen igual con el feature encendido.
 `infer/mod.rs` parecían god files; eran archivos normales con una montaña de
 tests adentro.
 
+**5. El instrumento no es la medición.** Una compuerta o una línea de reporte
+puede existir, verse correcta y no medir lo que dice. Pasó cuatro veces en un
+solo día:
+
+- `seen` enmascarado con `processed`: cada straddle de ventana sumaba deriva
+  permanente y el par dejaba de conservarse.
+- La tolerancia de incumplimiento puesta **por debajo** del piso del
+  temporizador: 96% de vencimientos incumplidos en el escenario *sano*, y el
+  contador no distinguía un lazo perfecto de uno parado 188 ms.
+- Cuatro ceros al lado de `0 scans con evidencia`, que se leían como "la
+  evidencia tiene 0 ms de edad" — lo contrario de lo que pasaba.
+- La edad de la evidencia viajando dentro de un evento apagado por defecto: la
+  única magnitud con consecuencia clínica era la única que no llegaba al JSONL.
+
+Las cuatro las encontró una corrida; ninguna, una revisión de código. Antes de
+creerle a un número, verificá **qué lo alimenta, contra qué umbral se compara, y
+por dónde sale**. Es la regla 2 llevada a la instrumentación: un knob que se
+ignora miente en la revisión, y un instrumento mal calibrado miente en la
+autopsia, que es peor.
+
 ## 8. Deuda registrada
 
-| Deuda | Tamaño |
-|---|---|
-| Casts numéricos sin auditar en `mana-geometry` | ~202 avisos |
-| Comparación exacta de floats | 26 avisos |
-| `SceneEvent::FsmState(String)` | debería ser `StateId` |
-| `ProgramState.models: Vec<String>` | debería ser `Vec<ModelId>` |
-| `current_models() -> Vec<String>` | aloca un `Vec` por scan |
+Ninguna bloquea nada. En orden de lo que más molesta al leer el repo.
 
-Los casts de `mana-control` ya se saldaron. El conteo de clippy es compuerta de
-**no-regresión**, no de cero.
+| Deuda | Qué es | Cómo se salda |
+|---|---|---|
+| Wiki generada desactualizada | 21 archivos contra el commit `ad24740d`, describen el super loop y tipos borrados | **regenerar**, no editar a mano |
+| Dos documentos de arquitectura | `ARCHITECTURE.md` (ejecución) y `docs/ARCHITECTURE.md` (workspace por crates) | decidir si se funden |
+| Casts numéricos sin auditar en `mana-geometry` | ~202 avisos de clippy | compuerta de no-regresión, no de cero |
+| Comparación exacta de floats | 26 avisos | ídem |
+| `SceneEvent::FsmState(String)` | debería ser `StateId` | tipado del vocabulario |
+| `ProgramState.models: Vec<String>` | debería ser `Vec<ModelId>` | ídem |
+| `current_models() -> Vec<String>` | aloca un `Vec` por scan | irrelevante a 5 Hz |
+| Etapas sin supervisor | informan que murieron (`stage_died`) y nadie las reinicia | superficie real chica: los pánicos de percepción se atrapan y retina reconecta sola |
 
-## 9. Primer paso de la próxima sesión
+## 9. Lo que sigue, y no es arquitectura
 
-Leer [`docs/scene-signals/README.md`](docs/scene-signals/README.md) y arrancar
-la **Etapa A**: el vocabulario, sin conectar nada. Es la única etapa sin riesgo
-—nada la consume todavía— y define el contrato que las otras tres asumen.
+**La pregunta abierta es de umbrales clínicos, no de código.** El sistema mide
+por primera vez la edad de la evidencia sobre la que decide:
 
-Lo que hay que resolver ahí y no después: que `Ratio` fuera de `[0,1]` sea un
-error de construcción, y que no exista forma de comparar dos `Ratio` por
-igualdad. Si esas dos reglas no están en el tipo desde el principio, se cuelan
-comparaciones exactas de flotante en el lazo clínico.
+```
+no puede decidir sobre nada más fresco que   335 ms
+peor caso normal                            1 140 ms
+stale_warn_ms                               5 000 ms   ← 4,4×
+data_stale_ms                              10 000 ms   ← 8,8×
+```
+
+Los 335 ms de piso no son un defecto: son lo que cuesta producir la evidencia
+(decode + inferencia) más la fase con la que el keyframe cae en la grilla de
+scan, que la fija el GOP de la cámara y no nosotros.
+
+Lo que hay que decidir es el resto: **entre "esto ya no es normal" y "dejo de
+confiar en lo que veo" hay casi nueve segundos**, y en ese intervalo el sistema
+sigue decidiendo con los timers clínicos corriendo sobre evidencia congelada
+(`single_confirm_ms = 3000`, `empty_confirm_ms = 8000`). Una persona se levanta
+de la cama y llega al piso en un par de segundos.
+
+Puede estar bien —un umbral corto genera ceguera espuria con cualquier hipo de
+red— pero hoy nadie tomó esa decisión mirando este número, porque el número no
+existía. Es la conversación que abre el trabajo de producto.
+
+**Producto, sin planificar.** El catálogo de señales ya es un contrato
+([ADR-032](docs/adrs/032-scene-signals-as-contract.md)): cambiar cuándo suena una
+alerta es editar un TOML. Si eso se sostiene, el cuello de botella dejó de ser
+la ingeniería y pasó a ser saber qué escenario clínico sigue.
