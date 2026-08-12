@@ -1,17 +1,16 @@
-use super::perception::PerceptionSeed;
+use super::perception::{PerceptionConfig, PerceptionSeed};
 use super::record::wire_depth_evidence;
 use super::*;
-use crate::cascade::CascadeScheduler;
+use crate::cascade::{CascadeScheduler, InferenceRequest};
+use crate::config::{ModelCatalog, load_app_config};
 use crate::detection::{CropRect, DetectionConsolidator};
 use crate::domain::ModelRegistry;
-use crate::infer::InferEngine;
-use crate::metrics::MetricsEngine;
-use crate::snapshot::{FrameDecoder, SnapshotSaver};
-use std::sync::{Arc, Mutex};
-use crate::config::{ModelCatalog, load_app_config};
 use crate::health::HealthTransition;
+use crate::infer::InferEngine;
 use crate::infer::InferenceResult;
 use crate::ingest::SyntheticReader;
+use crate::metrics::MetricsEngine;
+use crate::snapshot::{FrameDecoder, SnapshotSaver};
 use mana_control::domain::LoopId;
 use mana_control::{
     DepthCalibration, DepthMetric, DepthOp, DepthRegionRule, DepthRuleResult, DepthRules,
@@ -19,6 +18,7 @@ use mana_control::{
 use ndarray::Array2;
 use std::collections::HashMap;
 use std::path::Path;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use ultralytics_inference::DepthMap;
 
@@ -272,4 +272,26 @@ fn evaluate_depth_rules_without_roi_leaves_snapshot_empty() {
         None,
         "sin ROI la etapa no puede inventar evidencia de profundidad"
     );
+}
+
+#[test]
+fn urgent_request_is_rejected_when_the_backend_model_is_unavailable() {
+    let mut stage = stage_for_depth_rules(DepthRules { rules: Vec::new() }, None);
+    let config = PerceptionConfig {
+        snapshot: false,
+        infer: true,
+        presence_class: "person".into(),
+        disabled_tasks: Vec::new(),
+    };
+    let now = Instant::now();
+    let request = InferenceRequest::new(
+        "detect-fast",
+        "synthetic",
+        1,
+        now,
+        now + Duration::from_secs(1),
+    );
+
+    assert!(!stage.enqueue_transient_request(request, &config, now));
+    assert_eq!(stage.cascade.pending_request_count(), 0);
 }

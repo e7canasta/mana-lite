@@ -1,6 +1,6 @@
 # Subproyecto: Scheduler Cooperativo de Inferencia
 
-**Estado:** Sprint 1 verificado; Sprint 2 instrumentado y listo para corrida de hardware
+**Estado:** Sprint 1 y 2 cerrados; Sprint 3 implementado en runtime y listo para compuerta
 **Fecha:** 2026-08-12
 **Alcance:** cadencia por modelo, latest-wins y ejecucion cooperativa dentro del hilo de percepcion
 
@@ -58,6 +58,10 @@ son workers independientes en esta fase.
 - Un slot conserva la muestra mas fresca y cuenta lo que pisa.
 - Un resultado reutilizado conserva su `frame_number` y su edad.
 - Una urgencia es cooperativa: no interrumpe una llamada ONNX en curso.
+- Las requests persistentes se reemplazan por directiva; las transitorias viven en
+  la cola durable del scheduler, nunca en un slot latest-wins.
+- Una request valida puede saltar el intervalo una vez, pero no los gates de la
+  cascada ni el orden topologico.
 - El tamano tecnico del modelo pertenece al catalogo u overlay; la cadencia
   pertenece al blueprint operativo.
 
@@ -71,6 +75,9 @@ son workers independientes en esta fase.
 - [Sprint 2](sprints/sprint-02.md): instrumento de capacidad y corrida larga.
 - [Handoff Sprint 3](sprints/sprint-03-handoff.md): contrato, plan y puertas de
   entrada para urgencias cooperativas.
+- La implementacion de Sprint 3 vive en `CascadeScheduler`,
+  `PerceptionStage` y el reporte de metricas; aun no hay productor semantico
+  face/pose, que pertenece a Sprint 4.
 
 ## Fuentes de arquitectura
 

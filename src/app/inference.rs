@@ -1,6 +1,6 @@
 //! Inference-cycle stages: schedule models, consolidate, record, publish.
 
-use crate::cascade::{CascadeTarget, GateObservation};
+use crate::cascade::{CascadeTarget, GateObservation, InferenceRequest};
 use crate::config::CropType;
 use crate::detection::CropRect;
 use crate::detection::{ConsolidatedObservation, DetectionRole, ModelDetections};
@@ -36,13 +36,40 @@ impl PerceptionStage {
         #[cfg(feature = "rerun")]
         self.observer.viz.clear_depth_context_boxes();
 
-        let requested = self.resolve_models(config);
+        let urgent_window = self.cascade.begin_keyframe(cycle.now);
+        for request in &urgent_window.expired {
+            self.lock_metrics()
+                .tick_infer_urgent_expired(&request.model_key);
+        }
+        for request in &urgent_window.starved {
+            self.lock_metrics()
+                .tick_urgent_starvation(&request.model_key);
+        }
+        let urgent_request = urgent_window.requests.first().cloned();
+        let mut requested = self.resolve_models(config);
+        for request in &urgent_window.requests {
+            if !requested.iter().any(|model| model == &request.model_key) {
+                requested.push(request.model_key.clone());
+            }
+        }
         let ordered = self.cascade.ordered(&requested);
         self.count_models_gated_by_state(&ordered, config, cycle.now);
         let mut pending: Vec<PendingModelOutput> = Vec::new();
 
-        let primary_root_valid = self.run_root_models(&ordered, fb, &mut pending, cycle.now);
-        self.run_child_models(&ordered, fb, &mut pending, cycle.now);
+        let primary_root_valid = self.run_root_models(
+            &ordered,
+            fb,
+            &mut pending,
+            cycle.now,
+            urgent_request.as_ref(),
+        );
+        self.run_child_models(
+            &ordered,
+            fb,
+            &mut pending,
+            cycle.now,
+            urgent_request.as_ref(),
+        );
 
         let observations = self.consolidate_and_emit(&pending, cycle.frame_number);
         let face_model_ran = pending
@@ -75,6 +102,7 @@ impl PerceptionStage {
         fb: &FrameBuffer,
         pending: &mut Vec<PendingModelOutput>,
         now: Instant,
+        urgent_request: Option<&InferenceRequest>,
     ) -> bool {
         let roots: Vec<String> = ordered
             .iter()
@@ -83,14 +111,15 @@ impl PerceptionStage {
             .collect();
         let mut primary_root_valid = false;
         for model_key in roots {
-            if !self.cascade.is_due(&model_key, now) {
+            let urgent = urgent_request.filter(|request| request.model_key == model_key);
+            if urgent.is_none() && !self.cascade.is_due(&model_key, now) {
                 let interval = self.cascade.interval_min_ms(&model_key).unwrap_or(0);
                 let mut metrics = self.lock_metrics();
                 metrics.set_model_interval(&model_key, interval);
                 metrics.tick_infer_not_due(&model_key);
                 continue;
             }
-            let valid = self.run_scheduled_model(&model_key, None, fb, pending);
+            let valid = self.run_scheduled_model(&model_key, None, fb, pending, now, urgent);
             if model_key == self.primary_model {
                 primary_root_valid = valid;
             }
@@ -110,6 +139,7 @@ impl PerceptionStage {
         fb: &FrameBuffer,
         pending: &mut Vec<PendingModelOutput>,
         now: Instant,
+        urgent_request: Option<&InferenceRequest>,
     ) {
         let children: Vec<String> = ordered
             .iter()
@@ -117,7 +147,8 @@ impl PerceptionStage {
             .map(|model| (*model).to_owned())
             .collect();
         for model_key in children {
-            if !self.cascade.is_due(&model_key, now) {
+            let urgent = urgent_request.filter(|request| request.model_key == model_key);
+            if urgent.is_none() && !self.cascade.is_due(&model_key, now) {
                 let interval = self.cascade.interval_min_ms(&model_key).unwrap_or(0);
                 let mut metrics = self.lock_metrics();
                 metrics.set_model_interval(&model_key, interval);
@@ -133,7 +164,7 @@ impl PerceptionStage {
                 metrics.tick_infer_due_but_no_target(&model_key);
                 continue;
             }
-            self.run_scheduled_model(&model_key, target, fb, pending);
+            self.run_scheduled_model(&model_key, target, fb, pending, now, urgent);
         }
     }
 
@@ -276,6 +307,8 @@ impl PerceptionStage {
         target: Option<CascadeTarget>,
         fb: &FrameBuffer,
         pending: &mut Vec<PendingModelOutput>,
+        now: Instant,
+        urgent_request: Option<&InferenceRequest>,
     ) -> bool {
         let is_static = self
             .infer
@@ -283,9 +316,22 @@ impl PerceptionStage {
             .is_some_and(|c| c.crop_type == CropType::Static);
         let crop_rect = self.resolve_crop_rect(model_key, target, fb);
         let manual_crop = if is_static { None } else { crop_rect };
-        // Mark the attempt before entering the synchronous backend so a failed
-        // model cannot be retried on every incoming keyframe.
-        if let Some(timing) = self.cascade.mark_started(model_key, Instant::now()) {
+        // Mark and consume before entering the synchronous backend so a failed
+        // model cannot be retried on every incoming keyframe and a failed
+        // urgent attempt cannot be replayed.
+        let Some(timing) = self.cascade.mark_started(model_key, now) else {
+            return false;
+        };
+        if let Some(request) = urgent_request {
+            if !self.cascade.consume_request(request) {
+                return false;
+            }
+            let wait = now.saturating_duration_since(request.requested_at);
+            let mut metrics = self.lock_metrics();
+            metrics.tick_infer_urgent(model_key);
+            metrics.tick_urgent_wait(model_key, wait);
+            metrics.tick_inference_start(model_key, timing);
+        } else {
             self.lock_metrics().tick_inference_start(model_key, timing);
         }
         let Some(mut output) = self.infer.run(model_key, &fb.rgb, fb.w, fb.h, manual_crop) else {

@@ -268,6 +268,18 @@ fn log_infer_line(report: &MetricsReport, model_order: &[String], config: &Metri
     if config.flags.infer_urgent_expired && report.infer_urgent_expired > 0 {
         flags.push(format!("urgent_expired:{}", report.infer_urgent_expired));
     }
+    if config.flags.infer_urgent_requests && report.urgent_requests > 0 {
+        flags.push(format!("urgent_requests:{}", report.urgent_requests));
+    }
+    if config.flags.infer_urgent_wait && report.urgent_wait_samples > 0 {
+        flags.push(format!(
+            "urgent_wait p50:{}ms p95:{}ms max:{}ms",
+            report.urgent_wait_p50_ms, report.urgent_wait_p95_ms, report.urgent_wait_max_ms
+        ));
+    }
+    if config.flags.infer_urgent_starvation && report.urgent_starvation > 0 {
+        flags.push(format!("urgent_starvation:{}", report.urgent_starvation));
+    }
     if config.flags.infer_empty && report.infer_empty > 0 {
         flags.push(format!("empty:{}", report.infer_empty));
     }
@@ -354,6 +366,24 @@ fn log_per_model(
         },
         if config.flags.infer_urgent_expired && m.urgent_expired > 0 {
             Some(format!("urgent_expired:{}", m.urgent_expired))
+        } else {
+            None
+        },
+        if config.flags.infer_urgent_requests && m.urgent_requests > 0 {
+            Some(format!("urgent_requests:{}", m.urgent_requests))
+        } else {
+            None
+        },
+        if config.flags.infer_urgent_wait && m.urgent_wait_samples > 0 {
+            Some(format!(
+                "urgent_wait p50:{}ms p95:{}ms max:{}ms",
+                m.urgent_wait_p50_ms, m.urgent_wait_p95_ms, m.urgent_wait_max_ms
+            ))
+        } else {
+            None
+        },
+        if config.flags.infer_urgent_starvation && m.urgent_starvation > 0 {
+            Some(format!("urgent_starvation:{}", m.urgent_starvation))
         } else {
             None
         },

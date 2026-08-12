@@ -25,7 +25,7 @@ use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-use crate::cascade::CascadeScheduler;
+use crate::cascade::{CascadeScheduler, InferenceRequest};
 use crate::config::AppConfig;
 use crate::detection::{CropRect, DetectionConsolidator};
 use crate::domain::ModelRegistry;
@@ -67,6 +67,11 @@ pub struct ControlDirective {
     /// sólo `models` + `tracks`.
     pub occupancy: Option<(RoomCardinality, SecondPersonState, SignalValidity)>,
     pub fsm_state: Option<String>,
+    /// Requests persistentes derivadas del estado deseado de control.
+    ///
+    /// No reemplaza la cola transitoria del scheduler: esta lista viaja por el
+    /// slot porque la directiva completa es una muestra latest-wins.
+    pub urgent_requests: Vec<InferenceRequest>,
 }
 
 /// Salida de la etapa hacia el lazo de control.
@@ -259,7 +264,7 @@ pub fn spawn(
 fn run(mut stage: PerceptionStage, ports: PerceptionPorts, config: &PerceptionConfig) {
     while let Some(kf) = ports.keyframes.take_blocking() {
         let now = Instant::now();
-        stage.refresh_directive(&ports.directives);
+        stage.refresh_directive(&ports.directives, config, now);
 
         // Un pánico acá no puede llevarse el lazo de control: se reporta, se
         // descarta el keyframe y la etapa sigue. Si percepción dejara de
@@ -400,7 +405,12 @@ impl PerceptionStage {
     /// Toma la directiva más fresca que haya publicado control y dibuja lo que
     /// trae. Si no hay ninguna nueva, se sigue con la anterior: una directiva
     /// vieja es utilizable, esperar por una nueva no.
-    pub(crate) fn refresh_directive(&mut self, slot: &Slot<ControlDirective>) {
+    pub(crate) fn refresh_directive(
+        &mut self,
+        slot: &Slot<ControlDirective>,
+        config: &PerceptionConfig,
+        now: Instant,
+    ) {
         let Some(directive) = slot.take() else { return };
         #[cfg(feature = "rerun")]
         {
@@ -412,7 +422,76 @@ impl PerceptionStage {
             }
             self.observer.viz.log_entity_boxes(&directive.tracks);
         }
+        let accepted = directive
+            .urgent_requests
+            .iter()
+            .filter(|request| self.accepts_inference_request_with_config(request, config, now))
+            .cloned()
+            .collect();
+        for request in self.cascade.replace_persistent_requests(accepted, now) {
+            self.lock_metrics().tick_urgent_request(&request.model_key);
+        }
         self.directive = directive;
+    }
+
+    // Future face/pose producers call this inside perception; no cross-thread
+    // channel is needed until a producer lives on the control side.
+    #[allow(dead_code)]
+    pub(crate) fn enqueue_transient_request(
+        &mut self,
+        request: InferenceRequest,
+        config: &PerceptionConfig,
+        now: Instant,
+    ) -> bool {
+        if !self.accepts_inference_request_with_config(&request, config, now) {
+            return false;
+        }
+        match self.cascade.enqueue_transient(request.clone(), now) {
+            Ok(true) => {
+                self.lock_metrics().tick_urgent_request(&request.model_key);
+                true
+            }
+            Ok(false) => false,
+            Err(error) => {
+                log::debug!(
+                    "urgent inference request rejected by scheduler: {:?}",
+                    error
+                );
+                false
+            }
+        }
+    }
+
+    fn accepts_inference_request_with_config(
+        &self,
+        request: &InferenceRequest,
+        config: &PerceptionConfig,
+        now: Instant,
+    ) -> bool {
+        if let Err(error) = self.cascade.validate_request(request, now) {
+            log::debug!("urgent inference request rejected: {:?}", error);
+            return false;
+        }
+        if !self.models.enabled(&request.model_key) || !self.infer.has_model(&request.model_key) {
+            log::debug!(
+                "urgent inference request rejected for unavailable model {}",
+                request.model_key
+            );
+            return false;
+        }
+        if self.models.task_of(&request.model_key).is_some_and(|task| {
+            config
+                .disabled_tasks
+                .iter()
+                .any(|disabled| disabled == task.as_str())
+        }) {
+            log::debug!(
+                "urgent inference request rejected for disabled task {}",
+                request.model_key
+            );
+            return false;
+        }
+        true
     }
 
     /// Sección crítica de microsegundos sobre contadores. El invariante que

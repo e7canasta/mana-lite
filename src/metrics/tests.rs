@@ -102,6 +102,33 @@ fn scheduler_reasons_and_future_urgency_counters_remain_distinct() {
     assert_eq!(report.model_metrics["face-yolo"].due_but_no_target, 1);
 }
 
+#[test]
+fn urgent_requests_publish_acceptance_wait_expiration_and_starvation() {
+    let mut engine = MetricsEngine::new(0, 50);
+    engine.tick_urgent_request("pose-standard");
+    engine.tick_urgent_wait("pose-standard", Duration::from_millis(100));
+    engine.tick_urgent_wait("pose-standard", Duration::from_millis(450));
+    engine.tick_infer_urgent("pose-standard");
+    engine.tick_infer_urgent_expired("pose-standard");
+    engine.tick_urgent_starvation("pose-standard");
+
+    let (report, _) = engine.take_report().expect("zero-second report");
+    let model = &report.model_metrics["pose-standard"];
+
+    assert_eq!(report.urgent_requests, 1);
+    assert_eq!(report.urgent_wait_samples, 2);
+    assert_eq!(report.urgent_wait_min_ms, 100);
+    assert_eq!(report.urgent_wait_p50_ms, 100);
+    assert_eq!(report.urgent_wait_p95_ms, 450);
+    assert_eq!(report.urgent_wait_max_ms, 450);
+    assert_eq!(report.urgent_expired, 1);
+    assert_eq!(report.urgent_starvation, 1);
+    assert_eq!(model.urgent_requests, 1);
+    assert_eq!(model.urgent_wait_samples, 2);
+    assert_eq!(model.urgent_wait_p95_ms, 450);
+    assert_eq!(model.urgent_starvation, 1);
+}
+
 /// Aceptación del item "presupuesto de ciclo": un ciclo sintético por
 /// encima del presupuesto incrementa cycle_overruns y sale en el
 /// reporte con p95 y max.

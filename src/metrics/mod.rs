@@ -106,6 +106,16 @@ pub struct PerModelMetrics {
     pub urgent: u64,
     /// Peticiones urgentes que vencieron sin ser atendidas.
     pub urgent_expired: u64,
+    /// Requests urgentes aceptadas por el scheduler.
+    pub urgent_requests: u64,
+    /// Distribucion de espera desde `requested_at` hasta el inicio.
+    pub urgent_wait_samples: u64,
+    pub urgent_wait_min_ms: u64,
+    pub urgent_wait_p50_ms: u64,
+    pub urgent_wait_p95_ms: u64,
+    pub urgent_wait_max_ms: u64,
+    /// Requests validas que cruzaron dos keyframes sin iniciar.
+    pub urgent_starvation: u64,
     /// Intervalo minimo configurado en el blueprint.
     pub interval_min_ms: u64,
     /// Distribucion de gaps entre inicios reales del modelo.
@@ -136,6 +146,7 @@ pub struct PerModelMetrics {
     pub depth_max_m: f64,
     pub(crate) gap_samples_us: Vec<u64>,
     pub(crate) due_late_samples_us: Vec<u64>,
+    pub(crate) urgent_wait_samples_us: Vec<u64>,
 }
 
 impl Default for PerModelMetrics {
@@ -152,6 +163,13 @@ impl Default for PerModelMetrics {
             due_but_no_target: 0,
             urgent: 0,
             urgent_expired: 0,
+            urgent_requests: 0,
+            urgent_wait_samples: 0,
+            urgent_wait_min_ms: 0,
+            urgent_wait_p50_ms: 0,
+            urgent_wait_p95_ms: 0,
+            urgent_wait_max_ms: 0,
+            urgent_starvation: 0,
             interval_min_ms: 0,
             gap_samples: 0,
             gap_min_ms: 0,
@@ -177,6 +195,7 @@ impl Default for PerModelMetrics {
             depth_max_m: 0.0,
             gap_samples_us: Vec::new(),
             due_late_samples_us: Vec::new(),
+            urgent_wait_samples_us: Vec::new(),
         }
     }
 }
@@ -226,6 +245,15 @@ pub struct Metrics {
     pub infer_gated: u64,
     pub infer_urgent: u64,
     pub infer_urgent_expired: u64,
+    pub urgent_requests: u64,
+    pub urgent_wait_samples: u64,
+    pub urgent_wait_min_ms: u64,
+    pub urgent_wait_p50_ms: u64,
+    pub urgent_wait_p95_ms: u64,
+    pub urgent_wait_max_ms: u64,
+    pub urgent_expired: u64,
+    pub urgent_starvation: u64,
+    pub(crate) urgent_wait_samples_us: Vec<u64>,
     pub infer_empty: u64,
     pub infer_total_dets: u64,
     pub model_metrics: HashMap<String, PerModelMetrics>,
@@ -277,6 +305,15 @@ impl Default for Metrics {
             infer_gated: 0,
             infer_urgent: 0,
             infer_urgent_expired: 0,
+            urgent_requests: 0,
+            urgent_wait_samples: 0,
+            urgent_wait_min_ms: 0,
+            urgent_wait_p50_ms: 0,
+            urgent_wait_p95_ms: 0,
+            urgent_wait_max_ms: 0,
+            urgent_expired: 0,
+            urgent_starvation: 0,
+            urgent_wait_samples_us: Vec::new(),
             infer_empty: 0,
             infer_total_dets: 0,
             model_metrics: HashMap::new(),
@@ -315,6 +352,15 @@ fn finalize_model_timing(model: &mut PerModelMetrics) {
         model.due_late_p95_ms = percentile_us(&model.due_late_samples_us, 95) / 1000;
         model.due_late_max_ms = *model.due_late_samples_us.last().unwrap_or(&0) / 1000;
     }
+
+    model.urgent_wait_samples_us.sort_unstable();
+    model.urgent_wait_samples = model.urgent_wait_samples_us.len() as u64;
+    if model.urgent_wait_samples > 0 {
+        model.urgent_wait_min_ms = model.urgent_wait_samples_us[0] / 1000;
+        model.urgent_wait_p50_ms = percentile_us(&model.urgent_wait_samples_us, 50) / 1000;
+        model.urgent_wait_p95_ms = percentile_us(&model.urgent_wait_samples_us, 95) / 1000;
+        model.urgent_wait_max_ms = *model.urgent_wait_samples_us.last().unwrap_or(&0) / 1000;
+    }
 }
 
 impl Metrics {
@@ -347,6 +393,8 @@ impl Metrics {
         let keyframe_gap_count = self.keyframe_gap_samples.len();
         let keyframe_gap_p50_us = percentile_us(&self.keyframe_gap_samples, 50);
         let keyframe_gap_p95_us = percentile_us(&self.keyframe_gap_samples, 95);
+        self.urgent_wait_samples_us.sort_unstable();
+        let urgent_wait_samples = self.urgent_wait_samples_us.len() as u64;
         for model in self.model_metrics.values_mut() {
             finalize_model_timing(model);
         }
@@ -439,6 +487,22 @@ impl Metrics {
             infer_due_but_no_target: self.infer_due_but_no_target,
             infer_urgent: self.infer_urgent,
             infer_urgent_expired: self.infer_urgent_expired,
+            urgent_requests: self.urgent_requests,
+            urgent_wait_samples,
+            urgent_wait_min_ms: if urgent_wait_samples > 0 {
+                self.urgent_wait_samples_us[0] / 1000
+            } else {
+                0
+            },
+            urgent_wait_p50_ms: percentile_us(&self.urgent_wait_samples_us, 50) / 1000,
+            urgent_wait_p95_ms: percentile_us(&self.urgent_wait_samples_us, 95) / 1000,
+            urgent_wait_max_ms: if urgent_wait_samples > 0 {
+                self.urgent_wait_samples_us.last().copied().unwrap_or(0) / 1000
+            } else {
+                0
+            },
+            urgent_expired: self.urgent_expired,
+            urgent_starvation: self.urgent_starvation,
             model_metrics: self.model_metrics,
         }
     }
@@ -497,6 +561,14 @@ pub struct MetricsReport {
     pub infer_gated: u64,
     pub infer_urgent: u64,
     pub infer_urgent_expired: u64,
+    pub urgent_requests: u64,
+    pub urgent_wait_samples: u64,
+    pub urgent_wait_min_ms: u64,
+    pub urgent_wait_p50_ms: u64,
+    pub urgent_wait_p95_ms: u64,
+    pub urgent_wait_max_ms: u64,
+    pub urgent_expired: u64,
+    pub urgent_starvation: u64,
     pub infer_empty: u64,
     pub infer_total_dets: u64,
     pub model_metrics: HashMap<String, PerModelMetrics>,
@@ -864,9 +936,31 @@ impl MetricsEngine {
         }
     }
 
+    /// Registra una request urgente aceptada, no una ejecucion.
+    pub fn tick_urgent_request(&mut self, model_key: &str) {
+        self.current.urgent_requests += 1;
+        self.ensure_model_metrics(model_key).urgent_requests += 1;
+    }
+
+    /// Registra la espera de una request desde su produccion hasta el inicio.
+    pub fn tick_urgent_wait(&mut self, model_key: &str, wait: Duration) {
+        let wait_us = u64::try_from(wait.as_micros()).unwrap_or(u64::MAX);
+        self.current.urgent_wait_samples_us.push(wait_us);
+        self.ensure_model_metrics(model_key)
+            .urgent_wait_samples_us
+            .push(wait_us);
+    }
+
+    /// Registra una request valida que cruzo dos keyframes sin iniciar.
+    pub fn tick_urgent_starvation(&mut self, model_key: &str) {
+        self.current.urgent_starvation += 1;
+        self.ensure_model_metrics(model_key).urgent_starvation += 1;
+    }
+
     /// Registra una peticion urgente que expiro antes de ser atendida.
     pub fn tick_infer_urgent_expired(&mut self, model_key: &str) {
         self.current.infer_urgent_expired += 1;
+        self.current.urgent_expired += 1;
         let m = self
             .current
             .model_metrics

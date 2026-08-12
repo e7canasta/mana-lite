@@ -296,6 +296,7 @@ impl App {
             tracks,
             occupancy,
             fsm_state,
+            urgent_requests: Vec::new(),
         });
     }
 

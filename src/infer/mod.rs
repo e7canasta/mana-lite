@@ -142,6 +142,10 @@ impl InferEngine {
     pub fn model_count(&self) -> usize {
         self.models.len()
     }
+
+    pub fn has_model(&self, model_key: &str) -> bool {
+        self.models.contains_key(model_key)
+    }
 }
 
 enum LoadAttempt {

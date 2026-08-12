@@ -1,9 +1,72 @@
-use std::collections::HashMap;
-use std::time::Instant;
+use std::collections::{HashMap, HashSet, VecDeque};
+use std::time::{Duration, Instant};
 
 use serde::Deserialize;
 
 use crate::domain::{ClassName, ModelId};
+
+/// TTL máximo permitido para una solicitud urgente.
+pub const MAX_INFERENCE_REQUEST_TTL: Duration = Duration::from_secs(5);
+
+/// Solicitud one-shot de ejecución fuera del intervalo normal de un modelo.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InferenceRequest {
+    pub model_key: String,
+    pub reason: String,
+    pub priority: u8,
+    pub requested_at: Instant,
+    pub expires_at: Instant,
+}
+
+impl InferenceRequest {
+    #[must_use]
+    pub fn new(
+        model_key: impl Into<String>,
+        reason: impl Into<String>,
+        priority: u8,
+        requested_at: Instant,
+        expires_at: Instant,
+    ) -> Self {
+        Self {
+            model_key: model_key.into(),
+            reason: reason.into(),
+            priority,
+            requested_at,
+            expires_at,
+        }
+    }
+
+    fn key(&self) -> RequestKey {
+        RequestKey {
+            model_key: self.model_key.clone(),
+            reason: self.reason.clone(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum InferenceRequestError {
+    EmptyModel,
+    EmptyReason,
+    ExpirationNotAfterRequest,
+    TtlExceedsMaximum,
+    RequestedInFuture,
+    UnknownModel,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct RequestKey {
+    model_key: String,
+    reason: String,
+}
+
+/// Vista congelada de las urgencias al comienzo de un keyframe.
+#[derive(Debug, Default)]
+pub struct UrgentRequestWindow {
+    pub requests: Vec<InferenceRequest>,
+    pub expired: Vec<InferenceRequest>,
+    pub starved: Vec<InferenceRequest>,
+}
 
 /// Narrow port for cascade gating — no SORT filter state.
 #[derive(Debug, Clone, PartialEq)]
@@ -206,6 +269,11 @@ pub struct CascadeScheduler {
     entries: HashMap<String, CascadeEntry>,
     order: Vec<String>,
     regions: HashMap<String, SemanticRegion>,
+    persistent_requests: Vec<InferenceRequest>,
+    persistent_keys: HashSet<RequestKey>,
+    transient_requests: VecDeque<InferenceRequest>,
+    pending_keyframes: HashMap<RequestKey, u32>,
+    starvation_reported: HashSet<RequestKey>,
 }
 
 impl CascadeScheduler {
@@ -242,6 +310,11 @@ impl CascadeScheduler {
             entries,
             order,
             regions,
+            persistent_requests: Vec::new(),
+            persistent_keys: HashSet::new(),
+            transient_requests: VecDeque::new(),
+            pending_keyframes: HashMap::new(),
+            starvation_reported: HashSet::new(),
         }
     }
 
@@ -317,6 +390,209 @@ impl CascadeScheduler {
 
     pub fn interval_min_ms(&self, model: &str) -> Option<u64> {
         self.entries.get(model).map(|entry| entry.interval_min_ms)
+    }
+
+    /// Valida la parte del contrato que pertenece al scheduler T1.
+    ///
+    /// La habilitación efectiva y las tareas desactivadas se validan en la
+    /// etapa de percepción, que es la única que conoce el catálogo cargado y
+    /// `PerceptionConfig`.
+    pub fn validate_request(
+        &self,
+        request: &InferenceRequest,
+        now: Instant,
+    ) -> Result<(), InferenceRequestError> {
+        if request.model_key.trim().is_empty() {
+            return Err(InferenceRequestError::EmptyModel);
+        }
+        if request.reason.trim().is_empty() {
+            return Err(InferenceRequestError::EmptyReason);
+        }
+        if request.expires_at <= request.requested_at {
+            return Err(InferenceRequestError::ExpirationNotAfterRequest);
+        }
+        if request.expires_at.duration_since(request.requested_at) > MAX_INFERENCE_REQUEST_TTL {
+            return Err(InferenceRequestError::TtlExceedsMaximum);
+        }
+        if request.requested_at > now {
+            return Err(InferenceRequestError::RequestedInFuture);
+        }
+        if !self.entries.contains_key(&request.model_key) {
+            return Err(InferenceRequestError::UnknownModel);
+        }
+        Ok(())
+    }
+
+    /// Reemplaza el conjunto de requests persistentes de la directiva.
+    ///
+    /// El identity key permanece activo mientras la directiva lo publique,
+    /// incluso después de consumir o expirar la request. Así una directiva
+    /// reconstruida en cada scan no revive la misma urgencia one-shot.
+    pub fn replace_persistent_requests(
+        &mut self,
+        requests: Vec<InferenceRequest>,
+        now: Instant,
+    ) -> Vec<InferenceRequest> {
+        let old_keys = std::mem::take(&mut self.persistent_keys);
+        let mut next_keys = HashSet::new();
+        let mut next_requests = Vec::new();
+        for request in requests {
+            if self.validate_request(&request, now).is_err() {
+                continue;
+            }
+            let key = request.key();
+            if next_keys.insert(key) {
+                next_requests.push(request);
+            }
+        }
+
+        let retained_keys: HashSet<RequestKey> =
+            old_keys.intersection(&next_keys).cloned().collect();
+        self.persistent_requests
+            .retain(|request| next_keys.contains(&request.key()));
+
+        for key in old_keys.difference(&next_keys) {
+            self.clear_wait_state(key);
+        }
+
+        let mut pending_keys: HashSet<RequestKey> = self
+            .persistent_requests
+            .iter()
+            .map(InferenceRequest::key)
+            .collect();
+        pending_keys.extend(self.transient_requests.iter().map(InferenceRequest::key));
+
+        let mut accepted = Vec::new();
+        for request in next_requests {
+            let key = request.key();
+            if retained_keys.contains(&key) || pending_keys.contains(&key) {
+                continue;
+            }
+            pending_keys.insert(key.clone());
+            self.reset_wait_state(&key);
+            self.persistent_requests.push(request.clone());
+            accepted.push(request);
+        }
+        self.persistent_keys = next_keys;
+        accepted
+    }
+
+    /// Agrega una request transitoria a la cola durable del scheduler.
+    ///
+    /// `Ok(false)` significa que la request era un duplicado lógico de otra
+    /// pendiente o de una urgencia persistente activa.
+    pub fn enqueue_transient(
+        &mut self,
+        request: InferenceRequest,
+        now: Instant,
+    ) -> Result<bool, InferenceRequestError> {
+        self.validate_request(&request, now)?;
+        let key = request.key();
+        if self.persistent_keys.contains(&key)
+            || self
+                .persistent_requests
+                .iter()
+                .any(|pending| pending.key() == key)
+            || self
+                .transient_requests
+                .iter()
+                .any(|pending| pending.key() == key)
+        {
+            return Ok(false);
+        }
+        self.reset_wait_state(&key);
+        self.transient_requests.push_back(request);
+        Ok(true)
+    }
+
+    /// Congela las requests que pueden competir en el keyframe actual.
+    ///
+    /// Las entradas producidas después de esta llamada quedan en la cola y no
+    /// se observan hasta el siguiente keyframe.
+    pub fn begin_keyframe(&mut self, now: Instant) -> UrgentRequestWindow {
+        let mut expired = Vec::new();
+        let mut expired_keys = HashSet::new();
+        self.persistent_requests.retain(|request| {
+            if request.expires_at <= now {
+                expired.push(request.clone());
+                expired_keys.insert(request.key());
+                false
+            } else {
+                true
+            }
+        });
+        self.transient_requests.retain(|request| {
+            if request.expires_at <= now {
+                expired.push(request.clone());
+                expired_keys.insert(request.key());
+                false
+            } else {
+                true
+            }
+        });
+        for key in expired_keys {
+            self.clear_wait_state(&key);
+        }
+
+        let mut requests = self.persistent_requests.clone();
+        requests.extend(self.transient_requests.iter().cloned());
+        requests.sort_by(compare_requests);
+
+        let mut starved = Vec::new();
+        for request in &requests {
+            let key = request.key();
+            let keyframes = self.pending_keyframes.entry(key.clone()).or_default();
+            *keyframes = keyframes.saturating_add(1);
+            if *keyframes >= 2 && self.starvation_reported.insert(key) {
+                starved.push(request.clone());
+            }
+        }
+
+        UrgentRequestWindow {
+            requests,
+            expired,
+            starved,
+        }
+    }
+
+    /// Consume una request al marcar el inicio, antes del backend.
+    pub fn consume_request(&mut self, request: &InferenceRequest) -> bool {
+        let removed = self
+            .persistent_requests
+            .iter()
+            .position(|candidate| candidate == request)
+            .map(|index| {
+                self.persistent_requests.remove(index);
+                true
+            })
+            .or_else(|| {
+                self.transient_requests
+                    .iter()
+                    .position(|candidate| candidate == request)
+                    .map(|index| {
+                        self.transient_requests.remove(index);
+                        true
+                    })
+            })
+            .unwrap_or(false);
+        if removed {
+            self.clear_wait_state(&request.key());
+        }
+        removed
+    }
+
+    pub fn pending_request_count(&self) -> usize {
+        self.persistent_requests.len() + self.transient_requests.len()
+    }
+
+    fn reset_wait_state(&mut self, key: &RequestKey) {
+        self.pending_keyframes.insert(key.clone(), 0);
+        self.starvation_reported.remove(key);
+    }
+
+    fn clear_wait_state(&mut self, key: &RequestKey) {
+        self.pending_keyframes.remove(key);
+        self.starvation_reported.remove(key);
     }
 
     pub fn target_for_detections(
@@ -447,6 +723,14 @@ fn bbox_area(bbox: &[f32; 4]) -> f32 {
     (bbox[2] - bbox[0]).max(0.0) * (bbox[3] - bbox[1]).max(0.0)
 }
 
+fn compare_requests(a: &InferenceRequest, b: &InferenceRequest) -> std::cmp::Ordering {
+    b.priority
+        .cmp(&a.priority)
+        .then_with(|| a.requested_at.cmp(&b.requested_at))
+        .then_with(|| a.model_key.cmp(&b.model_key))
+        .then_with(|| a.reason.cmp(&b.reason))
+}
+
 fn bbox_area_ratio(bbox: &[f32; 4], frame_w: u32, frame_h: u32) -> f32 {
     let frame_area = (frame_w as f32) * (frame_h as f32);
     if frame_area <= 0.0 {
@@ -522,6 +806,16 @@ mod tests {
                 interval_min_ms: 0,
             },
         ]
+    }
+
+    fn urgent_request(
+        model: &str,
+        reason: &str,
+        priority: u8,
+        requested_at: Instant,
+        ttl: Duration,
+    ) -> InferenceRequest {
+        InferenceRequest::new(model, reason, priority, requested_at, requested_at + ttl)
     }
 
     #[test]
@@ -759,6 +1053,218 @@ mod tests {
 
         assert!(cascade.is_due("detect-fast", start));
         assert!(cascade.is_due("detect-fast", start + Duration::from_millis(1)));
+    }
+
+    #[test]
+    fn urgent_request_contract_rejects_invalid_time_and_unknown_model() {
+        let cascade = CascadeScheduler::from_rules(&test_rules());
+        let now = Instant::now();
+
+        assert_eq!(
+            cascade.validate_request(
+                &InferenceRequest::new("pose-standard", "face-uncertain", 1, now, now),
+                now,
+            ),
+            Err(InferenceRequestError::ExpirationNotAfterRequest)
+        );
+        assert_eq!(
+            cascade.validate_request(
+                &urgent_request(
+                    "pose-standard",
+                    "face-uncertain",
+                    1,
+                    now,
+                    MAX_INFERENCE_REQUEST_TTL + Duration::from_millis(1),
+                ),
+                now,
+            ),
+            Err(InferenceRequestError::TtlExceedsMaximum)
+        );
+        assert_eq!(
+            cascade.validate_request(
+                &urgent_request("missing", "test", 1, now, Duration::from_secs(1)),
+                now,
+            ),
+            Err(InferenceRequestError::UnknownModel)
+        );
+    }
+
+    #[test]
+    fn persistent_requests_are_deduplicated_and_sorted_by_priority() {
+        let mut cascade = CascadeScheduler::from_rules(&test_rules());
+        let now = Instant::now();
+        let older = urgent_request(
+            "pose-standard",
+            "face-uncertain",
+            1,
+            now - Duration::from_millis(100),
+            Duration::from_secs(1),
+        );
+        let higher = urgent_request(
+            "detect-fast",
+            "operator",
+            5,
+            now - Duration::from_millis(50),
+            Duration::from_secs(1),
+        );
+        let duplicate = urgent_request(
+            "pose-standard",
+            "face-uncertain",
+            9,
+            now - Duration::from_millis(10),
+            Duration::from_secs(1),
+        );
+
+        let accepted = cascade
+            .replace_persistent_requests(vec![older.clone(), higher.clone(), duplicate], now);
+        assert_eq!(accepted.len(), 2);
+
+        let window = cascade.begin_keyframe(now);
+        assert_eq!(window.requests, vec![higher.clone(), older.clone()]);
+        assert!(cascade.consume_request(&higher));
+        assert!(!cascade.consume_request(&higher));
+        assert_eq!(cascade.pending_request_count(), 1);
+
+        let accepted_again = cascade.replace_persistent_requests(vec![older], now);
+        assert!(
+            accepted_again.is_empty(),
+            "la directiva no revive una urgente consumida"
+        );
+    }
+
+    #[test]
+    fn transient_request_survives_persistent_replacement_and_expires_once() {
+        let mut cascade = CascadeScheduler::from_rules(&test_rules());
+        let now = Instant::now();
+        let request = urgent_request(
+            "pose-standard",
+            "synthetic",
+            2,
+            now - Duration::from_millis(100),
+            Duration::from_secs(1),
+        );
+        assert!(
+            cascade
+                .enqueue_transient(request.clone(), now)
+                .expect("request is valid")
+        );
+        assert!(
+            !cascade
+                .enqueue_transient(request.clone(), now)
+                .expect("duplicate is still valid")
+        );
+        cascade.replace_persistent_requests(Vec::new(), now);
+        assert_eq!(cascade.begin_keyframe(now).requests, vec![request]);
+
+        let expired = urgent_request(
+            "pose-standard",
+            "expired",
+            1,
+            now - Duration::from_millis(200),
+            Duration::from_millis(100),
+        );
+        assert!(
+            cascade
+                .enqueue_transient(expired, now)
+                .expect("expired request can be observed and counted")
+        );
+        let first = cascade.begin_keyframe(now);
+        assert_eq!(first.expired.len(), 1);
+        assert!(cascade.begin_keyframe(now).expired.is_empty());
+    }
+
+    #[test]
+    fn requests_published_after_freeze_wait_for_the_next_keyframe() {
+        let mut cascade = CascadeScheduler::from_rules(&test_rules());
+        let now = Instant::now();
+        let first = cascade.begin_keyframe(now);
+        let request = urgent_request(
+            "pose-standard",
+            "produced-during-inference",
+            1,
+            now,
+            Duration::from_secs(1),
+        );
+
+        cascade
+            .enqueue_transient(request.clone(), now)
+            .expect("request is valid");
+        assert!(first.requests.is_empty());
+        assert_eq!(cascade.begin_keyframe(now).requests, vec![request]);
+    }
+
+    #[test]
+    fn urgent_request_does_not_bypass_a_child_gate() {
+        let mut cascade = CascadeScheduler::from_rules(&[
+            CascadeRule {
+                model: "detect-fast".into(),
+                requires: None,
+                requires_class: None,
+                requires_exact_count: None,
+                same_frame: false,
+                requires_min_confidence: None,
+                requires_min_area_ratio: None,
+                requires_region: None,
+                requires_region_coverage: None,
+                interval_min_ms: 0,
+            },
+            CascadeRule {
+                model: "pose-standard".into(),
+                requires: Some("detect-fast".into()),
+                requires_class: Some("person".into()),
+                requires_exact_count: Some(1),
+                same_frame: false,
+                requires_min_confidence: None,
+                requires_min_area_ratio: None,
+                requires_region: None,
+                requires_region_coverage: None,
+                interval_min_ms: 2_000,
+            },
+        ]);
+        let now = Instant::now();
+        cascade.mark_started("pose-standard", now);
+        cascade
+            .enqueue_transient(
+                urgent_request(
+                    "pose-standard",
+                    "synthetic",
+                    1,
+                    now,
+                    Duration::from_secs(1),
+                ),
+                now,
+            )
+            .expect("request is valid");
+
+        let window = cascade.begin_keyframe(now + Duration::from_millis(500));
+        assert!(!cascade.is_due("pose-standard", now + Duration::from_millis(500)));
+        assert_eq!(window.requests.len(), 1);
+        assert!(cascade.target_for("pose-standard", &[], 640, 480).is_none());
+    }
+
+    #[test]
+    fn pending_request_is_reported_as_starved_once_after_two_keyframes() {
+        let mut cascade = CascadeScheduler::from_rules(&test_rules());
+        let now = Instant::now();
+        let request = urgent_request("pose-standard", "synthetic", 1, now, Duration::from_secs(1));
+        cascade
+            .enqueue_transient(request, now)
+            .expect("request is valid");
+
+        assert!(cascade.begin_keyframe(now).starved.is_empty());
+        assert_eq!(
+            cascade
+                .begin_keyframe(now + Duration::from_millis(10))
+                .starved
+                .len(),
+            1
+        );
+        assert!(
+            cascade
+                .begin_keyframe(now + Duration::from_millis(20))
+                .starved
+                .is_empty()
+        );
     }
 
     #[test]

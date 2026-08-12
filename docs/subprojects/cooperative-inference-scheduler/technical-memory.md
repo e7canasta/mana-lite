@@ -1,6 +1,6 @@
 # Memoria tecnica: Scheduler Cooperativo de Inferencia
 
-**Estado:** Sprint 2 instrumentado; corrida de hardware, urgencias y validacion cruzada pendientes
+**Estado:** Sprint 3 implementado; corrida de hardware y validacion cruzada pendientes
 **Ultima actualizacion:** 2026-08-12
 
 ## 1. Problema
@@ -106,18 +106,26 @@ fallo de inferencia no desaparece de la medicion de capacidad.
 
 ## 6. Urgencias futuras
 
-Una urgencia no sera una interrupcion del sistema operativo. Sera una prioridad
+Una urgencia no es una interrupcion del sistema operativo. Es una prioridad
 cooperativa que salta el intervalo normal una vez:
 
 ```text
 face ambiguo -> request pose now -> pose elegible en el siguiente punto seguro
 ```
 
-La peticion debe tener modelo, razon, prioridad y expiracion. El scheduler no
-debe preemptar una llamada ONNX en curso. Para una peticion transitoria que no
-puede perderse, el canal adecuado sera una cola; no debe depender de un slot que
-puede sobrescribirla. Si la urgencia es una propiedad persistente del estado
-FSM, puede derivarse en cada `ControlDirective` y permanecer en el slot.
+La request implementada tiene modelo, razon, prioridad, `requested_at` y
+`expires_at`, con TTL maximo de cinco segundos. Prioridad mayor gana; en empate
+gana la request mas antigua. El scheduler congela las requests al comienzo de
+cada keyframe, permite como maximo una admision urgente por keyframe y consume
+la request al marcar el inicio, antes del backend. Una request persistente se
+reemplaza con la directiva y conserva su identity key mientras esa directiva la
+publique, para no revivirla en cada scan. Una transitoria vive en `VecDeque` y no
+puede perderse por una directiva nueva.
+
+La urgencia no saltea parent, clase, cantidad, confianza, region, tracking ni
+crop. Tampoco preempta una llamada ONNX en curso. Si una request cruza dos
+keyframes sin iniciar se cuenta como starvation una sola vez; si expira se
+elimina y se cuenta una sola vez.
 
 ## 7. Validacion cruzada
 

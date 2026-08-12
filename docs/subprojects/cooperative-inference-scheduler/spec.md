@@ -1,8 +1,8 @@
 # Especificacion: Scheduler Cooperativo de Inferencia
 
 **Identificador:** SUBSPEC-001
-**Estado:** propuesta para implementacion incremental
-**Version:** 0.1
+**Estado:** implementacion incremental; Sprint 3 cerrado a nivel runtime
+**Version:** 0.2
 
 ## 1. Proposito
 
@@ -119,14 +119,26 @@ Semantica:
 
 - salta `interval_min_ms` una vez;
 - no interrumpe una inferencia en curso;
+- `expires_at` debe ser posterior a `requested_at` y el TTL no puede superar
+  cinco segundos;
+- prioridad mayor gana; en empate gana `requested_at` mas antiguo y luego el
+  orden lexicografico de modelo y razon;
+- la vista de requests se congela al comenzar el keyframe; una request producida
+  durante la inferencia queda para el siguiente keyframe;
+- como maximo una request valida se admite de forma urgente por keyframe;
 - se consume cuando el modelo inicia;
 - expira si no puede atenderse dentro de su ventana;
+- una request persistente se deduplica por `(model_key, reason)` mientras la
+  directiva la mantenga; una transitoria usa una cola durable;
+- el bypass no salta parent, clase, cantidad, confianza, region, tracking, crop
+  ni orden topologico;
 - no puede generar catch-up ni ejecuciones duplicadas del mismo modelo sobre
   el mismo keyframe sin una regla explicita de cross-validation.
 
 Una urgencia persistente derivada del FSM puede reconstruirse en cada tick y
-viajar en `ControlDirective`. Una urgencia transitoria que no puede perderse
-requiere cola o un estado durable, no un slot latest-wins.
+viajar en `ControlDirective`, pero no revive una request one-shot ya consumida
+mientras conserve el mismo identity key. Una urgencia transitoria que no puede
+perderse usa la cola durable de `CascadeScheduler`, no un slot latest-wins.
 
 ## 8. Cross-validation, version futura
 

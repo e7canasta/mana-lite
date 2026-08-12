@@ -165,6 +165,14 @@ pub(super) fn write_metrics_event(event: &Event, buf: &mut Vec<u8>) {
     append_field(buf, "infer_gated", r.infer_gated);
     append_field(buf, "infer_urgent", r.infer_urgent);
     append_field(buf, "infer_urgent_expired", r.infer_urgent_expired);
+    append_field(buf, "urgent_requests", r.urgent_requests);
+    append_field(buf, "urgent_wait_samples", r.urgent_wait_samples);
+    append_field(buf, "urgent_wait_min_ms", r.urgent_wait_min_ms);
+    append_field(buf, "urgent_wait_p50_ms", r.urgent_wait_p50_ms);
+    append_field(buf, "urgent_wait_p95_ms", r.urgent_wait_p95_ms);
+    append_field(buf, "urgent_wait_max_ms", r.urgent_wait_max_ms);
+    append_field(buf, "urgent_expired", r.urgent_expired);
+    append_field(buf, "urgent_starvation", r.urgent_starvation);
     append_field(buf, "infer_empty", r.infer_empty);
     append_field(buf, "infer_total_dets", r.infer_total_dets);
     append_field(buf, "infer_total_ms", r.infer_total_ms);
@@ -212,6 +220,13 @@ pub(super) fn write_metrics_models(
         append_field(buf, "due_but_no_target", m.due_but_no_target);
         append_field(buf, "urgent", m.urgent);
         append_field(buf, "urgent_expired", m.urgent_expired);
+        append_field(buf, "urgent_requests", m.urgent_requests);
+        append_field(buf, "urgent_wait_samples", m.urgent_wait_samples);
+        append_field(buf, "urgent_wait_min_ms", m.urgent_wait_min_ms);
+        append_field(buf, "urgent_wait_p50_ms", m.urgent_wait_p50_ms);
+        append_field(buf, "urgent_wait_p95_ms", m.urgent_wait_p95_ms);
+        append_field(buf, "urgent_wait_max_ms", m.urgent_wait_max_ms);
+        append_field(buf, "urgent_starvation", m.urgent_starvation);
         append_field(buf, "interval_min_ms", m.interval_min_ms);
         append_field(buf, "gap_samples", m.gap_samples);
         append_field(buf, "gap_min_ms", m.gap_min_ms);
@@ -299,6 +314,12 @@ mod tests {
                 due_late_p50_ms: 100,
                 due_late_p95_ms: 900,
                 due_late_max_ms: 1_200,
+                urgent_requests: 2,
+                urgent_wait_samples: 2,
+                urgent_wait_p50_ms: 100,
+                urgent_wait_p95_ms: 900,
+                urgent_wait_max_ms: 1_200,
+                urgent_starvation: 1,
                 empty: 1,
                 ..PerModelMetrics::default()
             },
@@ -317,6 +338,14 @@ mod tests {
         assert!(
             json.contains(r#""due_late_max_ms":1200"#),
             "falta atraso contra next_due en {json}"
+        );
+        assert!(
+            json.contains(r#""urgent_wait_p95_ms":900"#),
+            "falta espera urgente en {json}"
+        );
+        assert!(
+            json.contains(r#""urgent_starvation":1"#),
+            "falta starvation urgente en {json}"
         );
         assert!(
             json.contains(r#""min_ms":"#),
@@ -375,5 +404,9 @@ mod tests {
 
         assert!(json.contains(r#""skips":0"#), "falta `skips` en {json}");
         assert!(json.contains(r#""gated":0"#), "falta `gated` en {json}");
+        assert!(
+            json.contains(r#""urgent_requests":0"#),
+            "falta urgent_requests en {json}"
+        );
     }
 }

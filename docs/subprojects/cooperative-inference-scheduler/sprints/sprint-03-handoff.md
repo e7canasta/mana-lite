@@ -1,7 +1,7 @@
 # Handoff de Sprint 3: Solicitudes Urgentes Cooperativas
 
 **Fecha de cierre:** 2026-08-12
-**Estado:** listo para comenzar; no hay implementacion de urgencias en runtime
+**Estado:** implementacion runtime completada; compuerta final pendiente
 **Ultimo sprint cerrado:** Sprint 2, instrumentacion de capacidad
 **Proposito:** permitir que un modelo pida una ejecucion fuera de su intervalo sin
 crear workers, bloquear el control ni perder una solicitud transitoria.
@@ -46,13 +46,19 @@ directiva vieja se puede reemplazar. Una request transitoria **no puede** viajar
 por ese mismo slot.
 
 `CascadeScheduler` vive en T1, en
-`core/mana-perception/src/cascade.rs`. Hoy mantiene reglas, orden, regiones,
-intervalos y `last_started_at`, pero no mantiene requests urgentes.
+`core/mana-perception/src/cascade.rs`. Mantiene reglas, orden, regiones,
+intervalos, `last_started_at` y la cola durable de requests urgentes.
+
+La implementación de Sprint 3 ya cubre el contrato, persistencia, cola
+transitoria, prioridad, TTL, congelamiento por keyframe, consumo one-shot y
+starvation idempotente. No hay todavía un productor semántico face/pose: esa
+decisión pertenece a Sprint 4.
 
 ## 2. Estado Verificado
 
-- `cargo test --workspace --release`: verde.
-- Paquete raiz: 153 tests verdes.
+- `cargo test --workspace --release`: debe ser la compuerta final de este sprint.
+- Paquete raíz: 155 tests verdes en la última corrida de la librería.
+- `mana-perception`: 34 tests verdes en la última corrida del crate.
 - `mana-control`: 160 tests verdes.
 - `mana-geometry`: 72 tests verdes.
 - `mana-media`: 17 tests verdes.
@@ -295,13 +301,13 @@ No reciclar `not_due`, `gated` ni `skip` para representar espera urgente.
 
 ## 10. Plan De Implementacion
 
-### Paso 1: contrato y cola
+### Paso 1: contrato y cola — completado
 
 - Crear `InferenceRequest` y las validaciones de tiempo/prioridad.
 - Agregar estado persistente y `VecDeque` transitoria al scheduler.
 - Anadir tests de deduplicacion, prioridad, TTL y expiracion unica.
 
-### Paso 2: directiva y consumo
+### Paso 2: directiva y consumo — completado
 
 - Agregar `urgent_requests` a `ControlDirective`.
 - Conservar el reemplazo latest-wins para el conjunto persistente.
@@ -309,7 +315,7 @@ No reciclar `not_due`, `gated` ni `skip` para representar espera urgente.
 - Hacer que requests validas agreguen su modelo al conjunto solicitado sin
   saltarse enabled/catalogo.
 
-### Paso 3: ciclo de inferencia
+### Paso 3: ciclo de inferencia — completado
 
 - Congelar requests al inicio del keyframe.
 - Mantener gates de parent/track/class/ROI.
@@ -318,14 +324,14 @@ No reciclar `not_due`, `gated` ni `skip` para representar espera urgente.
 - Verificar que una request generada durante la inferencia no corre en el mismo
   keyframe.
 
-### Paso 4: metricas
+### Paso 4: metricas — completado
 
 - Agregar contador de solicitudes y distribucion de espera.
 - Registrar expiraciones y starvation de forma idempotente.
 - Exponer text y JSONL.
 - Mantener el significado actual de `urgent` y `urgent_expired`.
 
-### Paso 5: acceptance
+### Paso 5: acceptance — en compuerta
 
 - Tests unitarios de scheduler y metricas.
 - Test de `ControlDirective` persistente.
@@ -368,7 +374,7 @@ No reciclar `not_due`, `gated` ni `skip` para representar espera urgente.
 
 ## 13. Primer Comando De La Proxima Sesion
 
-Desde la raiz del repositorio:
+Desde la raíz del repositorio:
 
 ```sh
 git status --short
@@ -385,5 +391,6 @@ src/app/inference.rs: run_inference, run_root_models, run_child_models
 core/mana-perception/src/cascade.rs: CascadeScheduler, mark_started
 ```
 
-El primer cambio recomendado es el contrato y los tests de
-`InferenceRequest`; no empezar por integrar face/pose ni por correr hardware.
+El runtime ya está implementado. Si la compuerta queda verde, revisar el diff,
+crear el commit del Sprint 3 y dejar la corrida física de pesos `640` como
+pendiente explícito; no empezar todavía con integración semántica face/pose.

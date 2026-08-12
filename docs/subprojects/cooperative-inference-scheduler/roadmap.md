@@ -74,8 +74,7 @@ menos por politica o por falta de target.
 
 ### Sprint 3: solicitudes urgentes cooperativas
 
-**Estado:** listo para comenzar; handoff operativo en
-`sprints/sprint-03-handoff.md`.
+**Estado:** implementacion runtime completada; compuerta de workspace pendiente.
 
 - contrato `InferenceRequest`;
 - prioridad y expiracion;
@@ -83,6 +82,11 @@ menos por politica o por falta de target.
 - request transitorio con cola o estado durable;
 - consumo one-shot sin preempcion;
 - limites anti-starvation y metricas.
+
+La primera version ya tiene `InferenceRequest`, persistencia derivada de
+`ControlDirective`, cola transitoria durable dentro de `CascadeScheduler`,
+congelamiento por keyframe, prioridad, TTL, consumo one-shot y espera/expiracion
+en metricas. El productor semantico face/pose queda deliberadamente para Sprint 4.
 
 **Puerta de salida:** face puede pedir pose fuera de su periodo y el request no
 se pierde ni puede bloquear el control.

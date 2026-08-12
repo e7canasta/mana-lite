@@ -226,6 +226,12 @@ pub struct MetricsTextFlags {
     #[serde(default = "default_true")]
     pub infer_urgent_expired: bool,
     #[serde(default = "default_true")]
+    pub infer_urgent_requests: bool,
+    #[serde(default = "default_true")]
+    pub infer_urgent_wait: bool,
+    #[serde(default = "default_true")]
+    pub infer_urgent_starvation: bool,
+    #[serde(default = "default_true")]
     pub infer_empty: bool,
 }
 
@@ -246,6 +252,9 @@ impl Default for MetricsTextFlags {
             infer_gated: true,
             infer_urgent: true,
             infer_urgent_expired: true,
+            infer_urgent_requests: true,
+            infer_urgent_wait: true,
+            infer_urgent_starvation: true,
             infer_empty: true,
         }
     }

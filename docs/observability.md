@@ -109,6 +109,9 @@ infer_due_but_no_target = true
 infer_gated = true
 infer_urgent = true
 infer_urgent_expired = true
+infer_urgent_requests = true
+infer_urgent_wait = true
+infer_urgent_starvation = true
 infer_empty = true
 ```
 
@@ -133,7 +136,10 @@ infer:  2.0 Hz — 10 calls in 5s | 38ms avg | 2-145ms | 12 dets | skips:2, empt
 | `skip,not_due,due_but_gated,due_but_no_target` | Razones por las que un modelo debido no produjo una llamada |
 | `gap p50/p95/max` | Tiempo entre inicios reales del mismo modelo |
 | `due_late p50/p95/max` | Atraso respecto del siguiente vencimiento del intervalo |
-| `urgent,urgent_expired` | Ejecuciones urgentes y solicitudes vencidas; Sprint 2 los deja en cero |
+| `urgent,urgent_expired` | Ejecuciones urgentes y solicitudes vencidas |
+| `urgent_requests` | Solicitudes urgentes aceptadas por el scheduler |
+| `urgent_wait p50/p95/max` | Espera desde `requested_at` hasta el inicio |
+| `urgent_starvation` | Requests validas que cruzaron dos keyframes sin iniciar |
 
 ---
 

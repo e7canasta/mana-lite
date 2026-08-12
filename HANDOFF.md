@@ -59,18 +59,18 @@ alguien que llega hoy.
 
 ### Handoff actual del scheduler cooperativo
 
-Sprint 1 y Sprint 2 del subproyecto están implementados y verificados. Sprint 2
-agregó gaps por modelo, atraso contra `next_due`, razones de no ejecución,
-contadores de urgencia y el escenario de capacidad en
-`workshop/scenarios/11-inference-capacity/`. La corrida con pesos `640` queda
-pendiente porque esos artefactos no están en el checkout.
+Sprint 1 y Sprint 2 del subproyecto están implementados y verificados. Sprint 3
+ya tiene el runtime cooperativo de `InferenceRequest`: requests persistentes en
+`ControlDirective`, cola transitoria durable, prioridad, TTL, congelamiento por
+keyframe, consumo one-shot, anti-starvation y métricas de espera/expiración. La
+validación semántica face/pose queda para Sprint 4. La corrida con pesos `640`
+queda pendiente porque esos artefactos no están en el checkout.
 
-Para comenzar Sprint 3, el documento único de entrada es
+La especificación y el plan de Sprint 3 siguen en
 [`docs/subprojects/cooperative-inference-scheduler/sprints/sprint-03-handoff.md`](docs/subprojects/cooperative-inference-scheduler/sprints/sprint-03-handoff.md).
-Fija el contrato de `InferenceRequest`, la diferencia entre requests persistentes
-y transitorias, el algoritmo de consumo, anti-starvation, metricas, archivos y
-criterios de aceptacion. No usar `Slot<ControlDirective>` para requests
-transitorias: ese slot es latest-wins por diseño.
+No usar `Slot<ControlDirective>` para requests transitorias: ese slot es
+latest-wins por diseño. La próxima compuerta es `cargo test --workspace --release`
+y la revisión del diff de Sprint 3.
 
 ## 3. Cómo se trabaja
 
