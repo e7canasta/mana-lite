@@ -206,8 +206,14 @@ Independiente del Track A. Ninguna bloquea nada, todas están documentadas.
 | ~~B3~~ | ~~Comentarios de código en inglés de la Fase 0~~ | — | ✅ cerrada 2026-08-11 |
 | ~~B4~~ | ~~`workshop/scenarios/home-1/` es copia byte a byte del escenario 02~~ | — | ✅ borrada 2026-08-12 |
 | ~~B7~~ | ~~El `Mutex<MetricsEngine>` en el camino del lazo~~ | — | ✅ descartada 2026-08-12: el piso bajó de 1,5-1,6 ms a 1,3-1,4 ms |
-| B5 | `docs/wiki/6.2` documenta `PipelineObserver` como el fan-out; el trait se borró en la Fase 3 | `docs/wiki/` | cualquier momento |
+| B5 | La wiki generada (21 archivos, commit `ad24740d`) describe el super loop y tipos borrados | `docs/wiki/` | **regenerar**, no editar |
 | B6 | Hay dos documentos de arquitectura (`ARCHITECTURE.md` de ejecución, `docs/ARCHITECTURE.md` de workspace) y el README ahora los distingue, pero conviene decidir si se funden | — | cualquier momento |
+
+**Sobre B5.** No es una corrección de texto: la wiki es **generada** —permalinks
+de GitHub clavados en un commit— y editarla a mano crea un segundo relato que
+compite con el primero y se pierde en la próxima regeneración. Lo que
+corresponde es correr el generador contra `HEAD`. Mientras tanto lleva un aviso
+en `docs/wiki/1-overview.md` que dice qué describe que ya no existe y a dónde ir.
 
 **Cerradas el 2026-08-11.** B1 era un condicional: con `pipeline.infer = false`
 el bootstrap ya no construye sesiones ONNX, y la validación del catálogo sigue

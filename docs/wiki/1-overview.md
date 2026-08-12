@@ -1,5 +1,22 @@
 # Overview
 
+> ⚠️ **Esta wiki está generada y quedó desactualizada.** Se generó contra el
+> commit `ad24740d`, anterior a la separación en etapas del 2026-08-11/12.
+>
+> Lo que describe y ya no existe: el super loop de una sola task con
+> `tokio::select!` entre ingesta y reloj, y los tipos `PipelineObserver`,
+> `FanoutObserver` y `NullObserver`. Las páginas 1.1, 3.1 y 6.2 son las más
+> afectadas.
+>
+> **No editar a mano**: son archivos generados y una corrección manual se pierde
+> en la próxima regeneración, además de crear un segundo relato que compite con
+> el primero. Lo que corresponde es regenerar contra `HEAD`.
+>
+> Mientras tanto, la fuente autorizada sobre ejecución es
+> [ARCHITECTURE.md](../../ARCHITECTURE.md) —verificada contra el código, con
+> referencia a archivo y línea— y sobre estado y decisiones,
+> [ROADMAP.md](../../ROADMAP.md) y `docs/adrs/`.
+
 La plataforma **mana-lite** se presenta como una infraestructura avanzada de **visión computacional de alto rendimiento** diseñada para transformar transmisiones de video en vivo en datos analíticos procesables. El sistema opera mediante una división clara entre la **percepción**, que gestiona la decodificación y el análisis mediante redes neuronales, y el **control**, que estabiliza la información para ejecutar una lógica de negocio basada en estados. Para garantizar la precisión técnica, el software emplea un **vocabulario de dominio estricto** y un sistema de identificadores que previenen errores en la categorización de objetos o zonas espaciales. Finalmente, la flexibilidad del motor reside en sus **blueprints o planos de configuración**, los cuales permiten orquestar modelos de inteligencia artificial en cascada para monitorear comportamientos complejos de forma automática y determinista.
 
 

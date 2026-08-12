@@ -373,7 +373,12 @@ impl PerceptionStage {
 
     fn on_keyframe(&mut self, decode_us: u64, now: Instant) -> u64 {
         self.frame_count += 1;
-        let dt_ms = now.duration_since(self.last_keyframe_at).as_millis() as u64;
+        // `try_from` y no `as`, igual que el resto de las conversiones de esta
+        // sesión: la truncación necesitaría un gap de 584 millones de años, pero
+        // dos formas distintas de convertir lo mismo en el mismo archivo es lo
+        // que hace que alguien elija la equivocada la próxima vez.
+        let dt_ms = u64::try_from(now.duration_since(self.last_keyframe_at).as_millis())
+            .unwrap_or(u64::MAX);
         self.last_keyframe_at = now;
         {
             let mut metrics = self.lock_metrics();
