@@ -1,0 +1,20 @@
+# Blueprint del escenario 03: un solo modelo de detección, sin cascada.
+#
+# A diferencia del blueprint del escenario 01 —donde el modelo se carga pero no
+# corre— acá esta declaración es la carga de trabajo bajo medición: el costo de
+# `detect-fast` sobre el hilo del lazo es lo que produce el atraso que la fase
+# quiere ver.
+#
+# `requires_tracking = false` es esencial: con `true`, bootstrap rechaza
+# `pipeline.track = false` (src/app/bootstrap/catalogs.rs:187). Acá el tracking
+# se deja apagado a propósito, para que el atraso medido sea el de la
+# inferencia y no el de la cadena de asociación que viene después.
+[blueprint]
+name = "ingest-infer"
+description = "Ingesta + inferencia, sin tracking ni capas clínicas"
+primary_model = "detect-fast"
+models = ["detect-fast"]
+requires_tracking = false
+
+[[rules]]
+model = "detect-fast"

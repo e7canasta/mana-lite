@@ -1,0 +1,25 @@
+# ============================================================================
+# OBSERVABILIDAD DEL ESCENARIO 06 — el único que se trae la suya.
+#
+# Los demás escenarios usan `config/metrics.toml`, que es el archivo de
+# mecanismo del dispositivo. Este no puede: ese archivo trae `fsm_events`,
+# `zone_events` y `face_dwell_events` en `false`, y un escenario de revisión
+# sin esos eventos no permite contrastar lo que se ve en Rerun contra lo que el
+# sistema efectivamente decidió. Es la lección del 05, donde el criterio de
+# aceptación pedía transiciones en el JSONL y la config las tenía apagadas.
+#
+# Cada flag del mecanismo default'ea a `true`, así que acá se declaran **sólo
+# las desviaciones**. Lo que no está listado está encendido.
+# ============================================================================
+
+[metrics]
+report_interval_s = 5
+
+[metrics.jsonl]
+# Una línea por frame no aporta a una revisión visual y tapa el resto.
+frame_events = false
+# La ventana ya sale por texto; duplicarla en JSONL no agrega nada que mirar.
+metrics_event = false
+per_model_in_window = false
+class_counts_in_window = false
+class_per_frame_stats = false

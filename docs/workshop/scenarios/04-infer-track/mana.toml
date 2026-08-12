@@ -1,0 +1,121 @@
+# ============================================================================
+# ESCENARIO 04 — INGESTA + INFERENCIA + TRACKING Y CASCADA
+#
+# Agrega sobre el 03 el seguimiento temporal y, con él, la cascada con hijo.
+# Las dos cosas entran juntas porque no son separables: la compuerta del modelo
+# hijo pregunta cuántos tracks de persona hay (`presence_track_count`), así que
+# una cascada con hijo **requiere** tracker.
+#
+# Es el primer escenario que ejercita el LAZO CERRADO: control publica sus
+# tracks en la directiva y percepción decide con ellos si corre `face-yolo` y
+# dónde recorta. Hasta el 03, la realimentación existía pero no gobernaba nada.
+#
+# Usa el blueprint de producción `detect-face`, no uno propio: a esta altura lo
+# que hay que validar es lo que se despliega.
+#
+#   cargo run --release -- --config workshop/scenarios/04-infer-track/mana.toml
+# ============================================================================
+
+# Archivos de mecanismo del dispositivo, compartidos con producción. No
+# expresan política del escenario, así que no se duplican.
+metrics_file = "config/metrics.toml"
+viz_file = "config/viz.toml"
+rerun_file = "config/rerun.toml"
+
+# Idénticos al escenario 01: es el control del experimento y la comparación no
+# vale si el transporte cambia.
+[source]
+url = "rtsp://192.168.1.6:8554/home2"
+username = "admin"
+password = ""
+transport = "tcp"
+keyframes_only = true
+
+[ingest]
+poll_timeout_ms = 50
+error_window_size = 128
+error_window_threshold = 25
+reconnect_backoff_initial_ms = 1000
+reconnect_backoff_max_ms = 30000
+
+[inference]
+model_catalog = "config/models.toml"
+blueprint_file = "config/blueprints/detect-face/blueprint.toml"
+# `zones_file`, `fsm_file` y `depth_rules_file` siguen omitidos: la capa bajo
+# prueba es el seguimiento, no el catálogo clínico. Ese es el escenario 05.
+
+[detection]
+face_component_coverage = 0.70
+face_max_center_y_ratio = 0.65
+face_edge_margin_px = 32
+same_class_iou = 0.5
+
+# ----------------------------------------------------------------------------
+# Presencia apagada a propósito: el tracker no la necesita, y dejarla apagada
+# aísla el seguimiento de la interpretación clínica. La compuerta de la cascada
+# lee los tracks directamente, no el estado de presencia.
+# ----------------------------------------------------------------------------
+[presence]
+enabled = false
+class = "person"
+
+[presence.poi]
+on_ms = 200
+off_ms = 16_000
+
+[presence.occupancy]
+single_confirm_ms = 3000
+empty_confirm_ms = 8000
+multiple_confirm_ms = 5000
+multiple_exit_ms = 5000
+require_confirmed_tracks = false
+
+[tracking]
+max_age_ms = 40_000
+tentative_max_age_ms = 6_000
+ghost_max_ms = 6_000
+min_hits = 2
+iou_threshold = 0.2
+nominal_dt_ms = 2000
+
+[tracking.noise]
+measurement = 1.0
+process_position = 1.0
+process_velocity = 0.25
+
+[health]
+data_stale_ms = 10_000
+stale_warn_ms = 5_000
+panic_window_cycles = 20
+max_panics_in_window = 3
+# 500ms, igual que en 01. No se afloja para este escenario a propósito: el
+# presupuesto mide el **periodo**, y el periodo no debería moverse aunque la
+# inferencia bloquee el lazo — la recuperación en ráfaga lo compensa. Si acá
+# aparecieran overruns, el bloqueo excede un periodo entero y eso es un
+# hallazgo, no un umbral mal puesto.
+cycle_budget_ms = 500
+report_interval_s = 5
+
+[output]
+format = "jsonl"
+save_dir = "workshop/runs/04-infer-track"
+rotate = "hourly"
+snapshot_dir = "workshop/runs/04-infer-track/snapshots"
+snapshot_verbose = false
+jsonl_level = "debug"
+
+# ----------------------------------------------------------------------------
+# La capa bajo prueba es `track`. Zonas y FSM siguen apagados.
+# ----------------------------------------------------------------------------
+[pipeline]
+snapshot = false
+infer = true
+track = true
+zones = false
+fsm = false
+
+# Apagado: el tráfico del bridge compite con la ingesta (medido en la Fase 0,
+# ARCHITECTURE.md §3.1) y contaminaría la medición de atraso.
+[viz]
+enabled = false
+rerun_addr = "192.168.1.20:9876"
