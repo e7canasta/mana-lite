@@ -217,10 +217,21 @@ Un lote es **un keyframe entero de dibujo** y se descarta entero: medio frame de
 overlays sobre el frame siguiente sería peor que no dibujar nada. Los lotes
 pisados se publican como `viz_pisados` (§5.1.2).
 
-> **Sin medir todavía.** La corrida que lo cuantifica es
-> `./workshop/scenarios/02-ingest-viz/run-variant.sh a-raw-native`, la variante
-> que quedó degradada en la Fase 0. `viz_pisados` **tiene que subir** ahí: es la
-> prueba de que se descarta en vez de bloquear.
+**Medido el 2026-08-12** sobre la variante `a-raw-native` —frames sin comprimir,
+6,2 MB cada uno, con visor abierto—, que es la corrida que produjo la cadena de
+la Fase 0:
+
+| | Fase 0 | ahora |
+|---|---|---|
+| scan bloqueado | **41 s** | — |
+| reconexiones RTSP | 147 | **0** |
+| keyframes perdidos | 24% | **0** |
+| `cycle` p95 | — | 200 ms (min 199) |
+| atraso del lazo | — | p95 2,1 ms · **0 incumplidos** |
+| `viz_pisados` | no existía | **sube: 2 → 5 → …** |
+
+El contador sube y nada más se mueve. Ésa es la prueba: el enlace satura, se
+descartan lotes de dibujo, y ninguna etapa del pipeline se entera.
 
 ---
 
@@ -407,18 +418,25 @@ completamente inmóvil, un encoder que emita IDR byte-idénticos suprimiría
 indefinidamente, y **la propia supresión dispararía `data_stale`**: aguas arriba
 no habría forma de distinguir "la escena no cambió" de "el stream murió".
 
-### 6.2.1 El `Mutex<MetricsEngine>` está en el camino del lazo — *a medir*
+### 6.2.1 ~~El `Mutex<MetricsEngine>` en el camino del lazo~~ — *descartada*
 
-Percepción y control comparten el motor de métricas por `Mutex`. Las secciones
-críticas son de microsegundos sobre contadores y **nunca se sostienen a través
-de trabajo de latencia variable**, así que el argumento es que no es la clase de
-bloqueo que la arquitectura saca.
+Percepción y control comparten el motor de métricas por `Mutex`, y eso es un
+candado que el lazo toma: si percepción fuera desalojada sosteniéndolo, el lazo
+esperaría un quantum del scheduler.
 
-Pero es un candado que el lazo toma: si percepción es desalojada sosteniéndolo,
-el lazo espera un quantum del scheduler. La medición que lo resuelve ya existe:
-el piso del escenario 01 era `late max 1,5–1,6 ms` antes del corte. Si ahora
-subió, el candado está en el camino y hay que pasar a contadores por etapa
-fusionados al armar el reporte. Si no se movió, el argumento era correcto.
+**Medido el 2026-08-12**, escenario 01, `late max`:
+
+```
+antes del corte    1,5 – 1,6 ms   (1,96 – 2,12 en una corrida previa)
+después            1,3 – 1,4 ms
+```
+
+Bajó. El candado no está en el camino crítico, y el lazo quedó más puntual que
+antes porque hace menos trabajo por tick. No hay nada que refactorizar.
+
+La razón de dejarlo anotado en vez de arreglarlo preventivamente: contadores por
+etapa fusionados al reporte son más código y más superficie de error para
+resolver un problema que la medición dice que no existe.
 
 ### 6.3 El presupuesto cuenta pero no actúa — *abierto*
 

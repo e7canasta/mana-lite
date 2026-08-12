@@ -49,7 +49,7 @@ Aislar el lazo de control. Decidido en
 |---|---|---|---|
 | **0** | Línea base verde y sin knobs muertos | bajo | ✅ **cerrada** 2026-08-11 |
 | **1** | El lazo mide y declara su propio atraso | bajo | ✅ **cerrada** 2026-08-11 |
-| **2** | La visualización no puede frenar el control | medio | ✅ **cerrada** 2026-08-11 |
+| **2** | La visualización no puede frenar el control | medio | ✅ **cerrada y verificada** 2026-08-12 |
 | **3** | La cadencia se cumple de verdad | **alto** | ✅ **cerrada** 2026-08-11 |
 | **4** | La clase de bug de cancelación desaparece | medio | ✅ **cerrada** 2026-08-11 |
 | **5** | El sistema declara su degradación | medio | parcial — mide, no actúa |
@@ -132,10 +132,13 @@ pisados se publican como `viz_pisados`.
 De paso se borró el trait `PipelineObserver`: al separar las etapas quedó con un
 solo implementador y ningún doble de test.
 
-**Sin medir todavía.** La corrida que lo cuantifica es `run-variant.sh
-a-raw-native`, la variante que quedó degradada en la Fase 0. El contador
-`viz_pisados` **tiene que subir** ahí: es la prueba de que se descarta en vez de
-bloquear.
+**Verificado el 2026-08-12** sobre `a-raw-native`, la variante que en la Fase 0
+produjo 41 s de scan bloqueado, 147 reconexiones RTSP y 24% de keyframes
+perdidos. Ahora: cadencia de 200 ms clavada, cero incumplimientos, cero
+reconexiones, cero keyframes perdidos — y `viz_pisados` subiendo.
+
+El contador sube y nada más se mueve. Frames sin comprimir con un visor abierto
+dejaron de poder tocar el pipeline.
 
 ### Fase 3 — Percepción a su hilo ✅
 
@@ -188,7 +191,7 @@ Independiente del Track A. Ninguna bloquea nada, todas están documentadas.
 | ~~B2~~ | ~~`README.md` describe un baseline de 5 ramas y `track = false`~~ | — | ✅ cerrada 2026-08-11 |
 | ~~B3~~ | ~~Comentarios de código en inglés de la Fase 0~~ | — | ✅ cerrada 2026-08-11 |
 | **B4** | `workshop/scenarios/home-1/` es copia byte a byte del escenario 02 | — | **requiere tu decisión** |
-| B7 | El `Mutex<MetricsEngine>` compartido está en el camino del lazo; medible comparando el piso del escenario 01 | `ARCHITECTURE.md` §6.2.1 | una corrida |
+| ~~B7~~ | ~~El `Mutex<MetricsEngine>` en el camino del lazo~~ | — | ✅ descartada 2026-08-12: el piso bajó de 1,5-1,6 ms a 1,3-1,4 ms |
 | B5 | `docs/wiki/6.2` documenta `PipelineObserver` como el fan-out; el trait se borró en la Fase 3 | `docs/wiki/` | cualquier momento |
 | B6 | Hay dos documentos de arquitectura (`ARCHITECTURE.md` de ejecución, `docs/ARCHITECTURE.md` de workspace) y el README ahora los distingue, pero conviene decidir si se funden | — | cualquier momento |
 

@@ -139,6 +139,17 @@ fn log_deadline_line(report: &MetricsReport) {
 /// p50 cercano a medio intervalo de keyframe es lo sano; lo que hay que mirar
 /// es el `max` contra `health.data_stale_ms`.
 fn log_evidence_line(report: &MetricsReport) {
+    // Sin evidencia la distribución no existe, y cuatro ceros al lado de
+    // `0 scans` se leen como "la evidencia tiene 0 ms de edad" —- exactamente lo
+    // contrario de lo que pasa. Un estado real informado de forma ambigua deja
+    // de ser un instrumento.
+    if report.evidence_scans == 0 {
+        log::info!(
+            "evid:  sin evidencia en {}s — ningún scan tuvo observaciones sobre las que decidir",
+            report.window_s,
+        );
+        return;
+    }
     log::info!(
         "evid:  {} scans con evidencia in {}s | edad min {}ms p50 {}ms p95 {}ms max {}ms",
         report.evidence_scans,
