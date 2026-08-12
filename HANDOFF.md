@@ -177,6 +177,7 @@ Ninguna bloquea nada. En orden de lo que más molesta al leer el repo.
 | `SceneEvent::FsmState(String)` | debería ser `StateId` | tipado del vocabulario |
 | `ProgramState.models: Vec<String>` | debería ser `Vec<ModelId>` | ídem |
 | `current_models() -> Vec<String>` | aloca un `Vec` por scan | irrelevante a 5 Hz |
+| `detect-face-pose-seg` y `detect-room-raw` sin escenario | dos de los cuatro blueprints no tienen cobertura en `workshop/` | un peldaño más, o aceptar que no se despliegan |
 | Etapas sin supervisor | informan que murieron (`stage_died`) y nadie las reinicia | superficie real chica: los pánicos de percepción se atrapan y retina reconecta sola |
 
 ## 9. Lo que sigue, y no es arquitectura

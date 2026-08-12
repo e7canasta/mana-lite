@@ -475,8 +475,15 @@ prendido hay seis sospechosos ante cualquier anomalía; con la escalera, hay uno
 | Escenario | Capa que agrega |
 |---|---|
 | `01-ingest-only` | RTSP → decode → JSONL |
-| `02-ingest-viz` | bridge de Rerun |
-| `03-ingest-infer` | inferencia dentro del lazo — el escenario que midió el bloqueo |
+| `02-ingest-viz` | bridge de Rerun (`a-raw-native` / `b-jpeg-native`) |
+| `03-ingest-infer` | inferencia — el escenario que midió el bloqueo del lazo |
+| `04-infer-track` | tracking y cascada — el primero que ejercita la realimentación |
+| `05-clinical` | zonas, FSM y presencia — la pila completa, blueprint de producción |
+
+Los peldaños 01 y 03 tienen blueprint propio porque aíslan una capa. **04 y 05
+usan los blueprints de producción** (`detect-face` y `detect-room-face`): a esa
+altura lo que hay que validar es lo que se despliega. Quedan sin cobertura
+`detect-face-pose-seg` y `detect-room-raw`.
 
 Regla de invocación: **siempre `cargo run`, nunca una ruta fija al binario.**
 `target-dir` puede estar redirigido por configuración global de cargo, en cuyo
