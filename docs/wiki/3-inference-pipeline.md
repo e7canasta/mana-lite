@@ -1,4 +1,20 @@
 # Inference Pipeline
+
+> ⚠️ **Página generada, desactualizada.** Se generó contra el commit
+> `ad24740d`. Divergencias conocidas al 2026-08-12, específicas de esta
+> página:
+>
+> - **La compuerta de la cascada se borró del código.** Había una condición hardcodeada en `src/app/inference.rs` (`presence_track_count != 1`) que decidía si corría un modelo hijo. Duplicaba `requires_exact_count = 1` del blueprint contra otra fuente de datos y sin estar declarada en ningún catálogo. Desde el 2026-08-12 la condición vive **sólo** en las reglas del blueprint y la resuelve `cascade.rs`.
+>
+> No se corrige a mano: es un archivo **generado** y una corrección manual se
+> pierde en la próxima regeneración, además de crear un segundo relato que
+> compite con el primero. Lo que corresponde es regenerar contra `HEAD`.
+>
+> Fuentes autorizadas mientras tanto: [ARCHITECTURE.md](../../ARCHITECTURE.md)
+> sobre ejecución, [HANDOFF.md](../../HANDOFF.md) y [`docs/adrs/`](../adrs/)
+> sobre estado y decisiones, y [`workshop/MANUAL.md`](../../workshop/MANUAL.md)
+> sobre cómo se opera y se lee la salida.
+
 El sistema mana-lite utiliza un **pipeline de inferencia** que actúa como un motor de percepción diseñado para convertir transmisiones de video en bruto en **observaciones semánticas de alto nivel**. Este proceso lineal comienza con la **ingesta y decodificación** selectiva de fotogramas clave para reducir la latencia, seguido de una ejecución jerárquica de modelos de IA mediante un **programador en cascada** que analiza desde imágenes completas hasta recortes específicos. Finalmente, el sistema emplea la **consolidación de detecciones** para fusionar datos redundantes y organizar los hallazgos en una estructura coherente, mientras monitorea constantemente el rendimiento mediante **métricas de latencia**. En esencia, el documento detalla la arquitectura técnica que permite a una máquina interpretar visualmente su entorno de manera eficiente y organizada.
 
 

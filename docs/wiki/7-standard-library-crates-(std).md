@@ -1,4 +1,20 @@
 # Standard Library Crates (std/)
+
+> ⚠️ **Página generada, desactualizada.** Se generó contra el commit
+> `ad24740d`. Divergencias conocidas al 2026-08-12, específicas de esta
+> página:
+>
+> - **El super loop ya no existe.** Se describe una sola task con `tokio::select!` entre ingesta y reloj; desde el 2026-08-11/12 son tres etapas con dueños de ejecución distintos, unidas por slots que no bloquean (ADR-033, ADR-034). Los tipos `PipelineObserver`, `FanoutObserver` y `NullObserver` fueron borrados.
+>
+> No se corrige a mano: es un archivo **generado** y una corrección manual se
+> pierde en la próxima regeneración, además de crear un segundo relato que
+> compite con el primero. Lo que corresponde es regenerar contra `HEAD`.
+>
+> Fuentes autorizadas mientras tanto: [ARCHITECTURE.md](../../ARCHITECTURE.md)
+> sobre ejecución, [HANDOFF.md](../../HANDOFF.md) y [`docs/adrs/`](../adrs/)
+> sobre estado y decisiones, y [`workshop/MANUAL.md`](../../workshop/MANUAL.md)
+> sobre cómo se opera y se lee la salida.
+
 La biblioteca estándar del ecosistema **mana-lite** se compone de tres herramientas fundamentales diseñadas como **utilidades de bajo nivel** y alto rendimiento para el procesamiento de datos. El sistema utiliza **mana-geometry** para transformar salidas visuales brutas en estructuras matemáticas precisas, empleando técnicas de **compresión de máscaras** y aritmética espacial para definir objetos. Por otro lado, **mana-id** garantiza la integridad del software mediante **identificadores con seguridad de tipos**, mientras que **mana-media** gestiona la **ingesta y decodificación de video** de manera eficiente a través de buffers reutilizables. En conjunto, estos módulos actúan como un puente esencial que traduce la información sensorial compleja en un **dominio semántico estructurado** y libre de dependencias circulares
 
 

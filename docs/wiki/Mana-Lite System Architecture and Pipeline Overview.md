@@ -1,3 +1,22 @@
+> ⚠️ **Página generada, desactualizada.** Se generó contra el commit
+> `ad24740d`. Divergencias conocidas al 2026-08-12, específicas de esta
+> página:
+>
+> - **El super loop ya no existe.** Se describe una sola task con `tokio::select!` entre ingesta y reloj; desde el 2026-08-11/12 son tres etapas con dueños de ejecución distintos, unidas por slots que no bloquean (ADR-033, ADR-034). Los tipos `PipelineObserver`, `FanoutObserver` y `NullObserver` fueron borrados.
+>
+> - **El tracker cuenta en mediciones, no en scans.** `misses` y `hit_streak` se incrementaban una vez por tick del lazo; como el lazo tica más rápido que la evidencia, eso inventaba fallos de detección y ningún track llegaba a confirmarse. Desde el 2026-08-12 la asociación corre sólo cuando hay medición nueva y los scans sin medición usan `Tracker::age_at`, que envejece la vida del track sin contarla como fallo. `max_age_ms` y `tentative_max_age_ms` siguen en tiempo de pared.
+>
+> - **La compuerta de la cascada se borró del código.** Había una condición hardcodeada en `src/app/inference.rs` (`presence_track_count != 1`) que decidía si corría un modelo hijo. Duplicaba `requires_exact_count = 1` del blueprint contra otra fuente de datos y sin estar declarada en ningún catálogo. Desde el 2026-08-12 la condición vive **sólo** en las reglas del blueprint y la resuelve `cascade.rs`.
+>
+> No se corrige a mano: es un archivo **generado** y una corrección manual se
+> pierde en la próxima regeneración, además de crear un segundo relato que
+> compite con el primero. Lo que corresponde es regenerar contra `HEAD`.
+>
+> Fuentes autorizadas mientras tanto: [ARCHITECTURE.md](../../ARCHITECTURE.md)
+> sobre ejecución, [HANDOFF.md](../../HANDOFF.md) y [`docs/adrs/`](../adrs/)
+> sobre estado y decisiones, y [`workshop/MANUAL.md`](../../workshop/MANUAL.md)
+> sobre cómo se opera y se lee la salida.
+
 **Mana-lite** es una arquitectura de software avanzada diseñada para el **procesamiento de video en tiempo real** mediante visión artificial y lógica de seguimiento. El sistema opera a través de dos áreas principales: la **percepción**, que gestiona la decodificación y ejecución de modelos neuronales, y el **control**, que estabiliza los datos para determinar estados semánticos precisos. Su infraestructura utiliza un **vocabulario de dominio específico** para garantizar la seguridad de tipos al identificar modelos, zonas espaciales y comportamientos automáticos. La flexibilidad de la plataforma se basa en **blueprints**, configuraciones modulares que definen cómo se encadenan los detectores y cómo se interpretan los eventos capturados. Finalmente, el proyecto integra herramientas de **observabilidad y telemetría** para facilitar el monitoreo del flujo de datos y la depuración del sistema en vivo.
 
 ## ¿Cómo se dividen las responsabilidades entre Perception y Control?

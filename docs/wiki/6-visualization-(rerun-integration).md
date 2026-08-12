@@ -1,4 +1,20 @@
 # Visualization (Rerun Integration)
+
+> ⚠️ **Página generada, desactualizada.** Se generó contra el commit
+> `ad24740d`. Divergencias conocidas al 2026-08-12, específicas de esta
+> página:
+>
+> - **El super loop ya no existe.** Se describe una sola task con `tokio::select!` entre ingesta y reloj; desde el 2026-08-11/12 son tres etapas con dueños de ejecución distintos, unidas por slots que no bloquean (ADR-033, ADR-034). Los tipos `PipelineObserver`, `FanoutObserver` y `NullObserver` fueron borrados.
+>
+> No se corrige a mano: es un archivo **generado** y una corrección manual se
+> pierde en la próxima regeneración, además de crear un segundo relato que
+> compite con el primero. Lo que corresponde es regenerar contra `HEAD`.
+>
+> Fuentes autorizadas mientras tanto: [ARCHITECTURE.md](../../ARCHITECTURE.md)
+> sobre ejecución, [HANDOFF.md](../../HANDOFF.md) y [`docs/adrs/`](../adrs/)
+> sobre estado y decisiones, y [`workshop/MANUAL.md`](../../workshop/MANUAL.md)
+> sobre cómo se opera y se lee la salida.
+
 Esta documentación técnica describe el **VizBridge**, un componente esencial diseñado para integrar el sistema de inferencia con el SDK de **Rerun**, permitiendo una **observación en tiempo real** de los procesos de visión artificial. El sistema garantiza una operatividad fluida mediante una **gestión de conexión asíncrona** que utiliza reintentos exponenciales, evitando así que fallos en el servidor de visualización bloqueen el flujo principal de procesamiento. La arquitectura organiza la información en **rutas de entidades** que separan los datos espaciales, como imágenes y detecciones, de los datos temporales, como los cambios de estado del sistema y métricas de rendimiento. En última instancia, este módulo actúa como un **traductor de estructuras internas**, convirtiendo datos complejos de modelos y lógica de control en representaciones visuales claras y configurables para los desarrolladores.
 
 Relevant source files

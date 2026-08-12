@@ -3,10 +3,21 @@
 > ⚠️ **Esta wiki está generada y quedó desactualizada.** Se generó contra el
 > commit `ad24740d`, anterior a la separación en etapas del 2026-08-11/12.
 >
-> Lo que describe y ya no existe: el super loop de una sola task con
-> `tokio::select!` entre ingesta y reloj, y los tipos `PipelineObserver`,
-> `FanoutObserver` y `NullObserver`. Las páginas 1.1, 3.1 y 6.2 son las más
-> afectadas.
+> Hay dos olas de divergencia:
+>
+> 1. **La separación en etapas** (2026-08-11/12). Ya no existe el super loop de
+>    una sola task con `tokio::select!` entre ingesta y reloj, ni los tipos
+>    `PipelineObserver`, `FanoutObserver` y `NullObserver`. Las páginas 1.1, 3.1
+>    y 6.2 son las más afectadas.
+> 2. **El cierre del banco de escenarios** (2026-08-12): el tracker pasó a
+>    contar en mediciones y no en scans, la compuerta hardcodeada de la cascada
+>    se borró en favor de la regla del blueprint, la política de cardinalidad
+>    pasó al catálogo del FSM, y cambiaron dos defaults —los eventos clínicos
+>    del JSONL y `tentative_max_age_ms`—. Las páginas 3.2, 4.2, 2.4 y 1.2 son
+>    las más afectadas.
+>
+> **Cada página lleva su propia errata** con lo que le corresponde. Son una capa
+> aparte de la prosa generada: una regeneración las borra sin dejar residuo.
 >
 > **No editar a mano**: son archivos generados y una corrección manual se pierde
 > en la próxima regeneración, además de crear un segundo relato que compite con

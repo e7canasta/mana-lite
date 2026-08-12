@@ -1,4 +1,22 @@
 # Configuration System
+
+> ⚠️ **Página generada, desactualizada.** Se generó contra el commit
+> `ad24740d`. Divergencias conocidas al 2026-08-12, específicas de esta
+> página:
+>
+> - **La compuerta de la cascada se borró del código.** Había una condición hardcodeada en `src/app/inference.rs` (`presence_track_count != 1`) que decidía si corría un modelo hijo. Duplicaba `requires_exact_count = 1` del blueprint contra otra fuente de datos y sin estar declarada en ningún catálogo. Desde el 2026-08-12 la condición vive **sólo** en las reglas del blueprint y la resuelve `cascade.rs`.
+>
+> - **Cambiaron los defaults de observabilidad y hay un contador nuevo.** `fsm_events` y `zone_events` pasaron a `true` en `config/metrics.toml` (son transiciones: 2,1 y 4,6 MB/día); `face_dwell_events` sigue en `false` por costo (175 MB/día). Se agregó `infer_gated` → `apagados:N` en la línea `infer:` y `apagado:N` en la línea por modelo, para distinguir "el estado del FSM no pidió este modelo" de "la regla lo salteó". La línea por modelo pasó de `skip` a `skip:N`.
+>
+> No se corrige a mano: es un archivo **generado** y una corrección manual se
+> pierde en la próxima regeneración, además de crear un segundo relato que
+> compite con el primero. Lo que corresponde es regenerar contra `HEAD`.
+>
+> Fuentes autorizadas mientras tanto: [ARCHITECTURE.md](../../ARCHITECTURE.md)
+> sobre ejecución, [HANDOFF.md](../../HANDOFF.md) y [`docs/adrs/`](../adrs/)
+> sobre estado y decisiones, y [`workshop/MANUAL.md`](../../workshop/MANUAL.md)
+> sobre cómo se opera y se lee la salida.
+
 El sistema de configuración de **mana-lite** emplea una **arquitectura en capas** diseñada para organizar de manera eficiente los parámetros de infraestructura, las reglas lógicas y el monitoreo del sistema. A través de archivos **TOML**, la estructura permite que un archivo central, **mana.toml**, se complemente con **Blueprints** para aplicar ajustes específicos o parches a los modelos sin alterar el catálogo base. El marco de trabajo abarca desde la gestión de transmisiones de video y políticas de presencia hasta la definición de **zonas espaciales** y máquinas de estados (**FSM**) que dictan el razonamiento de la aplicación. Finalmente, el sistema asegura la integridad operativa mediante un proceso de **validación durante el arranque**, el cual unifica los datos de configuración y los registros de observabilidad en un entorno listo para la ejecución.
 
 Relevant source files

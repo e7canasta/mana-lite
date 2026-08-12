@@ -1,4 +1,20 @@
 # Control System (mana-control)
+
+> ⚠️ **Página generada, desactualizada.** Se generó contra el commit
+> `ad24740d`. Divergencias conocidas al 2026-08-12, específicas de esta
+> página:
+>
+> - **El tracker cuenta en mediciones, no en scans.** `misses` y `hit_streak` se incrementaban una vez por tick del lazo; como el lazo tica más rápido que la evidencia, eso inventaba fallos de detección y ningún track llegaba a confirmarse. Desde el 2026-08-12 la asociación corre sólo cuando hay medición nueva y los scans sin medición usan `Tracker::age_at`, que envejece la vida del track sin contarla como fallo. `max_age_ms` y `tentative_max_age_ms` siguen en tiempo de pared.
+>
+> No se corrige a mano: es un archivo **generado** y una corrección manual se
+> pierde en la próxima regeneración, además de crear un segundo relato que
+> compite con el primero. Lo que corresponde es regenerar contra `HEAD`.
+>
+> Fuentes autorizadas mientras tanto: [ARCHITECTURE.md](../../ARCHITECTURE.md)
+> sobre ejecución, [HANDOFF.md](../../HANDOFF.md) y [`docs/adrs/`](../adrs/)
+> sobre estado y decisiones, y [`workshop/MANUAL.md`](../../workshop/MANUAL.md)
+> sobre cómo se opera y se lee la salida.
+
 El componente **mana-control** actúa como el núcleo de toma de decisiones de la aplicación, operando mediante un **bucle de control de cadencia fija** que garantiza un comportamiento determinista y predecible. A diferencia del sistema de percepción, esta arquitectura procesa imágenes de datos estables cada 200 ms para gestionar de manera precisa el **rastreo de entidades** y el estado de ocupación de un espacio. El sistema integra diversos motores especializados, como una **máquina de estados finitos (FSM)** para la lógica transicional y un motor de zonas que evalúa la presencia de objetos en regiones geométricas específicas. En última instancia, este diseño permite transformar observaciones sensoriales crudas en **decisiones lógicas estructuradas**, utilizando temporizadores y filtros de Kalman para mantener la estabilidad frente al ruido o las oclusiones del entorno.
 
 Relevant source files

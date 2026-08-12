@@ -1,4 +1,22 @@
 # Glossary
+
+> ⚠️ **Página generada, desactualizada.** Se generó contra el commit
+> `ad24740d`. Divergencias conocidas al 2026-08-12, específicas de esta
+> página:
+>
+> - **La compuerta de la cascada se borró del código.** Había una condición hardcodeada en `src/app/inference.rs` (`presence_track_count != 1`) que decidía si corría un modelo hijo. Duplicaba `requires_exact_count = 1` del blueprint contra otra fuente de datos y sin estar declarada en ningún catálogo. Desde el 2026-08-12 la condición vive **sólo** en las reglas del blueprint y la resuelve `cascade.rs`.
+>
+> - **El tracker cuenta en mediciones, no en scans.** `misses` y `hit_streak` se incrementaban una vez por tick del lazo; como el lazo tica más rápido que la evidencia, eso inventaba fallos de detección y ningún track llegaba a confirmarse. Desde el 2026-08-12 la asociación corre sólo cuando hay medición nueva y los scans sin medición usan `Tracker::age_at`, que envejece la vida del track sin contarla como fallo. `max_age_ms` y `tentative_max_age_ms` siguen en tiempo de pared.
+>
+> No se corrige a mano: es un archivo **generado** y una corrección manual se
+> pierde en la próxima regeneración, además de crear un segundo relato que
+> compite con el primero. Lo que corresponde es regenerar contra `HEAD`.
+>
+> Fuentes autorizadas mientras tanto: [ARCHITECTURE.md](../../ARCHITECTURE.md)
+> sobre ejecución, [HANDOFF.md](../../HANDOFF.md) y [`docs/adrs/`](../adrs/)
+> sobre estado y decisiones, y [`workshop/MANUAL.md`](../../workshop/MANUAL.md)
+> sobre cómo se opera y se lee la salida.
+
 Este glosario técnico describe la arquitectura interna del sistema **endeli**, el cual utiliza visión artificial para gestionar el comportamiento de un entorno a través de una **máquina de estados finitos (FSM)**. El documento detalla cómo la capa de **inferencia y cascada** procesa imágenes mediante modelos de aprendizaje profundo para extraer datos espaciales, que luego se transforman en **señales** y zonas de monitoreo. Estas señales actúan como el puente crítico entre la **percepción** del mundo físico y la **lógica de control**, permitiendo que el motor de ejecución valide reglas y realice transiciones de estado precisas basadas en la presencia o actividad humana. En última instancia, el texto funciona como un mapa de referencia para ingenieros, vinculando **conceptos de lenguaje natural con entidades de código** y estructuras de datos específicas dentro del repositorio.
 
 Relevant source files

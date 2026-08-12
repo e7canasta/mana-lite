@@ -1,4 +1,22 @@
 # Logging and Telemetry
+
+> ⚠️ **Página generada, desactualizada.** Se generó contra el commit
+> `ad24740d`. Divergencias conocidas al 2026-08-12, específicas de esta
+> página:
+>
+> - **Cambiaron los defaults de observabilidad y hay un contador nuevo.** `fsm_events` y `zone_events` pasaron a `true` en `config/metrics.toml` (son transiciones: 2,1 y 4,6 MB/día); `face_dwell_events` sigue en `false` por costo (175 MB/día). Se agregó `infer_gated` → `apagados:N` en la línea `infer:` y `apagado:N` en la línea por modelo, para distinguir "el estado del FSM no pidió este modelo" de "la regla lo salteó". La línea por modelo pasó de `skip` a `skip:N`.
+>
+> - **El super loop ya no existe.** Se describe una sola task con `tokio::select!` entre ingesta y reloj; desde el 2026-08-11/12 son tres etapas con dueños de ejecución distintos, unidas por slots que no bloquean (ADR-033, ADR-034). Los tipos `PipelineObserver`, `FanoutObserver` y `NullObserver` fueron borrados.
+>
+> No se corrige a mano: es un archivo **generado** y una corrección manual se
+> pierde en la próxima regeneración, además de crear un segundo relato que
+> compite con el primero. Lo que corresponde es regenerar contra `HEAD`.
+>
+> Fuentes autorizadas mientras tanto: [ARCHITECTURE.md](../../ARCHITECTURE.md)
+> sobre ejecución, [HANDOFF.md](../../HANDOFF.md) y [`docs/adrs/`](../adrs/)
+> sobre estado y decisiones, y [`workshop/MANUAL.md`](../../workshop/MANUAL.md)
+> sobre cómo se opera y se lee la salida.
+
 Este sistema de registro y telemetría utiliza un **diseño de distribución centralizado** para monitorear el estado interno y el rendimiento de un proceso técnico mediante una **taxonomía de eventos estructurada**. El núcleo de la arquitectura emplea un gestor que reparte datos a múltiples destinos simultáneos, garantizando una alta eficiencia mediante **estrategias de serialización manual** que evitan el consumo excesivo de memoria. Su propósito principal es facilitar el análisis detallado de métricas de percepción, control y salud del sistema a través de un **formato JSONL versionado**, optimizado específicamente para entornos de baja latencia. En conjunto, el documento detalla cómo la infraestructura transforma sucesos complejos del dominio en información analítica precisa sin comprometer la **velocidad de ejecución del ciclo principal**.
 
 Relevant source files

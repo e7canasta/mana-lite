@@ -179,7 +179,7 @@ Ninguna bloquea nada. En orden de lo que más molesta al leer el repo.
 
 | Deuda | Qué es | Cómo se salda |
 |---|---|---|
-| Wiki generada desactualizada | 21 archivos contra el commit `ad24740d`, describen el super loop y tipos borrados | **regenerar**, no editar a mano |
+| Wiki generada desactualizada | 29 archivos contra el commit `ad24740d`. Cada uno lleva ahora una **errata propia** con sus divergencias, como capa aparte de la prosa generada | **regenerar**, no editar a mano: una regeneración borra las erratas sin residuo |
 | Dos documentos de arquitectura | `ARCHITECTURE.md` (ejecución) y `docs/ARCHITECTURE.md` (workspace por crates) | decidir si se funden |
 | Casts numéricos sin auditar en `mana-geometry` | ~202 avisos de clippy | compuerta de no-regresión, no de cero |
 | Comparación exacta de floats | 26 avisos | ídem |
@@ -317,8 +317,13 @@ Y dos cosas que salieron de correr la escalera y ya están cerradas:
   dieron 0, 37, 97 y 127. No le cuesta nada al sistema —`kf_pisados` e
   `img_pisadas` en cero en las cuatro—, así que la dispersión vive del lado del
   visor. Caracterizado, no explicado. Ver el README del 06.
-- **La wiki generada**, 21 archivos contra un commit viejo (§8). Se regenera, no
-  se edita.
+- **La wiki generada** (§8). Las 29 páginas quedaron marcadas con su errata
+  específica, así que ninguna miente en silencio; lo que falta es regenerarla, y
+  la herramienta que la produjo no está en el repo.
+- **`gated` no sale al JSONL.** El contador nuevo distingue "el estado no pidió
+  este modelo" de "la regla lo salteó" en el reporte de texto, pero la
+  serialización por modelo sigue emitiendo sólo `skips`. Ampliar el JSONL es
+  tocar un contrato, así que queda como decisión y no como olvido.
 
 ## 12. La compuerta del circuito no cubre los tiers
 
