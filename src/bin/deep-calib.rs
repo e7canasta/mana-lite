@@ -49,22 +49,18 @@ fn main() -> Result<(), Box<dyn Error>> {
         return Err("at least one --image is required".into());
     }
 
-    let (model_path, configured_roi) = if let Some(model_path) = options.model {
-        (model_path, None)
+    let catalog_context = if options.model.is_none() || options.roi.is_none() {
+        Some(catalog_model_context(&options.config, &options.model_key)?)
     } else {
-        let app_config = load_app_config(&options.config)?;
-        let catalog = load_model_catalog(&app_config.inference.model_catalog)?;
-        let entry = catalog
-            .models
-            .get(&options.model_key)
-            .ok_or_else(|| format!("model '{}' is absent from the catalog", options.model_key))?;
-        let configured_roi = entry
-            .crop
-            .as_ref()
-            .filter(|crop| crop.crop_type == CropType::Static)
-            .and_then(|crop| crop.region);
-        (entry.path.clone(), configured_roi)
+        None
     };
+    let model_path = options
+        .model
+        .clone()
+        .or_else(|| catalog_context.as_ref().map(|(path, _)| path.clone()))
+        .ok_or("--model is required when the catalog cannot be loaded")?;
+    let model_path = resolve_model_path(model_path, &options.config)?;
+    let configured_roi = catalog_context.and_then(|(_, roi)| roi);
 
     let first_image = image::open(&options.images[0])?;
     let (frame_width, frame_height) = first_image.dimensions();
@@ -237,6 +233,51 @@ fn model_fingerprint(path: &Path) -> Result<String, Box<dyn Error>> {
         .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
         .map_or(0, |duration| duration.as_secs());
     Ok(format!("bytes:{}:mtime:{}", metadata.len(), modified))
+}
+
+fn catalog_model_context(
+    config_path: &Path,
+    model_key: &str,
+) -> Result<(PathBuf, Option<[u32; 4]>), Box<dyn Error>> {
+    let app_config = load_app_config(config_path)?;
+    let catalog = load_model_catalog(&app_config.inference.model_catalog)?;
+    let entry = catalog
+        .models
+        .get(model_key)
+        .ok_or_else(|| format!("model '{model_key}' is absent from the catalog"))?;
+    let configured_roi = entry
+        .crop
+        .as_ref()
+        .filter(|crop| crop.crop_type == CropType::Static)
+        .and_then(|crop| crop.region);
+    Ok((entry.path.clone(), configured_roi))
+}
+
+fn resolve_model_path(path: PathBuf, config_path: &Path) -> Result<PathBuf, Box<dyn Error>> {
+    if path.is_absolute() || path.exists() {
+        return Ok(path);
+    }
+    let current_dir = std::env::current_dir()?;
+    let config_path = if config_path.is_absolute() {
+        config_path.to_path_buf()
+    } else {
+        current_dir.join(config_path)
+    };
+    let Some(repo_root) = config_path.parent().and_then(Path::parent) else {
+        return Ok(path);
+    };
+    let Ok(relative_artifact) = path.strip_prefix("tools/model-tools") else {
+        return Ok(path);
+    };
+    let Some(workspace_root) = repo_root.parent() else {
+        return Ok(path);
+    };
+    let sibling_artifact = workspace_root.join("model-tools").join(relative_artifact);
+    if sibling_artifact.exists() {
+        Ok(sibling_artifact)
+    } else {
+        Ok(path)
+    }
 }
 
 fn parse_args(args: Vec<String>) -> Result<Options, Box<dyn Error>> {

@@ -14,7 +14,7 @@ margin = 0.20
 
 [models.depth-standard]
 enabled = false
-path = "models/yolo26l-depth-fp16-320.onnx"
+path = "tools/model-tools/artifacts/yolo26-fp16/yolo26l-depth-fp16-320.onnx"
 imgsz = 320
 
 [models.depth-standard.crop]
