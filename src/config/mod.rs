@@ -25,7 +25,7 @@ pub use blueprint::{
 pub use fsm::{FsmCatalog, FsmRoles, FsmRoot, FsmState, FsmTransition};
 pub use loader::{
     load_app_config, load_config, load_depth_rules, load_fsm_catalog, load_metrics_log,
-    load_rerun_blueprint, load_viz_data, load_zone_catalog,
+    load_rerun_blueprint, load_surface_calibration, load_viz_data, load_zone_catalog,
 };
 pub use model_loader::{apply_model_overlay, load_model_catalog};
 pub use models::{

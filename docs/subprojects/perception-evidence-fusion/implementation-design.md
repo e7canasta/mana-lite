@@ -391,3 +391,47 @@ El MVP queda acotado a:
 
 Multi-actor, identidad temporal sin track, TTL por fuente y señales clínicas de
 partes son fases posteriores, no supuestos del primer código.
+
+## 11. Calibrador aislado de superficies
+
+El calibrador no forma parte del binario principal ni de `App::bootstrap`:
+
+```text
+deep-calib (binario auxiliar)
+    -> carga modelo depth-scene
+    -> recibe frame/imagen y poligono global
+    -> ejecuta inferencia
+    -> polygon_stats
+    -> SurfaceZoneStats
+    -> deep-calib.toml
+```
+
+El nucleo estadistico debe ser puro y reusable desde tests. El binario solo
+adapta argumentos, carga el modelo y persiste la sesion. No importa `mana-control`
+ni inicia RTSP, FSM, scheduler o visualizacion del runtime.
+
+El primer corte acepta una entrada de imagen y vertices de poligono para que la
+calibracion sea reproducible. La fuente live y una herramienta de seleccion por
+clicks pueden agregarse sin cambiar el formato de sesion.
+
+La sesion contiene el fingerprint del contexto que produjo el perfil. Runtime
+rechaza silenciosamente la comparacion y publica `unknown` si el contexto no
+coincide; no se fuerza una escala para hacer compatibles dos crops.
+
+## 12. Flujo de evidencia postural
+
+```text
+depth-scene + SurfaceCalibration
+             |
+             v
+body-part footprints -> surface residuals
+             |
+pose + mask + residual + temporal hysteresis
+             |
+diagnostic posture evidence
+```
+
+La primera entrega de este flujo publica evidencia de `bed` y `floor` en
+JSONL/Rerun. `lying`, `sitting_on_bed`, `sitting_at_edge`, `standing` y
+`limb_out` se mantienen como estados de percepcion hasta validar escenas
+etiquetadas. No se proyecta geometria interna al FSM.

@@ -5,8 +5,8 @@ use std::collections::HashSet;
 use crate::config::{
     AppConfig, BlueprintConfig, FsmCatalog, MetricsLogConfig, ModelCatalog, RerunBlueprintConfig,
     VizDataConfig, ZoneCatalog, apply_model_overlay, load_config, load_depth_rules,
-    load_fsm_catalog, load_metrics_log, load_model_catalog, load_rerun_blueprint, load_viz_data,
-    load_zone_catalog, validate_model_catalog,
+    load_fsm_catalog, load_metrics_log, load_model_catalog, load_rerun_blueprint,
+    load_surface_calibration, load_viz_data, load_zone_catalog, validate_model_catalog,
 };
 use crate::error::{ConfigError, ManaError, Result};
 
@@ -17,6 +17,7 @@ pub(super) struct LoadedCatalogs {
     pub(super) zones: Option<ZoneCatalog>,
     pub(super) fsm: Option<FsmCatalog>,
     pub(super) depth_rules: mana_control::DepthRules,
+    pub(super) surface_calibration: Option<mana_perception::SurfaceCalibration>,
     pub(super) viz_data: VizDataConfig,
     pub(super) metrics_log: MetricsLogConfig,
     pub(super) rerun_blueprint: RerunBlueprintConfig,
@@ -25,7 +26,7 @@ pub(super) struct LoadedCatalogs {
 /// Load model/blueprint/sidecar catalogs and resolve the enabled runtime set.
 pub(super) fn load_catalogs(config: &AppConfig) -> Result<LoadedCatalogs> {
     let (runtime_catalog, primary_model, blueprint) = load_runtime_models(config)?;
-    let (zones, fsm, depth_rules) = load_control_sidecars(config)?;
+    let (zones, fsm, depth_rules, surface_calibration) = load_control_sidecars(config)?;
     let (viz_data, metrics_log, rerun_blueprint) = load_observability_sidecars(config)?;
     Ok(LoadedCatalogs {
         runtime_catalog,
@@ -34,6 +35,7 @@ pub(super) fn load_catalogs(config: &AppConfig) -> Result<LoadedCatalogs> {
         zones,
         fsm,
         depth_rules,
+        surface_calibration,
         viz_data,
         metrics_log,
         rerun_blueprint,
@@ -213,6 +215,7 @@ fn load_control_sidecars(
     Option<ZoneCatalog>,
     Option<FsmCatalog>,
     mana_control::DepthRules,
+    Option<mana_perception::SurfaceCalibration>,
 )> {
     let zones = config
         .inference
@@ -239,7 +242,13 @@ fn load_control_sidecars(
             depth_rule_errors.join("; "),
         )));
     }
-    Ok((zones, fsm, depth_rules))
+    let surface_calibration = config
+        .inference
+        .depth_calibration_file
+        .as_ref()
+        .map(|path| load_surface_calibration(path))
+        .transpose()?;
+    Ok((zones, fsm, depth_rules, surface_calibration))
 }
 
 fn load_observability_sidecars(

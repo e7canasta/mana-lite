@@ -785,6 +785,8 @@ pub struct InferenceConfig {
     #[serde(default)]
     pub depth_rules_file: Option<PathBuf>,
     #[serde(default)]
+    pub depth_calibration_file: Option<PathBuf>,
+    #[serde(default)]
     pub disabled_tasks: Vec<String>,
 }
 

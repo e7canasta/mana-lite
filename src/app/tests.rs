@@ -203,6 +203,7 @@ fn stage_for_depth_rules(
         models: ModelRegistry::from_catalog(&empty_catalog, "detect-fast"),
         depth_context_roi: context_roi,
         depth_rules: rules,
+        surface_calibration: None,
         snapshots: SnapshotSaver::new(None, false).expect("snapshots"),
         // Un handle sobre un slot que nadie drena: los dibujos se encolan y se
         // pisan, que es justo lo que hace el sistema cuando no hay visor.

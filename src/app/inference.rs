@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 
 use super::body_parts::{
     ActorRef, BodyGeometry, BodyPartsEstimate, BodyPartsEstimator, PendingBodyPartsEvidence,
-    attach_depth,
+    attach_depth, attach_surface_evidence,
 };
 use super::cross_model_validation::{
     CrossModelValidation, EvidenceKind, PendingEvidence, validate_pending,
@@ -113,6 +113,7 @@ impl PerceptionStage {
             &config.perception.body_parts,
         );
         self.attach_body_parts_depth(&mut body_parts, &pending, fb.w, fb.h);
+        self.attach_body_parts_surface_evidence(&mut body_parts, &pending, fb.w, fb.h);
         #[cfg(feature = "rerun")]
         self.observer.viz.log_body_parts(&body_parts);
         for estimate in &body_parts {
@@ -496,6 +497,45 @@ impl PerceptionStage {
         })
     }
 
+    fn attach_body_parts_surface_evidence(
+        &self,
+        estimates: &mut [BodyPartsEstimate],
+        pending: &[PendingModelOutput],
+        frame_width: u32,
+        frame_height: u32,
+    ) {
+        let Some(calibration) = self.surface_calibration.as_ref() else {
+            return;
+        };
+        let Some(scene_output) = pending.iter().find(|item| {
+            self.models.is_depth(&item.model_key)
+                && item.output.depth.is_some()
+                && item.crop_rect.is_some()
+                && item.crop_rect == self.depth_context_roi
+        }) else {
+            return;
+        };
+        let Some(depth) = scene_output.output.depth.as_ref() else {
+            return;
+        };
+        let Some(roi) = scene_output
+            .crop_rect
+            .or(self.depth_context_roi)
+            .map(CropRect::to_array)
+        else {
+            return;
+        };
+        attach_surface_evidence(
+            estimates,
+            &scene_output.model_key,
+            depth,
+            roi,
+            frame_width,
+            frame_height,
+            calibration,
+        );
+    }
+
     /// Stage: project consolidated sample into the control process image.
     fn publish_clinical_sample(&mut self, sample: ClinicalSample, now: Instant) {
         self.image.observations = Some(mana_control::AgedEvidence::new(
@@ -782,6 +822,21 @@ fn body_parts_event(estimate: &BodyPartsEstimate) -> Event {
                         p90_depth_m: depth.p90_depth_m,
                         max_depth_m: depth.max_depth_m,
                         relative_to_torso_m: depth.relative_to_torso_m,
+                        surface_evidence: depth
+                            .surface_evidence
+                            .iter()
+                            .map(|evidence| crate::logger::SurfaceEvidenceRecord {
+                                source_model: evidence.source_model.clone(),
+                                surface: evidence.surface.clone(),
+                                zone: evidence.zone.clone(),
+                                sampled_pixels: evidence.sampled_pixels,
+                                valid_ratio: evidence.valid_ratio,
+                                observed_median: evidence.observed_median,
+                                reference_median: evidence.reference_median,
+                                residual: evidence.residual,
+                                in_envelope: evidence.in_envelope,
+                            })
+                            .collect(),
                     }),
                 source_frame_numbers: part.source_frame_numbers.clone(),
                 stale: part.stale,

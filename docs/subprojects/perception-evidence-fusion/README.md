@@ -69,6 +69,8 @@ temporal.
 - [Sprint 3](sprints/sprint-03-temporal-evidence-fusion.md): ventana temporal completa.
 - [Sprint 3 depth](sprints/sprint-03-depth-body-parts.md): profundidad por parte
   y crop opcional sobre bbox de persona.
+- [Sprint 4 surface depth](sprints/sprint-04-surface-relative-depth.md):
+  calibracion por zonas de cama/piso y evidencia relativa.
 
 ## Relacion con la documentacion existente
 
@@ -105,3 +107,7 @@ profundidad por partes se agrega el perfil opt-in
 - No introducir ejecucion same-frame dinamica durante una inferencia, workers o
   preempcion como parte del primer corte. El soporte existente de
   `same_frame = true` no se elimina.
+
+El calibrador `deep-calib` es una herramienta auxiliar aislada. No forma parte
+del comando principal, no arranca el FSM y escribe una sesion separada antes de
+que una promocion explicita la haga disponible al runtime.

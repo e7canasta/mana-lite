@@ -8,9 +8,14 @@ pub mod cascade;
 pub mod depth_map;
 pub mod detection;
 pub mod domain;
+pub mod surface_calibration;
 
 pub use depth_map::DepthFrame;
 pub use domain::{ClassName, DomStr, ModelId};
+pub use surface_calibration::{
+    SURFACE_CALIBRATION_SCHEMA_VERSION, SurfaceAccumulator, SurfaceCalibration, SurfaceLayer,
+    SurfaceMatch, SurfaceZone,
+};
 
 /// Raw, policy-free depth statistics for a region.
 #[derive(Debug, Clone, PartialEq)]
@@ -108,6 +113,31 @@ pub fn polygon_stats(
     frame_height: u32,
     clip_polygons: Option<&[Vec<[f32; 2]>]>,
 ) -> Option<PolygonStats> {
+    let clip_groups = clip_polygons.map_or_else(Vec::new, |clips| vec![clips]);
+    polygon_stats_intersecting_clips(
+        depth,
+        roi,
+        polygons,
+        frame_width,
+        frame_height,
+        &clip_groups,
+    )
+}
+
+/// Computes polygon statistics while requiring one matching contour in every
+/// clip group. This lets a caller combine, for example, a segmentation contour
+/// with a calibrated surface zone without changing the original any-contour
+/// semantics of [`polygon_stats`].
+#[allow(clippy::cast_precision_loss)]
+#[must_use]
+pub fn polygon_stats_intersecting_clips(
+    depth: &DepthFrame,
+    roi: [u32; 4],
+    polygons: &[&[[f32; 2]]],
+    frame_width: u32,
+    frame_height: u32,
+    clip_groups: &[&[Vec<[f32; 2]>]],
+) -> Option<PolygonStats> {
     if frame_width == 0
         || frame_height == 0
         || roi[2] <= roi[0]
@@ -117,7 +147,7 @@ pub fn polygon_stats(
     {
         return None;
     }
-    if clip_polygons.is_some_and(|polygons| polygons.is_empty()) {
+    if clip_groups.iter().any(|polygons| polygons.is_empty()) {
         return None;
     }
 
@@ -142,17 +172,15 @@ pub fn polygon_stats(
             {
                 continue;
             }
-            if let Some(clips) = clip_polygons
-                && !clips.iter().any(|polygon| {
-                    point_in_polygon(
-                        [
-                            global[0] / frame_width as f32,
-                            global[1] / frame_height as f32,
-                        ],
-                        polygon,
-                    )
-                })
-            {
+            let normalized = [
+                global[0] / frame_width as f32,
+                global[1] / frame_height as f32,
+            ];
+            if !clip_groups.iter().all(|clips| {
+                clips
+                    .iter()
+                    .any(|polygon| point_in_polygon(normalized, polygon))
+            }) {
                 continue;
             }
             sampled_pixels += 1;
@@ -424,5 +452,32 @@ mod tests {
         assert_eq!(stats.valid_pixels, 8);
         assert_eq!(stats.min_depth_m, Some(1.0));
         assert_eq!(stats.max_depth_m, Some(14.0));
+    }
+
+    #[test]
+    fn polygon_stats_intersects_segmentation_and_surface_clips() {
+        let roi = [0, 0, 4, 4];
+        let map = map_from_rows(&[
+            &[1.0, 2.0, 3.0, 4.0],
+            &[5.0, 6.0, 7.0, 8.0],
+            &[9.0, 10.0, 11.0, 12.0],
+            &[13.0, 14.0, 15.0, 16.0],
+        ]);
+        let footprint = vec![[0.0, 0.0], [4.0, 0.0], [4.0, 4.0], [0.0, 4.0]];
+        let segmentation = vec![vec![[0.0, 0.0], [0.5, 0.0], [0.5, 1.0], [0.0, 1.0]]];
+        let surface = vec![vec![[0.0, 0.0], [1.0, 0.0], [1.0, 0.5], [0.0, 0.5]]];
+        let stats = polygon_stats_intersecting_clips(
+            &map,
+            roi,
+            &[footprint.as_slice()],
+            4,
+            4,
+            &[segmentation.as_slice(), surface.as_slice()],
+        )
+        .expect("intersected clips");
+        assert_eq!(stats.sampled_pixels, 4);
+        assert_eq!(stats.valid_pixels, 4);
+        assert_eq!(stats.min_depth_m, Some(1.0));
+        assert_eq!(stats.max_depth_m, Some(6.0));
     }
 }

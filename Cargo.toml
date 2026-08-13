@@ -35,6 +35,10 @@ name = "depth-image-probe"
 path = "src/bin/depth-image-probe.rs"
 required-features = ["rerun"]
 
+[[bin]]
+name = "deep-calib"
+path = "src/bin/deep-calib.rs"
+
 [dependencies]
 mana-media = { path = "std/mana-media", default-features = false }
 mana-geometry = { path = "std/mana-geometry", features = ["polygonize"] }

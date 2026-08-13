@@ -1,8 +1,9 @@
 # Memoria tecnica: Fusion de Evidencias y Estimador de Partes Corporales
 
-**Estado:** Sprint 1 implementado inicialmente y verificado en hardware; la
-calibracion de thresholds y la ventana temporal siguen pendientes
-**Ultima actualizacion:** 2026-08-12
+**Estado:** Sprint 3 implementado como evidencia diagnostica; Sprint 4 define la
+calibracion relativa a superficies y la postura sigue fuera de la politica
+clinica
+**Ultima actualizacion:** 2026-08-13
 
 ## 1. Problema
 
@@ -209,3 +210,55 @@ futuro sera propiedad de `PerceptionStage`, sin `Mutex` ni ownership en
 - La validacion face/pose actual tiene `valid: bool` para el FSM aunque su
   `quality` sea continua; la validacion generica puede ser gradual sin cambiar
   ese contrato especializado en el primer sprint.
+
+## 9. Profundidad relativa a superficies
+
+El objetivo operativo no es reconstruir una postura 3D general. La escena es
+fija, la camara esta instalada en un angulo picado y los estados posibles estan
+acotados a una cama, su borde y el piso. Por eso la referencia adecuada es una
+envolvente de profundidad local por superficie y subzona.
+
+La cama se calibra como parches semanticos, inicialmente `head`, `body` y
+`feet`. El piso puede tener una zona unica o varias zonas `near`, `middle` y
+`far` si la perspectiva produce demasiada dispersion. Cada parche conserva su
+poligono global, mediana, percentiles, MAD, cobertura y fingerprint del modelo,
+ROI y tamano de frame.
+
+La referencia de una zona no es un unico valor global ni un plano 3D. Es un
+baseline espacial observado con la misma camara y el mismo `depth-scene` que
+usa el runtime. La postura consulta el residuo de cada parte respecto a la
+envolvente de la zona, junto con su interseccion geometrica y su persistencia.
+
+La profundidad del crop `depth-person` no se compara contra estas referencias.
+Ese mapa es local a cada crop y solo aporta relaciones internas entre partes.
+
+## 10. Calibrador aislado
+
+`deep-calib` es un binario auxiliar independiente del comando `mana-lite`. No
+levanta `App`, no arranca el FSM y no modifica el ciclo de percepcion. Importa
+el cargador de modelo, `DepthFrame` y `polygon_stats` a traves de la libreria,
+pero su sesion y su escritura de archivos viven en el propio calibrador.
+
+La sesion se guarda en `deep-calib.toml`, se actualiza de forma atomica y puede
+reanudar zonas ya marcadas. La promocion hacia configuracion de runtime es una
+operacion explicita. La redireccion de stdout no se usa como mecanismo de
+persistencia.
+
+La primera interfaz acepta una imagen o frame reproducible y poligonos
+explicitos; la captura interactiva puede agregarse encima de ese contrato sin
+mezclar UI con estadistica. La referencia debe invalidarse si cambia el modelo,
+su digest, el ROI, la resolucion o la camara.
+
+## 11. Decisiones que no tomamos
+
+- No convertir depth monocular en coordenadas metricas sin una referencia
+  fisica comprobable.
+- No ajustar intrinsecos, extrinsecos ni un plano 3D para resolver este caso
+  acotado.
+- No usar `min/max` como envolvente principal; los outliers se absorben con
+  percentiles y MAD.
+- No comparar valores absolutos de crops `depth-person` distintos.
+- No promover automaticamente una calibracion al FSM ni a
+  `depth-rules.toml`.
+- No inferir postura solo desde la coordenada vertical de la imagen o el signo
+  supuesto del mapa depth.

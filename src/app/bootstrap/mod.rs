@@ -105,6 +105,7 @@ fn assemble_app<R: FrameReader>(
         models: engines.models,
         depth_context_roi: engines.depth_context_roi,
         depth_rules: validated.depth_rules,
+        surface_calibration: validated.surface_calibration,
         snapshots: wired.snapshots,
         #[cfg(feature = "rerun")]
         observer: PerceptionObserver::new(super::viz_relay::VizHandle::new(Arc::clone(

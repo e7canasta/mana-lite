@@ -11,6 +11,7 @@ use crate::cascade::CascadeTarget;
 use crate::config::BodyPartsConfig;
 use crate::depth_map::DepthFrame;
 use crate::detection::Detection;
+use mana_perception::{SurfaceCalibration, SurfaceLayer, polygon_stats_intersecting_clips};
 
 /// Temporal identity for a derived estimate. `FrameLocal` is deliberately not
 /// persisted: it is only an honest label for same-frame, untracked evidence.
@@ -109,6 +110,21 @@ pub(crate) struct BodyPartDepth {
     pub(crate) p90_depth_m: Option<f32>,
     pub(crate) max_depth_m: Option<f32>,
     pub(crate) relative_to_torso_m: Option<f32>,
+    pub(crate) surface_evidence: Vec<SurfaceDepthEvidence>,
+}
+
+/// Depth evidence relative to one calibrated scene surface zone.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct SurfaceDepthEvidence {
+    pub(crate) source_model: String,
+    pub(crate) surface: String,
+    pub(crate) zone: String,
+    pub(crate) sampled_pixels: u64,
+    pub(crate) valid_ratio: Option<f32>,
+    pub(crate) observed_median: Option<f32>,
+    pub(crate) reference_median: f32,
+    pub(crate) residual: Option<f32>,
+    pub(crate) in_envelope: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1115,6 +1131,7 @@ pub(crate) fn attach_depth(
             p90_depth_m: stats.p90_depth_m,
             max_depth_m: stats.max_depth_m,
             relative_to_torso_m: None,
+            surface_evidence: Vec::new(),
         });
     }
 
@@ -1133,6 +1150,98 @@ pub(crate) fn attach_depth(
             (_, Some(torso), Some(part_depth)) => Some(part_depth - torso),
             _ => None,
         };
+    }
+}
+
+/// Compares body-part footprints with fixed bed/floor reference zones.
+///
+/// This always samples the scene depth map. Person-crop depth remains local to
+/// the actor and must not be used as a surface reference.
+pub(crate) fn attach_surface_evidence(
+    estimates: &mut [BodyPartsEstimate],
+    source_model: &str,
+    depth: &DepthFrame,
+    roi: [u32; 4],
+    frame_width: u32,
+    frame_height: u32,
+    calibration: &SurfaceCalibration,
+) {
+    if source_model != calibration.model_key
+        || frame_width != calibration.frame_width
+        || frame_height != calibration.frame_height
+        || roi != calibration.roi
+    {
+        return;
+    }
+
+    for estimate in estimates {
+        let mask_clips = estimate.mask_polygons.as_deref();
+        for part in &mut estimate.parts {
+            let footprints = depth_footprints(&part.geometry);
+            let footprint_refs = footprints.iter().map(Vec::as_slice).collect::<Vec<_>>();
+            if footprint_refs.is_empty() {
+                continue;
+            }
+            let mut evidence = Vec::new();
+            for (layer, zones) in [
+                (SurfaceLayer::Bed, calibration.zones(SurfaceLayer::Bed)),
+                (SurfaceLayer::Floor, calibration.zones(SurfaceLayer::Floor)),
+            ] {
+                let mut best: Option<(u64, SurfaceDepthEvidence)> = None;
+                for zone in zones {
+                    let normalized_zone = zone
+                        .polygon
+                        .iter()
+                        .map(|[x, y]| [*x / frame_width as f32, *y / frame_height as f32])
+                        .collect::<Vec<_>>();
+                    let clips = vec![normalized_zone];
+                    let mut clip_groups = Vec::with_capacity(2);
+                    if let Some(mask_clips) = mask_clips {
+                        clip_groups.push(mask_clips);
+                    }
+                    clip_groups.push(clips.as_slice());
+                    let Some(stats) = polygon_stats_intersecting_clips(
+                        depth,
+                        roi,
+                        &footprint_refs,
+                        frame_width,
+                        frame_height,
+                        &clip_groups,
+                    ) else {
+                        continue;
+                    };
+                    let Some(observed_median) = stats.median_depth_m else {
+                        continue;
+                    };
+                    let Some(surface_match) = zone.matches(observed_median, 0.0) else {
+                        continue;
+                    };
+                    let candidate = SurfaceDepthEvidence {
+                        source_model: source_model.to_owned(),
+                        surface: layer.as_str().to_owned(),
+                        zone: zone.name.clone(),
+                        sampled_pixels: stats.sampled_pixels,
+                        valid_ratio: stats.valid_ratio,
+                        observed_median: Some(observed_median),
+                        reference_median: zone.median_depth,
+                        residual: Some(surface_match.residual),
+                        in_envelope: surface_match.in_envelope,
+                    };
+                    if best
+                        .as_ref()
+                        .is_none_or(|(sampled_pixels, _)| stats.sampled_pixels > *sampled_pixels)
+                    {
+                        best = Some((stats.sampled_pixels, candidate));
+                    }
+                }
+                if let Some((_, candidate)) = best {
+                    evidence.push(candidate);
+                }
+            }
+            if let Some(depth) = part.depth.as_mut() {
+                depth.surface_evidence = evidence;
+            }
+        }
     }
 }
 
@@ -1896,6 +2005,83 @@ mod tests {
         assert_eq!(arm.relative_to_torso_m, Some(2.0));
         assert_eq!(arm.source_model, "depth-person-s-320");
         assert!(arm.sampled_pixels > 0);
+    }
+
+    #[test]
+    fn surface_evidence_uses_scene_depth_and_zone_envelope() {
+        let data = Array2::from_elem((10, 10), 2.0);
+        let depth = DepthFrame::from_ultralytics(DepthMap::new(data, (10, 10)));
+        let mut calibration =
+            SurfaceCalibration::new("depth-standard".into(), None, 100, 100, [0, 0, 100, 100]);
+        calibration
+            .upsert_zone(
+                SurfaceLayer::Bed,
+                mana_perception::SurfaceZone {
+                    name: "body".into(),
+                    polygon: vec![[0.0, 0.0], [60.0, 0.0], [60.0, 60.0], [0.0, 60.0]],
+                    median_depth: 2.0,
+                    p10_depth: 1.9,
+                    p90_depth: 2.1,
+                    mad_depth: 0.0,
+                    valid_ratio: 1.0,
+                    frame_samples: 3,
+                    valid_frames: 3,
+                    tolerance: 0.0,
+                },
+            )
+            .expect("valid surface zone");
+        let mut estimate = BodyPartsEstimate {
+            actor_ref: ActorRef::Track(7),
+            frame_number: 12,
+            parts: vec![BodyPartEstimate {
+                part: BodyPartKind::Torso,
+                geometry: BodyGeometry::Polygon(vec![
+                    [10.0, 10.0],
+                    [40.0, 10.0],
+                    [40.0, 40.0],
+                    [10.0, 40.0],
+                ]),
+                support: vec![BodyPartSupport::Pose],
+                source_models: vec!["pose-standard".into()],
+                quality: 1.0,
+                mask_coverage: None,
+                depth: None,
+                source_frame_numbers: vec![12],
+                stale: false,
+            }],
+            overall_quality: 1.0,
+            mask_polygons: None,
+        };
+
+        attach_depth(
+            &mut estimate,
+            "depth-person-s-320",
+            &depth,
+            [0, 0, 100, 100],
+            100,
+            100,
+        );
+        attach_surface_evidence(
+            std::slice::from_mut(&mut estimate),
+            "depth-standard",
+            &depth,
+            [0, 0, 100, 100],
+            100,
+            100,
+            &calibration,
+        );
+
+        let evidence = &estimate.parts[0]
+            .depth
+            .as_ref()
+            .expect("person depth")
+            .surface_evidence[0];
+        assert_eq!(evidence.source_model, "depth-standard");
+        assert_eq!(evidence.surface, "bed");
+        assert_eq!(evidence.zone, "body");
+        assert_eq!(evidence.observed_median, Some(2.0));
+        assert_eq!(evidence.residual, Some(0.0));
+        assert!(evidence.in_envelope);
     }
 
     #[test]

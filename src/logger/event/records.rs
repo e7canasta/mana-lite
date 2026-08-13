@@ -42,6 +42,20 @@ pub struct BodyPartDepthRecord {
     pub p90_depth_m: Option<f32>,
     pub max_depth_m: Option<f32>,
     pub relative_to_torso_m: Option<f32>,
+    pub surface_evidence: Vec<SurfaceEvidenceRecord>,
+}
+
+#[derive(Debug, Clone)]
+pub struct SurfaceEvidenceRecord {
+    pub source_model: String,
+    pub surface: String,
+    pub zone: String,
+    pub sampled_pixels: u64,
+    pub valid_ratio: Option<f32>,
+    pub observed_median: Option<f32>,
+    pub reference_median: f32,
+    pub residual: Option<f32>,
+    pub in_envelope: bool,
 }
 
 #[derive(Debug, Clone)]

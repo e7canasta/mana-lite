@@ -761,6 +761,17 @@ fn body_parts_event_serializes_geometry_provenance_and_freshness() {
                 p90_depth_m: Some(2.2),
                 max_depth_m: Some(2.4),
                 relative_to_torso_m: Some(0.25),
+                surface_evidence: vec![SurfaceEvidenceRecord {
+                    source_model: "depth-standard".into(),
+                    surface: "bed".into(),
+                    zone: "body".into(),
+                    sampled_pixels: 12,
+                    valid_ratio: Some(1.0),
+                    observed_median: Some(1.8),
+                    reference_median: 1.75,
+                    residual: Some(0.05),
+                    in_envelope: true,
+                }],
             }),
             source_frame_numbers: vec![12],
             stale: false,
@@ -776,6 +787,9 @@ fn body_parts_event_serializes_geometry_provenance_and_freshness() {
     assert!(out.contains("\"source_model\":\"depth-person-s-320\""));
     assert!(out.contains("\"median_depth_m\":1.8"));
     assert!(out.contains("\"relative_to_torso_m\":0.25"));
+    assert!(out.contains("\"surface_evidence\":["));
+    assert!(out.contains("\"source_model\":\"depth-standard\""));
+    assert!(out.contains("\"in_envelope\":true"));
     assert!(out.contains("\"stale\":false"));
 }
 

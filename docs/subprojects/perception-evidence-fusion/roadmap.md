@@ -87,9 +87,10 @@ explicar de que evidencias proviene cada una.
 La salida inicial es diagnóstico/JSONL. No modifica `SceneSample`, el FSM ni
 `DetectionConsolidator`.
 
-### Sprint 3: fusion temporal
+### Sprint 3: fusion temporal y evidencia depth
 
-**Estado:** planificado.
+**Estado:** temporalidad planificada; depth por body part implementado como
+diagnostico opt-in.
 
 - mantener ventana acotada `t-n ... t` por actor;
 - aplicar decaimiento de frescura;
@@ -101,17 +102,35 @@ La salida inicial es diagnóstico/JSONL. No modifica `SceneSample`, el FSM ni
 **Puerta de salida:** una fuente intermitente no produce saltos innecesarios ni
 presenta evidencia vieja como fresca.
 
-### Sprint 4: calibracion operativa
+El track paralelo de depth ya entrega `PolygonStats`, huellas por parte,
+`depth-scene`/`depth-person`, JSONL y Rerun. No convierte aun la profundidad en
+postura ni en politica clinica.
+
+### Sprint 4: profundidad relativa a superficies
+
+**Estado:** en curso.
+
+- definir `SurfaceCalibration` y `SurfaceZone` por poligono;
+- construir `deep-calib` como binario auxiliar aislado;
+- guardar y reanudar `deep-calib.toml` de forma atomica;
+- generar envolventes `p10..p90` y MAD para cama y piso;
+- calcular residual y cobertura por huella corporal sobre `depth-scene`;
+- publicar evidencia diagnostica sin tocar el FSM;
+- invalidar perfiles cuando cambien camara, ROI, modelo o resolucion.
+
+**Puerta de salida:** una escena fija puede producir y auditar perfiles de cama
+y piso, y el runtime puede distinguir evidencia valida, fuera de envolvente y
+desconocida sin comparar crops incompatibles.
+
+### Sprint 5: postura relativa y extremidades fuera de cama
 
 **Estado:** futuro.
 
-- correr perfiles `s/m` en `192/320`;
-- comparar costo de serializacion y geometria;
-- calibrar radios, pesos y TTL por resolucion;
-- definir si alguna senal derivada necesita llegar al FSM;
-- documentar limites de oclusion y multiples actores.
-
-**Puerta de salida:** cada knob tiene una metrica y una razon operativa.
+- combinar pose, mascara, superficies y persistencia;
+- clasificar acostado, sentado sobre cama, sentado al borde y parado;
+- detectar manos/pies fuera de cama;
+- validar con escenas etiquetadas;
+- decidir si algun resumen semantico estrecho llega al FSM.
 
 ## Puertas de decision
 

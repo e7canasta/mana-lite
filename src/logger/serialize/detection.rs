@@ -478,6 +478,45 @@ fn write_body_part_depth(depth: &BodyPartDepthRecord, buf: &mut Vec<u8>) {
     write_optional_f32(depth.max_depth_m, buf);
     buf.extend_from_slice(b",\"relative_to_torso_m\":");
     write_optional_f32(depth.relative_to_torso_m, buf);
+    if !depth.surface_evidence.is_empty() {
+        buf.extend_from_slice(b",\"surface_evidence\":[");
+        for (index, evidence) in depth.surface_evidence.iter().enumerate() {
+            if index > 0 {
+                buf.push(b',');
+            }
+            write_surface_evidence(evidence, buf);
+        }
+        buf.push(b']');
+    }
+    buf.push(b'}');
+}
+
+fn write_surface_evidence(
+    evidence: &crate::logger::event::SurfaceEvidenceRecord,
+    buf: &mut Vec<u8>,
+) {
+    buf.extend_from_slice(b"{\"source_model\":\"");
+    write_json_string(&evidence.source_model, buf);
+    buf.extend_from_slice(b"\",\"surface\":\"");
+    write_json_string(&evidence.surface, buf);
+    buf.extend_from_slice(b"\",\"zone\":\"");
+    write_json_string(&evidence.zone, buf);
+    buf.extend_from_slice(b"\",\"sampled_pixels\":");
+    write_u64(evidence.sampled_pixels, buf);
+    buf.extend_from_slice(b",\"valid_ratio\":");
+    write_optional_f32(evidence.valid_ratio, buf);
+    buf.extend_from_slice(b",\"observed_median\":");
+    write_optional_f32(evidence.observed_median, buf);
+    buf.extend_from_slice(b",\"reference_median\":");
+    write_f32(evidence.reference_median, buf);
+    buf.extend_from_slice(b",\"residual\":");
+    write_optional_f32(evidence.residual, buf);
+    buf.extend_from_slice(b",\"in_envelope\":");
+    buf.extend_from_slice(if evidence.in_envelope {
+        b"true"
+    } else {
+        b"false"
+    });
     buf.push(b'}');
 }
 

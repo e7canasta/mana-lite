@@ -376,6 +376,30 @@ FSM sin hacer que depth gatee face o segmentacion.
 Implementacion: `src/depth.rs` (`DepthRules::validate`, `DepthRegionRule::evaluate`),
 compartida por runtime y probe.
 
+## 10.1 Calibracion Relativa A Superficies
+
+Una instalacion fija puede declarar un perfil opcional generado por el binario
+auxiliar `deep-calib`:
+
+```toml
+[inference]
+depth_calibration_file = "config/deep-calib.toml"
+```
+
+El perfil no reemplaza `depth-rules.toml`. Describe zonas poligonales de `bed` y
+`floor` sobre el mismo frame global, ROI y modelo `depth-scene`. Cada zona
+conserva mediana, p10, p90, MAD, cobertura y contexto de captura. La salida no
+se interpreta como metros calibrados solo por existir el archivo.
+
+Las huellas de body parts se consultan contra la interseccion de su geometria,
+la mascara de segmentacion y la zona de superficie. El resultado es evidencia
+`observed_median`, `reference_median`, `residual` e `in_envelope`. Un crop
+`depth-person` nunca se usa para comparar valores absolutos contra este perfil.
+
+Si cambian camara, modelo, fingerprint, ROI o dimensiones del frame, el perfil
+no es compatible y la evidencia debe quedar ausente/`unknown`, no reescalarse
+silenciosamente.
+
 ## 10. Publicacion JSONL
 
 El evento conserva estadisticas, no la matriz completa. Es versionado

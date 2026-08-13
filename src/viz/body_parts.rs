@@ -107,6 +107,27 @@ impl VizBridge {
                         &format!("{entity}/depth/valid_ratio"),
                         depth.valid_ratio,
                     );
+                    for evidence in &depth.surface_evidence {
+                        let base =
+                            format!("{entity}/surface/{}/{}", evidence.surface, evidence.zone);
+                        log_optional_scalar(
+                            self,
+                            rec,
+                            &format!("{base}/observed_median"),
+                            evidence.observed_median,
+                        );
+                        log_optional_scalar(
+                            self,
+                            rec,
+                            &format!("{base}/residual"),
+                            evidence.residual,
+                        );
+                        self.log_scalar_inner(
+                            rec,
+                            &format!("{base}/in_envelope"),
+                            f64::from(u8::from(evidence.in_envelope)),
+                        );
+                    }
                 }
             }
         }

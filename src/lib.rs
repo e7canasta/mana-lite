@@ -11,7 +11,11 @@ pub mod config;
 pub mod depth;
 pub use mana_perception::depth_map;
 pub use mana_perception::detection;
-pub use mana_perception::{PolygonStats, RegionStats, polygon_stats, region_stats};
+pub use mana_perception::surface_calibration;
+pub use mana_perception::{
+    PolygonStats, RegionStats, SurfaceAccumulator, SurfaceCalibration, SurfaceLayer, SurfaceMatch,
+    SurfaceZone, polygon_stats, polygon_stats_intersecting_clips, region_stats,
+};
 pub mod domain;
 pub mod error;
 pub mod face_dwell;

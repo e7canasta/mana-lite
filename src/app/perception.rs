@@ -95,6 +95,7 @@ pub struct PerceptionStage {
     pub(crate) models: ModelRegistry,
     pub(crate) depth_context_roi: Option<CropRect>,
     pub(crate) depth_rules: mana_control::DepthRules,
+    pub(crate) surface_calibration: Option<mana_perception::SurfaceCalibration>,
     pub(crate) snapshots: SnapshotSaver,
     pub(crate) crop_frames_pending: Vec<CropFrameQueue>,
     /// Construido **dentro** del hilo: el escalador de ffmpeg guarda un
@@ -184,6 +185,7 @@ pub struct PerceptionSeed {
     pub models: ModelRegistry,
     pub depth_context_roi: Option<CropRect>,
     pub depth_rules: mana_control::DepthRules,
+    pub surface_calibration: Option<mana_perception::SurfaceCalibration>,
     pub snapshots: SnapshotSaver,
     pub observer: PerceptionObserver,
     pub metrics: Arc<Mutex<MetricsEngine>>,
@@ -201,6 +203,7 @@ impl PerceptionSeed {
             models: self.models,
             depth_context_roi: self.depth_context_roi,
             depth_rules: self.depth_rules,
+            surface_calibration: self.surface_calibration,
             snapshots: self.snapshots,
             crop_frames_pending: Vec::new(),
             decoder,

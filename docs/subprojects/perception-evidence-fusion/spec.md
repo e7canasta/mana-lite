@@ -1,8 +1,8 @@
 # Especificacion: Fusion de Evidencias y Estimador de Partes Corporales
 
 **Identificador:** SUBSPEC-002
-**Estado:** contrato inicial, no implementado como subsistema independiente
-**Version:** 0.1
+**Estado:** contrato inicial ampliado con calibracion relativa a superficies
+**Version:** 0.2
 
 ## 1. Alcance
 
@@ -210,3 +210,89 @@ No reutilizar `urgent`, `gated` o `not_due` para describir calidad semantica.
 - El MVP fisico debe activar un blueprint con pose y segmentacion; el blueprint
   por defecto `detect-room-face` no basta.
 - Las salidas derivadas conservan frame y frescura.
+
+## 9. Perfil de superficie calibrada
+
+El perfil de superficie es una referencia de percepcion para una camara fija.
+No representa una reconstruccion 3D ni una distancia universal.
+
+```text
+SurfaceCalibration {
+    schema_version
+    model_key
+    model_fingerprint?
+    frame_width
+    frame_height
+    roi
+    bed: SurfaceZone[]
+    floor: SurfaceZone[]
+}
+
+SurfaceZone {
+    name                  # head, body, feet, near, middle, far, ...
+    polygon               # frame-global pixels
+    median_depth
+    p10_depth
+    p90_depth
+    mad_depth
+    valid_ratio
+    frame_samples
+}
+```
+
+`SurfaceZone` es valida solo cuando el poligono tiene al menos tres vertices,
+los valores son finitos y la cobertura supera el minimo configurado. La
+envolvente operativa es `p10..p90` mas una tolerancia explicita; `median` y MAD
+se conservan para auditar dispersion y no para afirmar precision metrica.
+
+La calibracion debe ejecutarse con `depth-scene`, la misma ROI fija y el mismo
+modelo que consume cama y entorno en runtime. `depth-person` queda fuera de la
+calibracion porque sus coordenadas y escala de crop no son comparables entre
+actores.
+
+## 10. Sesion `deep-calib.toml`
+
+La sesion es un artefacto auxiliar serializable y reanudable. Debe conservar el
+poligono, el contexto de captura y las estadisticas producidas, de forma que un
+resultado pueda auditarse sin depender de la salida de consola.
+
+La escritura es temporal seguida de rename dentro del mismo directorio. Una
+sesion parcial no se promociona. `--promote` genera o actualiza solo el perfil
+de calibracion indicado por el usuario; nunca cambia reglas clinicas de forma
+implicita.
+
+El calibrador puede operar sobre una imagen/replay para tests y sobre una fuente
+live mediante un adaptador posterior. El contrato estadistico es el mismo en
+ambos casos.
+
+## 11. Evidencia relativa por parte
+
+Para cada huella corporal muestreada sobre el mapa de escena se puede publicar:
+
+```text
+SurfaceEvidence {
+    source_model
+    surface              # bed o floor
+    zone
+    observed_median
+    reference_median
+    residual
+    in_envelope
+    valid_ratio
+}
+```
+
+La evidencia combina profundidad, interseccion de la huella con el poligono de
+superficie y persistencia temporal. No entra al FSM hasta que exista un
+contrato semantico estable.
+
+## 12. Criterios adicionales de aceptacion
+
+- Un perfil no puede aplicarse si difieren modelo, ROI o dimensiones del frame.
+- Una zona de cama y una zona de piso pueden coexistir sin compartir umbral.
+- Una profundidad fuera del rango de cama no etiqueta por si sola a la persona
+  como sentada o parada; requiere pose, partes y persistencia.
+- Una mano o pie fuera de cama requiere interseccion geometrica baja,
+  profundidad valida y persistencia antes de emitir evidencia estable.
+- Un mapa con una perspectiva demasiado variable se subdivide antes de ampliar
+  tolerancias sin limite.

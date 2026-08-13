@@ -6,7 +6,7 @@ use super::env::apply_env_overrides;
 use super::fsm::FsmCatalog;
 use super::observability::{MetricsLogConfig, RerunBlueprintConfig, VizDataConfig};
 use super::zones::ZoneCatalog;
-use crate::error::{ConfigError, Result};
+use crate::error::{ConfigError, ManaError, Result};
 
 fn read_file(path: &Path) -> Result<String> {
     std::fs::read_to_string(path)
@@ -50,6 +50,14 @@ pub fn load_depth_rules(path: &Path) -> Result<mana_control::DepthRules> {
         }
         other => other,
     })
+}
+
+pub fn load_surface_calibration(path: &Path) -> Result<mana_perception::SurfaceCalibration> {
+    let calibration: mana_perception::SurfaceCalibration = load_config(path)?;
+    calibration
+        .validate()
+        .map_err(|msg| ManaError::Config(ConfigError::ValidationError(msg)))?;
+    Ok(calibration)
 }
 
 pub fn load_viz_data(path: &Path) -> Result<VizDataConfig> {
