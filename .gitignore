@@ -33,3 +33,23 @@ snapshots/
 /.claude/settings.local.json
 /.claude/worktrees/*/
 workshop/runs/
+
+# Local replay and calibration output. Curated JSON fixtures live under
+# tests/fixtures/ and source calibration/configuration remains versioned.
+/runs/
+/demo-deep-calib/
+/demo-deep-calib-radio/
+/demo-deep-calib-parts/
+/scripts/frames/
+/logs/
+/dist/
+/config/workshop/deep-calib-depth-*.toml
+!/config/workshop/deep-calib-depth-l-640.toml
+/*.jpeg
+/*.jpg
+/*.png
+*.calib-*.png
+*.calib-pose*.png
+*.calib-preview*.png
+*.log
+*.tmp.*

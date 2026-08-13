@@ -750,12 +750,8 @@ Este manual alcanza para operar el banco. Para lo demás:
 hace cumplir `core/mana-control/Cargo.toml`: tres dependencias. Agregar
 `mana-perception` ahí no rompe una convención, **rompe la compilación**.
 
-### Documentos que NO conviene mirar todavía
+### Documentacion activa
 
-`docs/wiki/` son 21 archivos generados contra un commit viejo: describen el
-super loop y tipos que ya no existen. Están registrados como deuda en
-`HANDOFF.md` §8 y se **regeneran**, no se editan a mano.
-
-`docs/onboarding.md` y `docs/operations.md` son anteriores al refactor del lazo
-aislado. Tienen material útil sobre la cascada y los blueprints, pero describen
-un modelo de ejecución que ya no es el que corre.
+Los contratos y decisiones vigentes estan indexados en `docs/README.md`. Las
+notas historicas viven bajo `docs/archive/` y no deben usarse como instrucciones
+operativas.

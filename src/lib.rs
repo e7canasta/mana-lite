@@ -29,6 +29,7 @@ pub mod metrics;
 pub mod model_runner;
 pub use mana_control::occupancy;
 pub mod pipeline;
+pub mod posture_analysis;
 pub use mana_control::presence;
 pub use mana_control::scan;
 pub mod slot;

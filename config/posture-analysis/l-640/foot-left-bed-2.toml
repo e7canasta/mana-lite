@@ -1,0 +1,110 @@
+schema_version = 1
+posture_id = "foot-left-bed-2"
+label = "foot-left-bed"
+training_sample = "foot-left-bed-2"
+base_posture = "acostado"
+plane = "in-bed"
+
+[policy]
+min_observed_features = 3
+min_observed_components = 2
+allow_partial = true
+
+[[features]]
+id = "geometry.person_bbox_aspect"
+source = "geometry"
+field = "person_bbox_aspect"
+center = 1.164
+tolerance = 0.30
+weight = 1.0
+
+[[features]]
+id = "geometry.torso_tilt_deg"
+source = "geometry"
+field = "torso_tilt_deg"
+center = 3.4
+tolerance = 15.0
+weight = 0.8
+required = true
+
+[[features]]
+id = "keypoint_group.shoulder_hip_vertical_span"
+source = "keypoint_group"
+field = "shoulder_hip_vertical_span"
+center = 0.226
+tolerance = 0.14
+weight = 0.5
+
+[[features]]
+id = "keypoint_group.shoulder_hip_depth_delta"
+source = "keypoint_group"
+field = "shoulder_hip_depth_delta"
+center = 0.273
+tolerance = 0.14
+weight = 0.5
+
+[[features]]
+id = "keypoint_group.head_hip_depth_relation"
+source = "keypoint_group"
+field = "head_hip_depth_relation"
+allowed = ["head_farther_than_hips", "head_near_hips"]
+weight = 0.5
+
+[[features]]
+id = "body_part.head.relative_to_torso"
+source = "body_part"
+part = "head"
+field = "relative_to_torso"
+center = 0.144
+tolerance = 0.20
+weight = 0.6
+
+[[features]]
+id = "body_part.left_leg.mask_coverage"
+source = "body_part"
+part = "left_leg"
+field = "mask_coverage"
+center = 0.0
+tolerance = 0.35
+weight = 1.0
+
+[[features]]
+id = "body_part.right_leg.mask_coverage"
+source = "body_part"
+part = "right_leg"
+field = "mask_coverage"
+center = 1.0
+tolerance = 0.35
+weight = 1.0
+
+[[features]]
+id = "body_part.right_leg.relative_to_torso"
+source = "body_part"
+part = "right_leg"
+field = "relative_to_torso"
+center = -0.162
+tolerance = 0.04
+weight = 2.0
+
+[[features]]
+id = "face.zone"
+source = "face"
+field = "zone"
+allowed = ["bed/head", "bed/body", "floor/head", "floor/body", "floor/feet"]
+weight = 1.0
+
+[[features]]
+id = "face.bbox_height_ratio"
+source = "face"
+field = "bbox_height_ratio"
+center = 0.124
+tolerance = 0.10
+weight = 0.5
+
+[[features]]
+id = "face.center_y_ratio"
+source = "face"
+field = "center_y_ratio"
+center = 0.064
+tolerance = 0.07
+weight = 0.5

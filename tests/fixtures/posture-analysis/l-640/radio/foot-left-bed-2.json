@@ -1,0 +1,508 @@
+{
+  "model_key": "depth-l-640",
+  "image": "foot-left-bed-2.jpeg",
+  "depth_roi": [
+    452,
+    140,
+    1300,
+    1029
+  ],
+  "depth_roi_margin": 0.1,
+  "colormap": "jet",
+  "depth_viz": "metric",
+  "radius_ratio": 0.035,
+  "radius_base": "min",
+  "person_bbox": [
+    554.6875,
+    340.33124,
+    1244.35,
+    932.9375
+  ],
+  "segment": {
+    "bbox": [
+      566.0,
+      341.0,
+      1155.0,
+      884.0
+    ],
+    "area_px": 94224.49633789062,
+    "area_ratio": 0.045440054175294474,
+    "perimeter_px": 1842.485317284064,
+    "vertices": [
+      [
+        991.0,
+        341.0
+      ],
+      [
+        970.99994,
+        366.0
+      ],
+      [
+        921.0,
+        378.0
+      ],
+      [
+        889.0,
+        403.0
+      ],
+      [
+        913.0,
+        467.0
+      ],
+      [
+        888.0,
+        507.0
+      ],
+      [
+        874.0,
+        578.0
+      ],
+      [
+        753.0,
+        690.0
+      ],
+      [
+        726.0,
+        743.0
+      ],
+      [
+        702.0,
+        756.0
+      ],
+      [
+        679.0,
+        760.0
+      ],
+      [
+        668.0,
+        751.0
+      ],
+      [
+        636.0,
+        763.0
+      ],
+      [
+        566.0,
+        743.0
+      ],
+      [
+        566.0,
+        781.0
+      ],
+      [
+        608.0,
+        820.0
+      ],
+      [
+        659.0,
+        848.0
+      ],
+      [
+        656.0,
+        884.0
+      ],
+      [
+        685.0,
+        884.0
+      ],
+      [
+        699.0,
+        874.0
+      ],
+      [
+        733.0,
+        813.0
+      ],
+      [
+        827.0,
+        751.0
+      ],
+      [
+        1014.99994,
+        659.0
+      ],
+      [
+        1059.0,
+        594.0
+      ],
+      [
+        1064.0,
+        550.0
+      ],
+      [
+        1080.0,
+        523.0
+      ],
+      [
+        1155.0,
+        522.0
+      ],
+      [
+        1155.0,
+        489.0
+      ],
+      [
+        1144.0,
+        467.0
+      ],
+      [
+        1095.0,
+        424.0
+      ],
+      [
+        1055.0,
+        404.0
+      ],
+      [
+        1042.0,
+        349.0
+      ],
+      [
+        1031.0,
+        341.0
+      ]
+    ],
+    "raster": {
+      "dims": [
+        848,
+        689
+      ],
+      "active_pixels": 94908,
+      "components": 1,
+      "largest_component_ratio": 1.0
+    }
+  },
+  "zones": [
+    {
+      "zone": "bed/head",
+      "calibrated_m": 1.3293685,
+      "observed_m": 1.4284617,
+      "delta_m": 0.0990932,
+      "valid_ratio": 1.0
+    },
+    {
+      "zone": "bed/body",
+      "calibrated_m": 1.096966,
+      "observed_m": 1.1758373,
+      "delta_m": 0.07887125,
+      "valid_ratio": 1.0
+    },
+    {
+      "zone": "bed/feet",
+      "calibrated_m": 0.94427586,
+      "observed_m": 1.0228571,
+      "delta_m": 0.078581214,
+      "valid_ratio": 1.0
+    },
+    {
+      "zone": "floor/head",
+      "calibrated_m": 1.773063,
+      "observed_m": 2.0510514,
+      "delta_m": 0.27798843,
+      "valid_ratio": 1.0
+    },
+    {
+      "zone": "floor/body",
+      "calibrated_m": 1.4151186,
+      "observed_m": 1.6205318,
+      "delta_m": 0.20541322,
+      "valid_ratio": 1.0
+    },
+    {
+      "zone": "floor/feet",
+      "calibrated_m": 1.1597083,
+      "observed_m": 1.2858202,
+      "delta_m": 0.12611198,
+      "valid_ratio": 1.0
+    }
+  ],
+  "keypoints": [
+    {
+      "person": 0,
+      "part": "nose",
+      "point": [
+        994.2562,
+        375.1125
+      ],
+      "conf": 0.96435547,
+      "radius_px": 20.741219,
+      "depth_m": 1.5485865,
+      "p10_m": 1.5387424,
+      "p90_m": 1.6228728,
+      "valid_ratio": 1.0,
+      "sampled_pixels": 1288,
+      "zone": "floor/body",
+      "delta_m": 0.07194531
+    },
+    {
+      "person": 0,
+      "part": "left_eye",
+      "point": [
+        1013.46875,
+        367.825
+      ],
+      "conf": 0.9838867,
+      "radius_px": 20.741219,
+      "depth_m": 1.5455661,
+      "p10_m": 1.5377107,
+      "p90_m": 1.5590091,
+      "valid_ratio": 1.0,
+      "sampled_pixels": 1289,
+      "zone": "floor/body",
+      "delta_m": 0.074965715
+    },
+    {
+      "person": 0,
+      "part": "right_eye",
+      "point": [
+        987.3,
+        368.98438
+      ],
+      "conf": 0.8378906,
+      "radius_px": 20.741219,
+      "depth_m": 1.5600215,
+      "p10_m": 1.543265,
+      "p90_m": 2.0941992,
+      "valid_ratio": 1.0,
+      "sampled_pixels": 1191,
+      "zone": "floor/body",
+      "delta_m": 0.060510278
+    },
+    {
+      "person": 0,
+      "part": "left_ear",
+      "point": [
+        1047.5874,
+        390.84686
+      ],
+      "conf": 0.96240234,
+      "radius_px": 20.741219,
+      "depth_m": 1.5648522,
+      "p10_m": 1.541521,
+      "p90_m": 1.674276,
+      "valid_ratio": 1.0,
+      "sampled_pixels": 822,
+      "zone": "floor/body",
+      "delta_m": 0.05567956
+    },
+    {
+      "person": 0,
+      "part": "left_shoulder",
+      "point": [
+        1083.3625,
+        435.23438
+      ],
+      "conf": 0.9892578,
+      "radius_px": 20.741219,
+      "depth_m": 1.4844162,
+      "p10_m": 1.4485132,
+      "p90_m": 1.5303993,
+      "valid_ratio": 1.0,
+      "sampled_pixels": 1185,
+      "zone": "bed/head",
+      "delta_m": 0.055954576
+    },
+    {
+      "person": 0,
+      "part": "right_shoulder",
+      "point": [
+        942.9125,
+        421.81876
+      ],
+      "conf": 0.98876953,
+      "radius_px": 20.741219,
+      "depth_m": 1.5183363,
+      "p10_m": 1.4927038,
+      "p90_m": 1.5429931,
+      "valid_ratio": 1.0,
+      "sampled_pixels": 1294,
+      "zone": "bed/head",
+      "delta_m": 0.089874625
+    },
+    {
+      "person": 0,
+      "part": "left_elbow",
+      "point": [
+        1157.5625,
+        488.73126
+      ],
+      "conf": 0.96972656,
+      "radius_px": 20.741219,
+      "depth_m": 1.3879485,
+      "p10_m": 1.3708811,
+      "p90_m": 1.4119396,
+      "valid_ratio": 1.0,
+      "sampled_pixels": 454,
+      "zone": "bed/head",
+      "delta_m": 0.040513158
+    },
+    {
+      "person": 0,
+      "part": "right_elbow",
+      "point": [
+        877.32495,
+        395.98126
+      ],
+      "conf": 0.8491211,
+      "radius_px": 20.741219,
+      "depth_m": 1.6756918,
+      "p10_m": 1.5817363,
+      "p90_m": 1.8308097,
+      "valid_ratio": 1.0,
+      "sampled_pixels": 56,
+      "zone": "floor/body",
+      "delta_m": 0.055160046
+    },
+    {
+      "person": 0,
+      "part": "left_wrist",
+      "point": [
+        1080.3812,
+        491.54688
+      ],
+      "conf": 0.9902344,
+      "radius_px": 20.741219,
+      "depth_m": 1.3705791,
+      "p10_m": 1.3497702,
+      "p90_m": 1.3915507,
+      "valid_ratio": 1.0,
+      "sampled_pixels": 1297,
+      "zone": "bed/head",
+      "delta_m": 0.057882547
+    },
+    {
+      "person": 0,
+      "part": "right_wrist",
+      "point": [
+        979.6812,
+        390.68124
+      ],
+      "conf": 0.7651367,
+      "radius_px": 20.741219,
+      "depth_m": 1.5517089,
+      "p10_m": 1.539245,
+      "p90_m": 1.6276102,
+      "valid_ratio": 1.0,
+      "sampled_pixels": 1288,
+      "zone": "floor/body",
+      "delta_m": 0.06882286
+    },
+    {
+      "person": 0,
+      "part": "left_hip",
+      "point": [
+        1063.8187,
+        566.90625
+      ],
+      "conf": 0.9897461,
+      "radius_px": 20.741219,
+      "depth_m": 1.2665161,
+      "p10_m": 1.2482723,
+      "p90_m": 1.2832003,
+      "valid_ratio": 1.0,
+      "sampled_pixels": 575,
+      "zone": "floor/feet",
+      "delta_m": 0.019304156
+    },
+    {
+      "person": 0,
+      "part": "right_hip",
+      "point": [
+        943.90625,
+        557.7969
+      ],
+      "conf": 0.99609375,
+      "radius_px": 20.741219,
+      "depth_m": 1.2973521,
+      "p10_m": 1.2787805,
+      "p90_m": 1.3117285,
+      "valid_ratio": 1.0,
+      "sampled_pixels": 1295,
+      "zone": "floor/feet",
+      "delta_m": 0.01153183
+    },
+    {
+      "person": 0,
+      "part": "left_knee",
+      "point": [
+        1142.9875,
+        696.7562
+      ],
+      "conf": 0.90185547,
+      "radius_px": 20.741219,
+      "depth_m": null,
+      "p10_m": null,
+      "p90_m": null,
+      "valid_ratio": null,
+      "sampled_pixels": 0,
+      "zone": null,
+      "delta_m": null
+    },
+    {
+      "person": 0,
+      "part": "right_knee",
+      "point": [
+        854.8,
+        677.5437
+      ],
+      "conf": 0.98828125,
+      "radius_px": 20.741219,
+      "depth_m": 1.1870937,
+      "p10_m": 1.173679,
+      "p90_m": 1.2029527,
+      "valid_ratio": 1.0,
+      "sampled_pixels": 1289,
+      "zone": "bed/body",
+      "delta_m": 0.011256456
+    },
+    {
+      "person": 0,
+      "part": "left_ankle",
+      "point": [
+        1099.5938,
+        838.19995
+      ],
+      "conf": 0.51708984,
+      "radius_px": 20.741219,
+      "depth_m": null,
+      "p10_m": null,
+      "p90_m": null,
+      "valid_ratio": null,
+      "sampled_pixels": 0,
+      "zone": null,
+      "delta_m": null
+    },
+    {
+      "person": 0,
+      "part": "right_ankle",
+      "point": [
+        672.1156,
+        797.125
+      ],
+      "conf": 0.96191406,
+      "radius_px": 20.741219,
+      "depth_m": 1.2783412,
+      "p10_m": 1.250337,
+      "p90_m": 1.3686124,
+      "valid_ratio": 1.0,
+      "sampled_pixels": 1294,
+      "zone": "floor/feet",
+      "delta_m": 0.0074790716
+    }
+  ],
+  "face": {
+    "conf": 0.7939453,
+    "bbox": [
+      973.26324,
+      341.57343,
+      1039.7617,
+      415.27655
+    ],
+    "depth_m": 1.5456613,
+    "p10_m": 1.5349871,
+    "p90_m": 1.70893,
+    "valid_ratio": 1.0,
+    "sampled_pixels": 4685,
+    "zone": "floor/body"
+  }
+}

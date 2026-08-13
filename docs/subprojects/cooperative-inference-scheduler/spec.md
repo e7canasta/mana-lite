@@ -1,7 +1,7 @@
 # Especificacion: Scheduler Cooperativo de Inferencia
 
 **Identificador:** SUBSPEC-001
-**Estado:** implementacion incremental; Sprint 3 cerrado a nivel runtime
+**Estado:** contrato implementado a nivel runtime; validacion de hardware y tuning operativo pendientes
 **Version:** 0.2
 
 ## 1. Proposito
@@ -140,7 +140,7 @@ viajar en `ControlDirective`, pero no revive una request one-shot ya consumida
 mientras conserve el mismo identity key. Una urgencia transitoria que no puede
 perderse usa la cola durable de `CascadeScheduler`, no un slot latest-wins.
 
-## 8. Cross-validation, Sprint 4
+## 8. Validacion cruzada face/pose
 
 La validacion cruzada debe ser una senal semantica en el adaptador de
 percepcion. Ejemplo:
@@ -193,9 +193,9 @@ workshop.
 En el reporte de runtime, las distribuciones por modelo se publican como
 `gap_samples`, `gap_min_ms`, `gap_p50_ms`, `gap_p95_ms`, `gap_max_ms` y sus
 equivalentes `due_late_*`. `urgent`, `urgent_expired`, `urgent_requests`,
-`urgent_wait_*` y `urgent_starvation` forman parte del esquema desde Sprint 3.
-Sprint 4 puede agregar metricas semanticas solo si tienen una decision
-operativa asociada; no reciclar las metricas de urgencia.
+`urgent_wait_*` y `urgent_starvation` forman parte del esquema vigente. Las
+metricas semanticas solo se agregan si tienen una decision operativa asociada;
+no reciclar las metricas de urgencia.
 
 ## 10. Compatibilidad
 

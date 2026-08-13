@@ -1,6 +1,6 @@
 # Subproyecto: Scheduler Cooperativo de Inferencia
 
-**Estado:** Sprint 1, 2 y 3 cerrados; Sprint 4 listo para comenzar
+**Estado:** cadencia, urgencias y validacion face/pose implementadas; validacion operativa pendiente
 **Fecha:** 2026-08-12
 **Alcance:** cadencia por modelo, latest-wins y ejecucion cooperativa dentro del hilo de percepcion
 
@@ -70,16 +70,12 @@ son workers independientes en esta fase.
 - [Memoria tecnica](technical-memory.md): contexto, decisiones, limites y
   consecuencias.
 - [Especificacion](spec.md): contrato funcional y criterios verificables.
-- [Roadmap](roadmap.md): big picture, fases y puertas de decision.
-- [Sprint 1](sprints/sprint-01.md): primera entrega de cadencia normal.
-- [Sprint 2](sprints/sprint-02.md): instrumento de capacidad y corrida larga.
-- [Handoff Sprint 3](sprints/sprint-03-handoff.md): contrato, plan y puertas de
-  entrada para urgencias cooperativas.
-- [Handoff Sprint 4](sprints/sprint-04-handoff.md): validacion cruzada face/pose,
-  contrato semantico, frescura y plan de integracion.
-- La implementacion de Sprint 3 vive en `CascadeScheduler`,
-  `PerceptionStage` y el reporte de metricas; aun no hay productor semantico
-  face/pose, que pertenece a Sprint 4.
+- La implementacion vive en `CascadeScheduler`, `PerceptionStage`, el reporte de
+  metricas y el adaptador `face_pose`.
+
+Los sprints y handoffs fueron destilados en la spec, la memoria tecnica y los
+ADRs de arquitectura. La documentacion vigente no depende de una secuencia de
+tareas cerradas.
 
 ## Fuentes de arquitectura
 

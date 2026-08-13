@@ -1,0 +1,457 @@
+{
+  "model_key": "depth-l-640",
+  "image": "sentado-borde-1.jpeg",
+  "zones": [
+    {
+      "zone": "bed/head",
+      "calibrated_m": 1.3293685,
+      "observed_m": 1.3411459,
+      "delta_m": 0.011777401,
+      "valid_ratio": 1.0
+    },
+    {
+      "zone": "bed/body",
+      "calibrated_m": 1.096966,
+      "observed_m": 1.0784836,
+      "delta_m": -0.018482447,
+      "valid_ratio": 1.0
+    },
+    {
+      "zone": "bed/feet",
+      "calibrated_m": 0.94427586,
+      "observed_m": 0.9894249,
+      "delta_m": 0.04514903,
+      "valid_ratio": 1.0
+    },
+    {
+      "zone": "floor/head",
+      "calibrated_m": 1.773063,
+      "observed_m": 2.0199661,
+      "delta_m": 0.24690318,
+      "valid_ratio": 1.0
+    },
+    {
+      "zone": "floor/body",
+      "calibrated_m": 1.4151186,
+      "observed_m": 1.5711567,
+      "delta_m": 0.15603817,
+      "valid_ratio": 1.0
+    },
+    {
+      "zone": "floor/feet",
+      "calibrated_m": 1.1597083,
+      "observed_m": 1.2803115,
+      "delta_m": 0.120603204,
+      "valid_ratio": 1.0
+    }
+  ],
+  "actors": [
+    {
+      "actor_ref": "frame_local:0:0",
+      "frame_number": 0,
+      "overall_quality": 0.77828985,
+      "parts": [
+        {
+          "part": "head",
+          "geometry": "bbox",
+          "bbox": [
+            752.9406,
+            341.3664,
+            827.1406,
+            456.22736
+          ],
+          "points": null,
+          "radius": null,
+          "support": [
+            "face",
+            "pose",
+            "segment"
+          ],
+          "source_models": [
+            "face-yolo",
+            "pose-standard",
+            "seg-standard"
+          ],
+          "quality": 0.7385669,
+          "mask_coverage": 0.6,
+          "depth": {
+            "source_model": "depth-l-640",
+            "roi": [
+              452,
+              140,
+              1300,
+              1029
+            ],
+            "map_width": 848,
+            "map_height": 889,
+            "sampled_pixels": 8181,
+            "valid_pixels": 8181,
+            "valid_ratio": 1.0,
+            "min_depth_m": 1.0714595,
+            "median_depth_m": 1.1369855,
+            "p10_depth_m": 1.1256711,
+            "p90_depth_m": 1.1943694,
+            "max_depth_m": 2.6770978,
+            "relative_to_torso_m": 0.10045421,
+            "surface_evidence": [
+              {
+                "surface": "floor",
+                "zone": "head",
+                "sampled_pixels": 2864,
+                "valid_ratio": 1.0,
+                "observed_median": 1.1314558,
+                "reference_median": 1.773063,
+                "residual": -0.64160717,
+                "in_envelope": false
+              }
+            ]
+          }
+        },
+        {
+          "part": "torso",
+          "geometry": "polygon",
+          "bbox": null,
+          "points": [
+            [
+              825.3187,
+              500.9875
+            ],
+            [
+              861.425,
+              412.54376
+            ],
+            [
+              881.9625,
+              658.33124
+            ],
+            [
+              898.525,
+              602.01874
+            ]
+          ],
+          "radius": null,
+          "support": [
+            "pose",
+            "segment"
+          ],
+          "source_models": [
+            "pose-standard",
+            "seg-standard"
+          ],
+          "quality": 0.8884649,
+          "mask_coverage": 1.0,
+          "depth": {
+            "source_model": "depth-l-640",
+            "roi": [
+              452,
+              140,
+              1300,
+              1029
+            ],
+            "map_width": 848,
+            "map_height": 889,
+            "sampled_pixels": 4354,
+            "valid_pixels": 4354,
+            "valid_ratio": 1.0,
+            "min_depth_m": 1.0123138,
+            "median_depth_m": 1.0365313,
+            "p10_depth_m": 1.0177467,
+            "p90_depth_m": 1.0701773,
+            "max_depth_m": 1.1071956,
+            "relative_to_torso_m": 0.0,
+            "surface_evidence": [
+              {
+                "surface": "bed",
+                "zone": "head",
+                "sampled_pixels": 3290,
+                "valid_ratio": 1.0,
+                "observed_median": 1.0428469,
+                "reference_median": 1.3293685,
+                "residual": -0.28652155,
+                "in_envelope": false
+              }
+            ]
+          }
+        },
+        {
+          "part": "left_arm",
+          "geometry": "polyline",
+          "bbox": null,
+          "points": [
+            [
+              825.3187,
+              500.9875
+            ],
+            [
+              858.1125,
+              637.7937
+            ],
+            [
+              837.2438,
+              724.58124
+            ]
+          ],
+          "radius": 9.4141245,
+          "support": [
+            "pose",
+            "segment"
+          ],
+          "source_models": [
+            "pose-standard",
+            "seg-standard"
+          ],
+          "quality": 0.8985821,
+          "mask_coverage": 1.0,
+          "depth": {
+            "source_model": "depth-l-640",
+            "roi": [
+              452,
+              140,
+              1300,
+              1029
+            ],
+            "map_width": 848,
+            "map_height": 889,
+            "sampled_pixels": 4577,
+            "valid_pixels": 4577,
+            "valid_ratio": 1.0,
+            "min_depth_m": 1.0042706,
+            "median_depth_m": 1.0090175,
+            "p10_depth_m": 1.0050427,
+            "p90_depth_m": 1.0316528,
+            "max_depth_m": 1.0541668,
+            "relative_to_torso_m": -0.027513862,
+            "surface_evidence": [
+              {
+                "surface": "bed",
+                "zone": "body",
+                "sampled_pixels": 3114,
+                "valid_ratio": 1.0,
+                "observed_median": 1.0063277,
+                "reference_median": 1.096966,
+                "residual": -0.09063828,
+                "in_envelope": false
+              }
+            ]
+          }
+        },
+        {
+          "part": "right_arm",
+          "geometry": "polyline",
+          "bbox": null,
+          "points": [
+            [
+              861.425,
+              412.54376
+            ],
+            [
+              854.13745,
+              467.53125
+            ],
+            [
+              807.76245,
+              491.21564
+            ]
+          ],
+          "radius": 9.4141245,
+          "support": [
+            "pose",
+            "segment"
+          ],
+          "source_models": [
+            "pose-standard",
+            "seg-standard"
+          ],
+          "quality": 0.5934138,
+          "mask_coverage": 1.0,
+          "depth": {
+            "source_model": "depth-l-640",
+            "roi": [
+              452,
+              140,
+              1300,
+              1029
+            ],
+            "map_width": 848,
+            "map_height": 889,
+            "sampled_pixels": 2262,
+            "valid_pixels": 2262,
+            "valid_ratio": 1.0,
+            "min_depth_m": 1.0453564,
+            "median_depth_m": 1.061759,
+            "p10_depth_m": 1.0507165,
+            "p90_depth_m": 1.1029414,
+            "max_depth_m": 1.1454132,
+            "relative_to_torso_m": 0.025227666,
+            "surface_evidence": [
+              {
+                "surface": "bed",
+                "zone": "head",
+                "sampled_pixels": 1619,
+                "valid_ratio": 1.0,
+                "observed_median": 1.0776113,
+                "reference_median": 1.3293685,
+                "residual": -0.25175714,
+                "in_envelope": false
+              },
+              {
+                "surface": "floor",
+                "zone": "head",
+                "sampled_pixels": 115,
+                "valid_ratio": 1.0,
+                "observed_median": 1.0569837,
+                "reference_median": 1.773063,
+                "residual": -0.71607924,
+                "in_envelope": false
+              }
+            ]
+          }
+        },
+        {
+          "part": "left_leg",
+          "geometry": "polyline",
+          "bbox": null,
+          "points": [
+            [
+              881.9625,
+              658.33124
+            ],
+            [
+              732.2375,
+              685.4938
+            ],
+            [
+              770.4968,
+              822.9625
+            ]
+          ],
+          "radius": 9.4141245,
+          "support": [
+            "pose",
+            "segment"
+          ],
+          "source_models": [
+            "pose-standard",
+            "seg-standard"
+          ],
+          "quality": 0.80794024,
+          "mask_coverage": 0.6666667,
+          "depth": {
+            "source_model": "depth-l-640",
+            "roi": [
+              452,
+              140,
+              1300,
+              1029
+            ],
+            "map_width": 848,
+            "map_height": 889,
+            "sampled_pixels": 5264,
+            "valid_pixels": 5264,
+            "valid_ratio": 1.0,
+            "min_depth_m": 1.0049162,
+            "median_depth_m": 1.1407822,
+            "p10_depth_m": 1.007415,
+            "p90_depth_m": 1.1614646,
+            "max_depth_m": 1.3898107,
+            "relative_to_torso_m": 0.10425091,
+            "surface_evidence": [
+              {
+                "surface": "bed",
+                "zone": "body",
+                "sampled_pixels": 1707,
+                "valid_ratio": 1.0,
+                "observed_median": 1.0133669,
+                "reference_median": 1.096966,
+                "residual": -0.08359909,
+                "in_envelope": false
+              },
+              {
+                "surface": "floor",
+                "zone": "body",
+                "sampled_pixels": 1413,
+                "valid_ratio": 1.0,
+                "observed_median": 1.1507347,
+                "reference_median": 1.4151186,
+                "residual": -0.2643839,
+                "in_envelope": false
+              }
+            ]
+          }
+        },
+        {
+          "part": "right_leg",
+          "geometry": "polyline",
+          "bbox": null,
+          "points": [
+            [
+              898.525,
+              602.01874
+            ],
+            [
+              745.15625,
+              568.23126
+            ],
+            [
+              788.8812,
+              699.7375
+            ]
+          ],
+          "radius": 9.4141245,
+          "support": [
+            "pose",
+            "segment"
+          ],
+          "source_models": [
+            "pose-standard",
+            "seg-standard"
+          ],
+          "quality": 0.7427715,
+          "mask_coverage": 0.6666667,
+          "depth": {
+            "source_model": "depth-l-640",
+            "roi": [
+              452,
+              140,
+              1300,
+              1029
+            ],
+            "map_width": 848,
+            "map_height": 889,
+            "sampled_pixels": 5310,
+            "valid_pixels": 5310,
+            "valid_ratio": 1.0,
+            "min_depth_m": 1.0058614,
+            "median_depth_m": 1.1273364,
+            "p10_depth_m": 1.0089912,
+            "p90_depth_m": 1.3338622,
+            "max_depth_m": 1.848171,
+            "relative_to_torso_m": 0.09080505,
+            "surface_evidence": [
+              {
+                "surface": "bed",
+                "zone": "body",
+                "sampled_pixels": 1784,
+                "valid_ratio": 1.0,
+                "observed_median": 1.0137894,
+                "reference_median": 1.096966,
+                "residual": -0.08317661,
+                "in_envelope": false
+              },
+              {
+                "surface": "floor",
+                "zone": "body",
+                "sampled_pixels": 1192,
+                "valid_ratio": 1.0,
+                "observed_median": 1.303766,
+                "reference_median": 1.4151186,
+                "residual": -0.11135256,
+                "in_envelope": false
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

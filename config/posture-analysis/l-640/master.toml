@@ -1,0 +1,60 @@
+schema_version = 1
+engine = "posture-analysis"
+model_key = "depth-l-640"
+depth_semantics = "model-relative"
+surface_calibration = "surface-calibration.toml"
+posture_dir = "."
+min_observed_components = 2
+min_total_score = 0.55
+semantic_min_total_score = 0.40
+ambiguity_margin = 0.10
+surface_spatial_padding_px = 48.0
+surface_depth_padding_m = 0.15
+
+[policy]
+missing_is_conflict = false
+allow_partial_parts = true
+require_same_model_context = true
+require_same_roi = true
+
+[[postures]]
+id = "acostado-1"
+label = "acostado"
+file = "acostado-1.toml"
+weight = 1.0
+
+[[postures]]
+id = "sentado-1"
+label = "sentado"
+file = "sentado-1.toml"
+weight = 1.0
+
+[[postures]]
+id = "sentado-borde-1"
+label = "sentado-borde"
+file = "sentado-borde-1.toml"
+weight = 1.0
+
+[[postures]]
+id = "parado-aside-1"
+label = "parado-aside"
+file = "parado-aside-1.toml"
+weight = 1.0
+
+[[postures]]
+id = "leaving-bed-aside-head-1"
+label = "leaving-bed-aside-head"
+file = "leaving-bed-aside-head-1.toml"
+weight = 1.0
+
+[[postures]]
+id = "foot-left-bed-2"
+label = "foot-left-bed"
+file = "foot-left-bed-2.toml"
+weight = 1.0
+
+[[postures]]
+id = "foots-left-bed-1"
+label = "foots-left-bed"
+file = "foots-left-bed-1.toml"
+weight = 1.0

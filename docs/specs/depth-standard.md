@@ -633,7 +633,7 @@ las reglas funcionales sin una solicitud separada.
 | Metricas y JSONL | `src/metrics.rs`, `src/logger/event.rs` |
 | Rerun | `src/viz.rs`, `config/viz.toml` |
 | Exportacion | `tools/model-tools/README.md` |
-| Operacion general | `docs/operations.md` |
+| Operacion general | `workshop/MANUAL.md` |
 
 Este documento debe actualizarse cuando cambie el contrato de coordenadas, el
 espacio del mapa, el formato JSONL o la politica de cascada.

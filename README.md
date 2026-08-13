@@ -53,25 +53,26 @@ cargo run --release -- --config workshop/scenarios/01-ingest-only/mana.toml
 
 ## Documentacion
 
-- [Guia de operaciones](docs/operations.md): administracion, configuracion,
-  logs de terminal, JSONL, Rerun y troubleshooting.
-- [Onboarding de ingenieria](docs/onboarding.md): estructura del codigo y
-  flujo del pipeline.
-- [SPEC](docs/SPEC.md): contratos funcionales y formato de eventos.
+- [Documentacion activa](docs/README.md): indice de manuales, specs, ADRs y
+  subproyectos.
+- [Manual del workshop](workshop/MANUAL.md): administracion, configuracion,
+  escenarios, JSONL, Rerun y troubleshooting.
+- [Onboarding del workshop](workshop/ONBOARDING.md): homologacion de versiones.
 - [Especificaciones](docs/specs/): blueprints de ramas — depth
   ([depth-standard](docs/specs/depth-standard.md)), segmentacion
   ([seg-standard](docs/specs/seg-standard.md)) y wire de mascaras
   ([mask-jsonl](docs/specs/mask-jsonl.md)).
 - [Arquitectura de ejecución](ARCHITECTURE.md): hilos, relojes, puertos e
   invariantes. Es la que hay que leer antes de tocar el lazo.
-- [Arquitectura del workspace](docs/ARCHITECTURE.md): partición en crates por
-  tier (ADR-027, ADR-028).
+- [Arquitectura del workspace](ARCHITECTURE.md): particion en crates, etapas y
+  bordes de ejecucion.
 - [Handoff](HANDOFF.md): dónde estamos, qué falta y cómo retomar.
 - [Observabilidad](docs/observability.md): metricas, toggles y blueprint.
 - [ROI y crops](docs/roi.md): crops estaticos y dinamicos.
 - [Fusion de evidencias y body parts](docs/subprojects/perception-evidence-fusion/README.md):
   validacion cruzada y estimacion geometrica por partes.
-- [ADRs](docs/adrs/): decisiones de diseño (001-035).
+- [Subproyectos](docs/subprojects/README.md): indice de contratos especializados.
+- [ADRs](docs/adrs/): decisiones de diseno (001-036).
 
 ## Salidas
 

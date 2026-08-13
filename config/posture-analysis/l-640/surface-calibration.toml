@@ -1,0 +1,113 @@
+schema_version = 1
+model_key = "depth-l-640"
+model_fingerprint = "bytes:53134372:mtime:1786259294"
+frame_width = 1920
+frame_height = 1080
+roi = [
+    452,
+    140,
+    1300,
+    1029,
+]
+
+[[bed]]
+name = "head"
+polygon = [
+    [1149.0, 399.0],
+    [1181.0, 559.0],
+    [821.0, 552.0],
+    [845.0, 398.0],
+]
+median_depth = 1.3293684720993042
+p10_depth = 1.3189773559570313
+p90_depth = 1.434960126876831
+mad_depth = 0.001031637191772461
+valid_ratio = 1.0
+frame_samples = 4
+valid_frames = 4
+tolerance = 0.0
+
+[[bed]]
+name = "body"
+polygon = [
+    [816.0, 570.0],
+    [1191.0, 574.0],
+    [1204.0, 739.0],
+    [790.0, 732.0],
+]
+median_depth = 1.096966028213501
+p10_depth = 1.0896387100219727
+p90_depth = 1.1791908740997314
+mad_depth = 0.00732731819152832
+valid_ratio = 1.0
+frame_samples = 4
+valid_frames = 4
+tolerance = 0.0
+
+[[bed]]
+name = "feet"
+polygon = [
+    [784.0, 743.0],
+    [1214.0, 752.0],
+    [1230.0, 972.0],
+    [758.0, 960.0],
+]
+median_depth = 0.9442758560180664
+p10_depth = 0.9284316301345825
+p90_depth = 1.009527564048767
+mad_depth = 0.015844225883483887
+valid_ratio = 1.0
+frame_samples = 4
+valid_frames = 4
+tolerance = 0.0
+
+[[floor]]
+name = "head"
+polygon = [
+    [794.0, 561.0],
+    [638.0, 563.0],
+    [690.0, 412.0],
+    [822.0, 409.0],
+]
+median_depth = 1.7730629444122314
+p10_depth = 1.7694108486175537
+p90_depth = 1.9597501754760742
+mad_depth = 0.0036520957946777344
+valid_ratio = 1.0
+frame_samples = 4
+valid_frames = 4
+tolerance = 0.0
+
+[[floor]]
+name = "body"
+polygon = [
+    [625.0, 593.0],
+    [783.0, 587.0],
+    [758.0, 726.0],
+    [588.0, 723.0],
+]
+median_depth = 1.4151185750961304
+p10_depth = 1.3957971334457397
+p90_depth = 1.5299785137176514
+mad_depth = 0.009032964706420898
+valid_ratio = 1.0
+frame_samples = 4
+valid_frames = 4
+tolerance = 0.0
+
+[[floor]]
+name = "feet"
+polygon = [
+    [578.0, 750.0],
+    [768.0, 752.0],
+    [738.0, 957.0],
+    [523.0, 942.0],
+]
+median_depth = 1.1597082614898682
+p10_depth = 1.1504698991775513
+p90_depth = 1.2500522136688232
+mad_depth = 0.007965445518493652
+valid_ratio = 1.0
+frame_samples = 4
+valid_frames = 4
+tolerance = 0.0

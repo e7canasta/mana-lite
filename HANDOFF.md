@@ -40,13 +40,12 @@ Verificado en campo, no por argumento:
 | con el visor saturado | 41 s de bloqueo, 147 reconexiones | **0 y 0** |
 | latencia de inferencia | 194–217 ms | 194–217 ms (igual) |
 
-No se optimizó nada: la inferencia dejó de cobrárselo al lazo. Registro completo
-en [`docs/archive/2026-08-lazo-aislado/`](docs/archive/2026-08-lazo-aislado/README.md);
-decisiones en `docs/adrs/033-035`; cómo está construido hoy, en
+No se optimizó nada: la inferencia dejó de cobrárselo al lazo. Las decisiones
+estan en `docs/adrs/033-035`; como esta construido hoy, en
 [ARCHITECTURE.md](ARCHITECTURE.md).
 
-Antes de eso: el refactor por tiers, seis sprints (ADR-027, ADR-028), y la tabla
-de señales como contrato ([ADR-032](docs/adrs/032-scene-signals-as-contract.md)).
+El refactor por tiers esta en ADR-027/028 y la tabla de señales como contrato en
+[ADR-032](docs/adrs/032-scene-signals-as-contract.md).
 
 **Abierto:** nada de arquitectura de ejecución. Lo que queda está en §8, §9 y
 §11 — y §11 es lo único con consecuencia clínica: tres decisiones de política
@@ -57,24 +56,20 @@ salió de ahí. Está en §10, y **para operarla el documento es
 [`workshop/MANUAL.md`](workshop/MANUAL.md)** — autocontenido, pensado para
 alguien que llega hoy.
 
-### Handoff actual del scheduler cooperativo
+### Estado actual del scheduler cooperativo
 
-Sprint 1, Sprint 2 y Sprint 3 están implementados y verificados. Sprint 3
-quedó en `c902d69` con el runtime cooperativo de `InferenceRequest`: requests persistentes en
-`ControlDirective`, cola transitoria durable, prioridad, TTL, congelamiento por
-keyframe, consumo one-shot, anti-starvation y métricas de espera/expiración. La
-validación semántica face/pose queda para Sprint 4. La entrada única de la
-próxima sesión es
-[`docs/subprojects/cooperative-inference-scheduler/sprints/sprint-04-handoff.md`](docs/subprojects/cooperative-inference-scheduler/sprints/sprint-04-handoff.md).
-La corrida física de capacidad ya está medida con los perfiles CPU `s/m` en
-`192` y `320`; `s/320` queda como default y `s/192` como perfil de frecuencia.
-Los resultados están en `workshop/scenarios/11-inference-capacity/README.md`.
+El runtime cooperativo de `InferenceRequest` esta implementado: requests
+persistentes en `ControlDirective`, cola transitoria durable, prioridad, TTL,
+congelamiento por keyframe, consumo one-shot, anti-starvation y metricas de
+espera/expiracion. La validacion face/pose tambien esta implementada y cruza al
+FSM solo como `FacePoseValidation`, sin keypoints ni masks.
 
-La decisión recomendada para Sprint 4 es producir la request transitoria desde
-percepción y exponer al FSM solo `FacePoseValidation`, sin keypoints ni masks.
-No usar `Slot<ControlDirective>` para esa request transitoria: ese slot es
-latest-wins por diseño. La primera compuerta sigue siendo
-`cargo test --workspace --release`.
+La especificacion vigente es
+[`docs/subprojects/cooperative-inference-scheduler/spec.md`](docs/subprojects/cooperative-inference-scheduler/spec.md)
+y la decision de arquitectura esta en
+[`docs/adrs/036-cooperative-urgent-inference-and-semantic-validation.md`](docs/adrs/036-cooperative-urgent-inference-and-semantic-validation.md).
+La corrida fisica de capacidad esta medida con perfiles CPU `s/m` en `192` y
+`320`; los resultados viven en `workshop/scenarios/11-inference-capacity/`.
 
 ## 3. Cómo se trabaja
 
@@ -198,8 +193,8 @@ Ninguna bloquea nada. En orden de lo que más molesta al leer el repo.
 
 | Deuda | Qué es | Cómo se salda |
 |---|---|---|
-| Wiki generada desactualizada | 29 archivos contra el commit `ad24740d`. Cada uno lleva ahora una **errata propia** con sus divergencias, como capa aparte de la prosa generada | **regenerar**, no editar a mano: una regeneración borra las erratas sin residuo |
-| Dos documentos de arquitectura | `ARCHITECTURE.md` (ejecución) y `docs/ARCHITECTURE.md` (workspace por crates) | decidir si se funden |
+| Documentacion historica | wiki generada, proyectos y roadmaps ya destilados | usar `docs/README.md`, specs, ADRs y workshop |
+| Arquitectura | `ARCHITECTURE.md` es la referencia activa de ejecucion y workspace | no reintroducir una segunda arquitectura |
 | Casts numéricos sin auditar en `mana-geometry` | ~202 avisos de clippy | compuerta de no-regresión, no de cero |
 | Comparación exacta de floats | 26 avisos | ídem |
 | `SceneEvent::FsmState(String)` | debería ser `StateId` | tipado del vocabulario |

@@ -1,7 +1,7 @@
 # Especificacion: Fusion de Evidencias y Estimador de Partes Corporales
 
 **Identificador:** SUBSPEC-002
-**Estado:** contrato inicial ampliado con calibracion relativa a superficies
+**Estado:** contrato implementado para evidencia diagnostica; temporalidad completa y politica clinica fuera de alcance
 **Version:** 0.2
 
 ## 1. Alcance

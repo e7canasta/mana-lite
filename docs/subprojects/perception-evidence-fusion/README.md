@@ -1,6 +1,6 @@
 # Subproyecto: Fusion de Evidencias y Estimador de Partes Corporales
 
-**Estado:** Sprint 3, con profundidad por body part en modo diagnostico opt-in
+**Estado:** capa diagnostica implementada; temporalidad y politica clinica siguen fuera
 **Alcance:** validacion cruzada entre modelos y estimacion geometrica de partes
 **Dependencias:** cascada cooperativa, consolidacion y tracking existentes
 
@@ -52,27 +52,19 @@ temporal.
 
 - [Memoria tecnica](technical-memory.md): contexto, limites y decisiones de
   diseño.
-- [Diseño de integración](implementation-design.md): flujo real, símbolos y
-  plan de cambios por etapa.
 - [Especificacion](spec.md): contratos, entradas, salidas y criterios
   verificables.
-- [Roadmap](roadmap.md): sprints y puertas de decision.
 - [ADR-001](adrs/001-separate-validation-and-estimator.md): separar validacion y
   estimacion.
 - [ADR-002](adrs/002-confidence-weighted-evidence.md): fusion ponderada y no
   binaria.
 - [ADR-003](adrs/003-body-parts-derived-geometry.md): geometria derivada por
   partes.
-- [Sprint 0](sprints/sprint-00-charter.md): contrato y limites.
-- [Sprint 1](sprints/sprint-01-cross-model-validation.md): validacion cruzada.
-- [Sprint 2](sprints/sprint-02-body-parts-estimator.md): estimador de partes.
-- [Sprint 3](sprints/sprint-03-temporal-evidence-fusion.md): ventana temporal completa.
-- [Sprint 3 depth](sprints/sprint-03-depth-body-parts.md): profundidad por parte
-  y crop opcional sobre bbox de persona.
-- [Sprint 4 surface depth](sprints/sprint-04-surface-relative-depth.md):
-  calibracion por zonas de cama/piso y evidencia relativa.
 - [Engine de postura por firmas](../posture-analysis-engine/README.md):
   subproyecto complementario para consenso offline con evidencia parcial.
+
+Los sprints y el roadmap fueron destilados en esta memoria, la especificacion y
+los ADRs. No se mantienen listas de tareas historicas como contrato tecnico.
 
 ## Relacion con la documentacion existente
 

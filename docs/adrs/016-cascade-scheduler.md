@@ -3,11 +3,12 @@
 **Status:** Accepted for scheduler semantics, deployment selection in [ADR-026](026-inference-blueprints.md)
 **Date:** 2026-08-04
 
-> Estado de implementación: las dependencias, filtros sobre tracks, scope
-> semántico y el gating temporal cooperativo básico están implementados. La
-> configuración temporal usa `interval_min_ms` en la regla del blueprint. Las
-> urgencias, el catch-up deliberado y la ejecución same-frame dinámica siguen
-> pendientes. Ver `docs/subprojects/cooperative-inference-scheduler/`.
+> Estado de implementacion: las dependencias, filtros sobre tracks, scope
+> semantico, gating temporal cooperativo y urgencias estan implementados. La
+> configuracion temporal usa `interval_min_ms` en la regla del blueprint. Las
+> urgencias no hacen catch-up ni ejecucion same-frame dinamica. La validacion
+> semantica face/pose cruza a control por un contrato estrecho; ver ADR-036 y la
+> spec del scheduler.
 
 ## Context
 

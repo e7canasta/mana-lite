@@ -167,7 +167,8 @@ la línea `dline:` y en el JSONL. Ver §5.1.
 
 ## 3. Los puertos entre subsistemas
 
-`docs/wiki/1-overview.md` declara cuatro subsistemas: Ingesta, Inferencia,
+La documentacion activa en `docs/README.md` y `docs/subprojects/` declara los
+subsistemas de Ingesta, Inferencia,
 Control y Observabilidad. La calidad de las fronteras no es pareja.
 
 | Frontera | Puerto | Estado |
@@ -488,4 +489,4 @@ altura lo que hay que validar es lo que se despliega. Quedan sin cobertura
 Regla de invocación: **siempre `cargo run`, nunca una ruta fija al binario.**
 `target-dir` puede estar redirigido por configuración global de cargo, en cuyo
 caso un `./target/` viejo en el repo sigue siendo ejecutable y no se actualiza
-jamás. Ver `docs/wiki/1.1-getting-started.md` → *Build and Run*.
+jamas. Ver `workshop/ONBOARDING.md` y `workshop/MANUAL.md` para *Build and Run*.

@@ -71,7 +71,7 @@ a la misma cadencia de keyframe que la cámara. El 06 lo tiene como argumento
 Siempre desde la raíz del repositorio, y siempre a través de `cargo run` — nunca
 invocando un binario por ruta fija, porque `target-dir` está redirigido y
 `./target/` puede contener un artefacto huérfano (ver
-`docs/wiki/1.1-getting-started.md` → Build and Run):
+`workshop/ONBOARDING.md` y `workshop/MANUAL.md` para Build and Run):
 
 ```sh
 cargo run --release -- --config workshop/scenarios/01-ingest-only/mana.toml

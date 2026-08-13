@@ -642,7 +642,6 @@ Después de cerrar, la lectura ordenada para entender *por qué* está hecho as�
 3. `ARCHITECTURE.md` y `HANDOFF.md` (donde está la deuda abierta: §11 tiene las
    únicas cosas con consecuencia clínica pendientes).
 
-**Advertencia de lectura:** `docs/wiki/` describe el super loop viejo y tipos
-que ya no existen — se regeneran, no se editan. `docs/onboarding.md` y
-`docs/operations.md` son anteriores al refactor del lazo aislado y describen un
-modelo de ejecución que ya no es el que corre. No arranques por ahí.
+La documentacion historica ya no forma parte del arbol activo. Para contratos y
+decisiones usa `docs/README.md`, `docs/adrs/`, `docs/specs/` y
+`docs/subprojects/`. No mezclar notas archivadas con instrucciones operativas.

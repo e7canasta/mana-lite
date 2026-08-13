@@ -1,6 +1,6 @@
 # ADR-PA-004: Firmas Blandas y Sin Autoaprendizaje
 
-**Status:** Accepted for construction
+**Status:** Accepted — implementado en el engine offline v0.2
 **Date:** 2026-08-13
 
 ## Contexto

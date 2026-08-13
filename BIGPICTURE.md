@@ -4,7 +4,8 @@ Para quien llega hoy. Qué hace el sistema, por qué tiene la forma que tiene, y
 qué tenés que entender antes de tocar nada.
 
 Documento conceptual. El detalle de implementación está en
-[ARCHITECTURE.md](ARCHITECTURE.md); el detalle por subsistema, en `docs/wiki/`.
+[ARCHITECTURE.md](ARCHITECTURE.md); el detalle por subsistema, en
+`docs/subprojects/`, `docs/specs/` y `docs/adrs/`.
 
 ---
 
@@ -167,4 +168,4 @@ permitirse mentiras sobre su propia configuración.
 1. [ARCHITECTURE.md](ARCHITECTURE.md) — hilos, relojes, puertos e invariantes.
    Léelo antes de tocar el loop principal.
 2. `workshop/README.md` — cómo se prueba una capa por vez, y por qué.
-3. `docs/wiki/` — referencia por subsistema.
+3. `docs/subprojects/`, `docs/specs/` y `docs/adrs/` — contratos y decisiones.

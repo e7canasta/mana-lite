@@ -63,6 +63,10 @@ path = "src/bin/deep-calib-parts.rs"
 name = "deep-calib-radio"
 path = "src/bin/deep-calib-radio.rs"
 
+[[bin]]
+name = "posture-analysis"
+path = "src/bin/posture-analysis.rs"
+
 [dependencies]
 mana-media = { path = "std/mana-media", default-features = false }
 mana-geometry = { path = "std/mana-geometry", features = ["polygonize"] }

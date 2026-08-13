@@ -476,7 +476,7 @@ mod tests {
                 .crop
                 .as_ref()
                 .and_then(|crop| crop.region),
-            Some([560, 140, 1240, 820])
+            Some([452, 140, 1300, 1029])
         );
         assert_eq!(
             model.models["depth-person-s-320"]

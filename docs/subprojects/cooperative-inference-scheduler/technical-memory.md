@@ -1,7 +1,7 @@
 # Memoria tecnica: Scheduler Cooperativo de Inferencia
 
-**Estado:** Sprint 3 implementado; Sprint 4 listo para validacion cruzada
-face/pose; corrida de hardware pendiente
+**Estado:** scheduler cooperativo y validacion face/pose implementados; corrida
+de hardware y politica clinica pendientes
 **Ultima actualizacion:** 2026-08-12
 
 ## 1. Problema
@@ -94,7 +94,7 @@ a `0.5 Hz` porque su intervalo lo pide. Hay atraso cuando estaba debido y no
 puede ejecutarse por capacidad, o cuando la evidencia y los slots muestran que
 percepcion no mantiene el ritmo de entrada.
 
-Sprint 2 conserva esa distincion en las metricas:
+La instrumentacion de capacidad conserva esa distincion en las metricas:
 
 - `not_due`: el intervalo aun no vencio;
 - `due_but_gated`: estaba debido, pero el estado no lo solicito;
@@ -105,7 +105,7 @@ Sprint 2 conserva esa distincion en las metricas:
 Los gaps se agregan por ventana y se miden antes del backend, por lo que un
 fallo de inferencia no desaparece de la medicion de capacidad.
 
-## 6. Urgencias futuras
+## 6. Urgencias cooperativas
 
 Una urgencia no es una interrupcion del sistema operativo. Es una prioridad
 cooperativa que salta el intervalo normal una vez:
@@ -131,7 +131,7 @@ elimina y se cuenta una sola vez.
 ## 7. Validacion cruzada
 
 La salida de un modelo no debe invocar directamente a otro modelo ni introducir
-tipos de percepcion en `mana-control`. El contrato implementado en Sprint 4 es:
+tipos de percepcion en `mana-control`. El contrato implementado es:
 
 ```text
 face -> senal de incertidumbre
@@ -149,8 +149,8 @@ semantico; `AgedEvidence<SceneSample>` ya aporta timestamp y
 request transitoria desde percepcion, conserva el `CascadeTarget` y valida en el
 siguiente keyframe. El mapa de joints usado es COCO `[nose, eyes, ears]`,
 verificado contra la forma `[1, 300, 57]` del ONNX real. El same-frame dinamico
-queda para Sprint 5 y solo si una corrida demuestra que la latencia adicional es
-inaceptable.
+queda fuera y solo se reconsidera si una corrida demuestra que la latencia
+adicional es inaceptable.
 
 ## 8. Por que no workers ahora
 
@@ -173,12 +173,19 @@ modelo largo retrasa sistematicamente la publicacion de modelos livianos.
 - Una urgencia sin limite puede matar la politica normal por starvation.
 - Una dependencia circular de cascade puede producir una ejecucion imposible.
 
-## 10. Decisiones pendientes
+## 10. Estado destilado y limites
 
-- Si el campo de intervalo se llama `interval_min_ms` o `period_ms` en el
-  contrato publico. Esta memoria usa `interval_min_ms` porque expresa mejor un
-  limite maximo de frecuencia.
-- La calibracion clinica final de los thresholds de geometria sobre una fuente
-  RTSP representativa.
-- La transicion concreta del FSM de produccion que exigira pose validada; el
-  motor generico y el fixture ya estan cubiertos.
+La politica vigente queda resumida asi:
+
+- `interval_min_ms` pertenece al blueprint y se mide entre inicios reales;
+- latest-wins descarta muestras viejas y no hace catch-up;
+- una urgencia cooperativa salta solo el intervalo, no los gates ni el orden
+  topologico;
+- las requests tienen prioridad, TTL, consumo one-shot y limites anti-starvation;
+- face/pose cruza a control solo como `FacePoseValidation { valid, quality,
+  frame_number }`, nunca con keypoints o masks;
+- el control mantiene su cadencia y no espera a inferencia.
+
+Quedan como validacion operativa, no como backlog de sprint, la corrida sobre
+hardware representativo, el tuning de intervalos y la politica clinica concreta
+que consumira pose validada.

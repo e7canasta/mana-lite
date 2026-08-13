@@ -1,8 +1,8 @@
 # Memoria tecnica: Fusion de Evidencias y Estimador de Partes Corporales
 
-**Estado:** Sprint 3 implementado como evidencia diagnostica; Sprint 4 define la
-calibracion relativa a superficies y la postura sigue fuera de la politica
-clinica
+**Estado:** validacion cruzada, body parts, depth diagnostico y calibracion de
+superficies implementados; temporalidad completa y postura clinica fuera de
+alcance
 **Ultima actualizacion:** 2026-08-13
 
 ## 1. Problema
@@ -56,7 +56,7 @@ El blueprint por defecto `detect-room-face` no habilita pose ni segmentacion. La
 corridas del MVP deben seleccionar un blueprint con las cuatro fuentes, como
 `config/blueprints/detect-face-pose-seg/blueprint.toml`.
 
-La implementacion inicial de Sprint 1 vive en
+La implementacion inicial de validacion vive en
 `src/app/cross_model_validation.rs`. Se invoca desde `run_inference` con la lista
 completa de `PendingModelOutput` y publica un evento debug compacto. Solo acepta
 targets con `CascadeTarget.id`; no conserva evidencia entre keyframes y reporta
@@ -209,7 +209,7 @@ futuro sera propiedad de `PerceptionStage`, sin `Mutex` ni ownership en
   existe aun frescura por fuente ni historial de keypoints/partes.
 - La validacion face/pose actual tiene `valid: bool` para el FSM aunque su
   `quality` sea continua; la validacion generica puede ser gradual sin cambiar
-  ese contrato especializado en el primer sprint.
+  ese contrato especializado en el primer corte.
 
 ## 9. Profundidad relativa a superficies
 
@@ -262,3 +262,29 @@ su digest, el ROI, la resolucion o la camara.
   `depth-rules.toml`.
 - No inferir postura solo desde la coordenada vertical de la imagen o el signo
   supuesto del mapa depth.
+
+## 12. Estado destilado
+
+La implementacion que debe considerarse vigente es:
+
+```text
+PendingModelOutput
+    -> CrossModelValidator
+    -> BodyPartsEstimator
+    -> depth por huella corporal
+    -> SurfaceCalibration / deep-calib
+    -> diagnostico JSONL/Rerun
+```
+
+La validacion cruzada y el estimador consumen evidencia del mismo keyframe y no
+ejecutan modelos entre si. El estimador puede producir partes parciales y
+calidad por parte; no modifica la mascara cruda ni publica geometria interna a
+`mana-control`.
+
+`deep-calib` es un bin auxiliar aislado. La calibracion es especifica de modelo,
+ROI, resolucion y camara. `depth-person` solo aporta relaciones internas del
+actor; la comparacion contra cama y piso usa `depth-scene` y zonas globales.
+
+La persistencia temporal acotada de geometria existe como modo opt-in, pero no
+hay todavia un `EvidenceStore` completo por fuente ni una politica temporal
+clinica. Esas son limites tecnicos, no tareas de un sprint activo.

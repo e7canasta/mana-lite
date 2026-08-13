@@ -159,18 +159,26 @@ def build_signature(radio_path: Path, parts_path: Path) -> dict:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model", default="l-640")
-    parser.add_argument("--radio-dir", type=Path, default=Path("demo-deep-calib-radio"))
-    parser.add_argument("--parts-dir", type=Path, default=Path("demo-deep-calib-parts/results"))
+    parser.add_argument(
+        "--radio-dir",
+        type=Path,
+        default=Path("tests/fixtures/posture-analysis/l-640/radio"),
+    )
+    parser.add_argument(
+        "--parts-dir",
+        type=Path,
+        default=Path("tests/fixtures/posture-analysis/l-640/parts"),
+    )
     parser.add_argument("--output", type=Path)
     return parser.parse_args()
 
 
 def main() -> int:
     args = parse_args()
-    radio_dir = args.radio_dir / args.model
+    radio_dir = args.radio_dir
     rows = []
     for radio_path in sorted(radio_dir.glob("*.json")):
-        parts_path = args.parts_dir / f"{radio_path.stem}.{args.model}.json"
+        parts_path = args.parts_dir / f"{radio_path.stem}.json"
         if not parts_path.is_file():
             raise SystemExit(f"missing body-parts report: {parts_path}")
         rows.append(build_signature(radio_path, parts_path))

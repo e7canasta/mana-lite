@@ -19,7 +19,7 @@ tests**: se puede verificar qué se emite sin levantar un visor.
 
 ## Contexto
 
-`docs/wiki/1-overview.md` declara cuatro subsistemas: Ingesta, Inferencia,
+`ARCHITECTURE.md` declara las etapas de Ingesta, Inferencia,
 Control y Observabilidad. Los tres primeros hablan por puertos declarados
 —- `SceneSample`, `ProcessImage`, `SceneEvent`. **Observabilidad es el único sin
 puerto**, y ni siquiera aparece en el diagrama de flujo de la wiki.
@@ -27,7 +27,7 @@ puerto**, y ni siquiera aparece en el diagrama de flujo de la wiki.
 Existe la intención: `PipelineObserver` (`src/app/observer.rs:10`) es la
 abstracción correcta —- define `on_occupancy`, `emit`, `flush`, y hay un
 `NullObserver` para tests. La wiki la documenta como el mecanismo de fan-out
-(`docs/wiki/6.2`).
+(`workshop/MANUAL.md`).
 
 Pero el código la honra en **un solo método**. Los otros trece sitios de llamada
 entran por `FanoutObserver.viz`, que es un campo `pub`. Y `viz_mut()` devuelve
@@ -126,4 +126,4 @@ cuantifica es la variante `a-raw-native` del escenario 02.
 - [ADR-033](033-isolated-control-loop.md) — el lazo de control aislado
 - [ADR-034](034-slots-and-queues.md) — muestras en slots
 - `ARCHITECTURE.md` §3.1 — la costura
-- `docs/wiki/6.2-pipeline-state-visualization.md` — el fan-out documentado
+- `workshop/MANUAL.md` — el fan-out documentado
