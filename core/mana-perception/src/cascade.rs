@@ -1225,13 +1225,7 @@ mod tests {
         cascade.mark_started("pose-standard", now);
         cascade
             .enqueue_transient(
-                urgent_request(
-                    "pose-standard",
-                    "synthetic",
-                    1,
-                    now,
-                    Duration::from_secs(1),
-                ),
+                urgent_request("pose-standard", "synthetic", 1, now, Duration::from_secs(1)),
                 now,
             )
             .expect("request is valid");

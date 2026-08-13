@@ -137,7 +137,11 @@ mod tests {
         slot.put(2);
         slot.put(3);
 
-        assert_eq!(slot.take(), Some(3), "el consumidor ve lo último, no lo viejo");
+        assert_eq!(
+            slot.take(),
+            Some(3),
+            "el consumidor ve lo último, no lo viejo"
+        );
         assert_eq!(slot.drain_overwritten(), 2);
         assert_eq!(slot.drain_overwritten(), 0, "el contador se drena");
         assert_eq!(slot.take(), None);
@@ -201,7 +205,9 @@ mod tests {
                 }
             })
         };
-        producer.join().expect("el productor termina sin consumidor");
+        producer
+            .join()
+            .expect("el productor termina sin consumidor");
         assert_eq!(slot.take(), Some(9_999));
         assert_eq!(slot.drain_overwritten(), 9_999);
     }

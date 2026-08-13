@@ -35,6 +35,7 @@ use crate::viz::VizBridge;
 use mana_media::RawFrameV1;
 
 use super::FrameSize;
+use super::body_parts::BodyPartsEstimate;
 
 /// Un dibujo diferido. El `FnOnce` captura sus argumentos ya en propiedad.
 type VizCmd = Box<dyn FnOnce(&mut VizBridge) + Send>;
@@ -140,6 +141,11 @@ impl VizHandle {
     pub fn log_model_masks(&mut self, model: &str, detections: &[Detection], frame: FrameSize) {
         let (model, detections) = (model.to_owned(), detections.to_vec());
         self.push(move |v| v.log_model_masks(&model, &detections, frame));
+    }
+
+    pub(crate) fn log_body_parts(&mut self, estimates: &[BodyPartsEstimate]) {
+        let estimates = estimates.to_vec();
+        self.push(move |v| v.log_body_parts(&estimates));
     }
 
     pub fn log_depth_context_boxes(

@@ -232,8 +232,24 @@ implementación.
 
 ## 7. Estado temporal
 
-El runtime actual no tiene un store de evidencia por fuente. El primer store debe
-ser propiedad de `PerceptionStage`:
+El modo `validator` sigue siendo stateless. El modo opt-in `advanced` tiene una
+memoria acotada de geometría por `track_id`, propiedad de `PerceptionStage`:
+
+```text
+BodyPartsTemporalState:
+  bounded map TrackId -> { bbox, last_seen_frame, part histories }
+```
+
+Cada parte histórica conserva sólo geometría, bbox de referencia, calidad, modelos
+de origen y frame observado. En cada keyframe el modo avanzado:
+
+- transforma la geometría histórica al bbox actual;
+- la suaviza cuando la geometría actual es completa;
+- completa una parte ausente o parcial sólo si la máscara actual la contiene;
+- marca la parte recuperada como `stale` y aplica decaimiento de calidad;
+- no usa memoria para actores `FrameLocal`.
+
+La ventana completa de evidencia por fuente sigue siendo un trabajo posterior:
 
 ```text
 EvidenceStore:
@@ -249,8 +265,8 @@ Propiedades:
 - no conserva RGB ni `InferenceResult` completo;
 - conserva solo keypoints/máscara necesarios para validación y partes.
 
-El tracker actual solo suaviza bbox. El historial de partes requiere un
-`PartHistory` separado en el Sprint 3.
+El tracker actual sólo suaviza bbox. La memoria avanzada de partes es
+deliberadamente independiente y no modifica `mana-control`.
 
 La actualización debe ser transaccional respecto al ciclo:
 
@@ -289,6 +305,7 @@ source_quality_weight = 0.40
 agreement_quality_weight = 0.60
 
 [perception.body_parts]
+mode = "validator" # `advanced` habilita completado temporal respaldado por máscara
 frame_local_match_iou = 0.50
 face_frame_local_coverage = 0.50
 joint_min_confidence = 0.25
@@ -301,11 +318,15 @@ mask_quality_weight = 0.25
 cross_model_quality_weight = 0.20
 minimum_geometry_extent_px = 1.0
 geometry_epsilon = 0.00001
+advanced_smoothing_alpha = 0.65
+advanced_mask_support_threshold = 0.60
+advanced_max_gap_frames = 3
+advanced_temporal_quality_decay = 0.85
 ```
 
 La validación de arranque rechaza valores no finitos, pesos sin suma positiva o
-ratios fuera de rango. TTL, frescura temporal y decaimiento siguen reservados al
-EvidenceStore del Sprint 3.
+ratios fuera de rango. La memoria avanzada tiene un gap máximo acotado; el
+EvidenceStore completo por fuente sigue reservado a una fase posterior.
 
 ## 9. Plan de cambios por fase
 
@@ -345,8 +366,10 @@ JSONL de diagnóstico y no modifica el sample clínico.
 
 ### Fase 3: temporalidad
 
-Agregar `EvidenceStore` y `PartHistory` a `PerceptionStage`. Introducir stale,
-decaimiento y expiración con tests deterministas.
+El primer corte avanzado ya agrega `BodyPartsTemporalState` a `PerceptionStage`,
+con completado respaldado por máscara, `stale`, decaimiento, expiración y tests
+deterministas. La ventana de evidencia por fuente y la reconstrucción anatómica
+desde máscara sin anclas siguen fuera de este corte.
 
 ### Fase 4: resumen clínico opcional
 

@@ -29,11 +29,11 @@ El validador puede alimentar pesos del estimador, pero el estimador no cambia el
 resultado de validacion retroactivamente. Ambos usan el mismo contrato de
 evidencia y `frame_number`.
 
-El store temporal no existe aun en el runtime. Cuando se implemente, sera
-propiedad exclusiva de `PerceptionStage` en `src/app/perception.rs`, sin
-`Mutex` ni ownership en `mana-control`. En el primer corte ambos componentes
-pueden operar sobre la evidencia del keyframe actual y dejar la memoria
-temporal para el sprint especifico.
+El modo `validator` no usa memoria temporal. El modo opt-in `advanced` tiene una
+memoria acotada de geometría por `track_id`, propiedad exclusiva de
+`PerceptionStage` en `src/app/perception.rs`, sin `Mutex` ni ownership en
+`mana-control`. La ventana completa de evidencia por fuente queda para una fase
+posterior.
 
 ## Consecuencias
 

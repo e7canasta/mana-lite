@@ -12,6 +12,7 @@ use std::time::{Duration, Instant};
 
 use super::body_parts::{
     ActorRef, BodyGeometry, BodyPartsEstimate, BodyPartsEstimator, PendingBodyPartsEvidence,
+    attach_depth,
 };
 use super::cross_model_validation::{
     CrossModelValidation, EvidenceKind, PendingEvidence, validate_pending,
@@ -103,7 +104,7 @@ impl PerceptionStage {
                 validation.reasons.clone(),
             ));
         }
-        let body_parts = self.estimate_body_parts_from_pending(
+        let mut body_parts = self.estimate_body_parts_from_pending(
             &pending,
             &cross_model_validations,
             cycle.frame_number,
@@ -111,6 +112,9 @@ impl PerceptionStage {
             fb.h,
             &config.perception.body_parts,
         );
+        self.attach_body_parts_depth(&mut body_parts, &pending, fb.w, fb.h);
+        #[cfg(feature = "rerun")]
+        self.observer.viz.log_body_parts(&body_parts);
         for estimate in &body_parts {
             self.observer.emit(body_parts_event(estimate));
         }
@@ -382,7 +386,7 @@ impl PerceptionStage {
     }
 
     fn estimate_body_parts_from_pending(
-        &self,
+        &mut self,
         pending: &[PendingModelOutput],
         validations: &[CrossModelValidation],
         frame_number: u64,
@@ -412,13 +416,84 @@ impl PerceptionStage {
                 })
             })
             .collect::<Vec<_>>();
-        BodyPartsEstimator::new(config).estimate(
-            &inputs,
-            validations,
-            frame_number,
-            frame_width,
-            frame_height,
-        )
+        let estimator = BodyPartsEstimator::new(config);
+        if matches!(config.mode, crate::config::BodyPartsMode::Advanced) {
+            estimator.estimate_advanced(
+                &inputs,
+                validations,
+                frame_number,
+                frame_width,
+                frame_height,
+                &mut self.body_parts_temporal,
+            )
+        } else {
+            estimator.estimate(
+                &inputs,
+                validations,
+                frame_number,
+                frame_width,
+                frame_height,
+            )
+        }
+    }
+
+    fn attach_body_parts_depth(
+        &self,
+        estimates: &mut [BodyPartsEstimate],
+        pending: &[PendingModelOutput],
+        frame_width: u32,
+        frame_height: u32,
+    ) {
+        for estimate in estimates {
+            let Some(depth_output) = self.depth_output_for_actor(&estimate.actor_ref, pending)
+            else {
+                continue;
+            };
+            let Some(depth) = depth_output.output.depth.as_ref() else {
+                continue;
+            };
+            let Some(roi) = depth_output
+                .crop_rect
+                .or(self.depth_context_roi)
+                .map(CropRect::to_array)
+            else {
+                continue;
+            };
+            attach_depth(
+                estimate,
+                &depth_output.model_key,
+                depth,
+                roi,
+                frame_width,
+                frame_height,
+            );
+        }
+    }
+
+    fn depth_output_for_actor<'a>(
+        &self,
+        actor_ref: &ActorRef,
+        pending: &'a [PendingModelOutput],
+    ) -> Option<&'a PendingModelOutput> {
+        let matches_actor = |item: &&PendingModelOutput| {
+            self.models.is_depth(&item.model_key)
+                && item.output.depth.is_some()
+                && item.crop_rect.is_some()
+                && match actor_ref {
+                    ActorRef::Track(actor_id) => item
+                        .target
+                        .is_some_and(|target| target.id == Some(*actor_id)),
+                    ActorRef::FrameLocal { .. } => item.target.is_none(),
+                }
+        };
+        pending.iter().filter(matches_actor).next().or_else(|| {
+            pending.iter().find(|item| {
+                self.models.is_depth(&item.model_key)
+                    && item.output.depth.is_some()
+                    && item.crop_rect.is_some()
+                    && item.target.is_none()
+            })
+        })
     }
 
     /// Stage: project consolidated sample into the control process image.
@@ -690,6 +765,24 @@ fn body_parts_event(estimate: &BodyPartsEstimate) -> Event {
                 source_models: part.source_models.clone(),
                 quality: part.quality,
                 mask_coverage: part.mask_coverage,
+                depth: part
+                    .depth
+                    .as_ref()
+                    .map(|depth| crate::logger::BodyPartDepthRecord {
+                        source_model: depth.source_model.clone(),
+                        roi: depth.roi,
+                        map_width: depth.map_width,
+                        map_height: depth.map_height,
+                        sampled_pixels: depth.sampled_pixels,
+                        valid_pixels: depth.valid_pixels,
+                        valid_ratio: depth.valid_ratio,
+                        min_depth_m: depth.min_depth_m,
+                        median_depth_m: depth.median_depth_m,
+                        p10_depth_m: depth.p10_depth_m,
+                        p90_depth_m: depth.p90_depth_m,
+                        max_depth_m: depth.max_depth_m,
+                        relative_to_torso_m: depth.relative_to_torso_m,
+                    }),
                 source_frame_numbers: part.source_frame_numbers.clone(),
                 stale: part.stale,
             })

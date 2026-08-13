@@ -11,7 +11,7 @@ pub mod config;
 pub mod depth;
 pub use mana_perception::depth_map;
 pub use mana_perception::detection;
-pub use mana_perception::{RegionStats, region_stats};
+pub use mana_perception::{PolygonStats, RegionStats, polygon_stats, region_stats};
 pub mod domain;
 pub mod error;
 pub mod face_dwell;

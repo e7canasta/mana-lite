@@ -3,8 +3,9 @@ mod serialize;
 
 #[allow(unused_imports)]
 pub use event::{
-    BodyGeometryRecord, BodyPartRecord, DetRecord, Event, FaceDwellTimerRecord, JsonlLevel,
-    MaskRecord, scene_events_to_log, track_event_to_log, zone_event_to_log,
+    BodyGeometryRecord, BodyPartDepthRecord, BodyPartRecord, DetRecord, Event,
+    FaceDwellTimerRecord, JsonlLevel, MaskRecord, scene_events_to_log, track_event_to_log,
+    zone_event_to_log,
 };
 use serialize::write_event;
 

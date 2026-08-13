@@ -3,10 +3,10 @@
 use std::collections::HashSet;
 
 use crate::config::{
-    apply_model_overlay, load_config, load_depth_rules, load_fsm_catalog, load_metrics_log,
-    load_model_catalog, load_rerun_blueprint, load_viz_data, load_zone_catalog,
-    validate_model_catalog, AppConfig, BlueprintConfig, FsmCatalog, MetricsLogConfig, ModelCatalog,
-    RerunBlueprintConfig, VizDataConfig, ZoneCatalog,
+    AppConfig, BlueprintConfig, FsmCatalog, MetricsLogConfig, ModelCatalog, RerunBlueprintConfig,
+    VizDataConfig, ZoneCatalog, apply_model_overlay, load_config, load_depth_rules,
+    load_fsm_catalog, load_metrics_log, load_model_catalog, load_rerun_blueprint, load_viz_data,
+    load_zone_catalog, validate_model_catalog,
 };
 use crate::error::{ConfigError, ManaError, Result};
 

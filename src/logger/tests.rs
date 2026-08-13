@@ -747,6 +747,21 @@ fn body_parts_event_serializes_geometry_provenance_and_freshness() {
             source_models: vec!["pose-standard".into(), "seg-standard".into()],
             quality: 0.68,
             mask_coverage: Some(0.9),
+            depth: Some(BodyPartDepthRecord {
+                source_model: "depth-person-s-320".into(),
+                roi: [100, 100, 500, 500],
+                map_width: 320,
+                map_height: 320,
+                sampled_pixels: 36,
+                valid_pixels: 30,
+                valid_ratio: Some(0.8333),
+                min_depth_m: Some(1.2),
+                median_depth_m: Some(1.8),
+                p10_depth_m: Some(1.3),
+                p90_depth_m: Some(2.2),
+                max_depth_m: Some(2.4),
+                relative_to_torso_m: Some(0.25),
+            }),
             source_frame_numbers: vec![12],
             stale: false,
         }],
@@ -758,6 +773,9 @@ fn body_parts_event_serializes_geometry_provenance_and_freshness() {
     assert!(out.contains("\"kind\":\"polyline\""));
     assert!(out.contains("\"support\":[\"pose\",\"segment\"]"));
     assert!(out.contains("\"source_frame_numbers\":[12]"));
+    assert!(out.contains("\"source_model\":\"depth-person-s-320\""));
+    assert!(out.contains("\"median_depth_m\":1.8"));
+    assert!(out.contains("\"relative_to_torso_m\":0.25"));
     assert!(out.contains("\"stale\":false"));
 }
 

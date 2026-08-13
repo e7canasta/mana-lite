@@ -46,11 +46,13 @@ geometría derivada no entra todavía al contrato clínico.
 - máscara: cobertura local y calidad, sin mutar `DetectionMask`;
 - `Track(id)` para targets confirmados y `FrameLocal` sin historial cuando falta
   identidad;
-- `stale=false` en este sprint; el envejecimiento pertenece al Sprint 3.
+- `stale=false` en modo `validator`; el modo `advanced` puede marcar geometría
+  recuperada desde el historial del track como `stale=true`.
 
 Los umbrales, radios y pesos no están en el mecanismo Rust: se cargan desde
 `[perception.body_parts]` en `config/mana.toml`. La validación cruzada usa la
-sección hermana `[perception.validation]`.
+sección hermana `[perception.validation]`. El modo `advanced` es opt-in y exige
+respaldo de la máscara para reutilizar geometría temporal.
 
 ## No hacer
 

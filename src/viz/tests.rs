@@ -1,4 +1,7 @@
 use super::*;
+use crate::app::body_parts::{
+    ActorRef, BodyGeometry, BodyPartEstimate, BodyPartKind, BodyPartsEstimate,
+};
 use crate::occupancy::{RoomCardinality, SecondPersonState};
 use std::time::Instant;
 
@@ -74,6 +77,91 @@ fn fixed_rois_use_stable_static_entities() {
         paths
             .iter()
             .any(|path| { path == "/world/camera/rois/fixed/face-dwell/roi" })
+    );
+}
+
+#[test]
+fn body_parts_are_logged_under_camera_body_parts() {
+    let (rec, storage) = rerun::RecordingStreamBuilder::new("mana-viz-body-parts-test")
+        .batcher_config(rerun::log::ChunkBatcherConfig::NEVER)
+        .memory()
+        .expect("memory recording");
+    let bridge = VizBridge {
+        inner: Inner::Connected {
+            rec,
+            last_flush_warn: Instant::now(),
+            flush_timeouts: 0,
+        },
+        addr: String::new(),
+        retry_backoff_ms: INITIAL_BACKOFF_MS,
+        stream_proven: true,
+        image_format: VizImageFormat::Raw,
+        toggles: VizSendToggles::default(),
+        fixed_rois: Vec::new(),
+        roles: HashMap::new(),
+        face_models: HashSet::new(),
+        last_infer_at: HashMap::new(),
+        last_occupancy_state: None,
+        last_second_person_state: None,
+        last_signal_state: None,
+        last_face_state: None,
+    };
+    let estimate = BodyPartsEstimate {
+        actor_ref: ActorRef::Track(5),
+        frame_number: 12,
+        parts: vec![
+            BodyPartEstimate {
+                part: BodyPartKind::Head,
+                geometry: BodyGeometry::Bbox([10.0, 20.0, 30.0, 40.0]),
+                support: Vec::new(),
+                source_models: Vec::new(),
+                quality: 1.0,
+                mask_coverage: None,
+                depth: None,
+                source_frame_numbers: vec![12],
+                stale: false,
+            },
+            BodyPartEstimate {
+                part: BodyPartKind::LeftArm,
+                geometry: BodyGeometry::Polyline {
+                    points: vec![[10.0, 40.0], [5.0, 60.0], [1.0, 80.0]],
+                    radius: 3.0,
+                },
+                support: Vec::new(),
+                source_models: Vec::new(),
+                quality: 1.0,
+                mask_coverage: None,
+                depth: None,
+                source_frame_numbers: vec![12],
+                stale: false,
+            },
+        ],
+        overall_quality: 1.0,
+        mask_polygons: None,
+    };
+
+    bridge.log_body_parts(std::slice::from_ref(&estimate));
+    let paths = storage
+        .take()
+        .into_iter()
+        .filter_map(|msg| match msg {
+            rerun::log::LogMsg::ArrowMsg(_, msg) => {
+                Some(rerun::log::Chunk::from_arrow_msg(&msg).expect("valid chunk"))
+            }
+            _ => None,
+        })
+        .map(|chunk| chunk.entity_path().to_string())
+        .collect::<Vec<_>>();
+
+    assert!(
+        paths
+            .iter()
+            .any(|path| { path == "/world/camera/body_parts/track/5/head" })
+    );
+    assert!(
+        paths
+            .iter()
+            .any(|path| { path == "/world/camera/body_parts/track/5/left_arm" })
     );
 }
 

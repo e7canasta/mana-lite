@@ -13,10 +13,11 @@ mod zones;
 
 pub use crate::fsm::{FsmGuard, SignalLiteral};
 pub use app::{
-    AppConfig, BodyPartsConfig, CrossModelValidationConfig, DetectionConfig, FacePoseConfig,
-    HealthConfig, InferenceConfig, IngestConfig, MANA_TOML_SCHEMA_VERSION, OccupancyPolicy,
-    OutputConfig, PerceptionPolicyConfig, PipelineConfig, PresenceConfig, PresencePoiPolicy,
-    Rotate, ScanConfigSection, SourceConfig, TrackingConfig, TrackingNoiseConfig, VizConfig,
+    AppConfig, BodyPartsConfig, BodyPartsMode, CrossModelValidationConfig, DetectionConfig,
+    FacePoseConfig, HealthConfig, InferenceConfig, IngestConfig, MANA_TOML_SCHEMA_VERSION,
+    OccupancyPolicy, OutputConfig, PerceptionPolicyConfig, PipelineConfig, PresenceConfig,
+    PresencePoiPolicy, Rotate, ScanConfigSection, SourceConfig, TrackingConfig,
+    TrackingNoiseConfig, VizConfig,
 };
 pub use blueprint::{
     BlueprintConfig, BlueprintMetadata, CascadeConfig, CascadeRule, SemanticRegion,
@@ -155,6 +156,7 @@ mod tests {
             "config/blueprints/detect-seg/blueprint.toml",
             "config/blueprints/detect-face-pose/blueprint.toml",
             "config/blueprints/detect-face-pose-seg/blueprint.toml",
+            "config/blueprints/detect-face-pose-seg-depth/blueprint.toml",
             "config/blueprints/detect-room-raw/blueprint.toml",
             "config/blueprints/detect-room-face/blueprint.toml",
         ] {
@@ -415,6 +417,7 @@ mod tests {
         assert_eq!(config.detection.face_edge_margin_px, 32);
         assert!(config.perception.validation.is_valid());
         assert!(config.perception.body_parts.is_valid());
+        assert_eq!(config.perception.body_parts.mode, BodyPartsMode::Validator);
         assert_eq!(config.face_pose.min_head_joints, 3);
         assert_eq!(config.face_pose.quality_joint_weight, 0.30);
         assert_eq!(config.perception.body_parts.segment_radius_ratio, 0.035);
@@ -475,6 +478,15 @@ mod tests {
                 .and_then(|crop| crop.region),
             Some([560, 140, 1240, 820])
         );
+        assert_eq!(
+            model.models["depth-person-s-320"]
+                .crop
+                .as_ref()
+                .map(|crop| crop.crop_type.clone()),
+            Some(CropType::LargestClass)
+        );
+        assert_eq!(model.models["depth-person-s-320"].imgsz, Some(320));
+        assert_eq!(model.models["depth-person-s-192"].imgsz, Some(192));
     }
 
     fn assert_face_matrix_entries(model: &ModelCatalog) {

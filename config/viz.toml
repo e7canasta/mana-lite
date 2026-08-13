@@ -9,6 +9,7 @@ crop_frames = true
 masks = true
 mask_debug = false
 mask_polygons = true
+body_parts = true
 roi_rects = true
 decode_latency = false
 infer_latency = true

@@ -281,6 +281,26 @@ fn evaluate_depth_rules_without_roi_leaves_snapshot_empty() {
 }
 
 #[test]
+fn person_crop_depth_does_not_update_scene_depth_rules() {
+    let mut stage = stage_for_depth_rules(
+        bed_approach_rules(),
+        Some(CropRect::from_array([0, 0, 4, 4])),
+    );
+    let now = Instant::now();
+    stage.image.reset_depth(now);
+    stage.evaluate_depth_rules(
+        &depth_only_result(&[&[1.0, 1.0], &[1.0, 1.0]]),
+        Some(CropRect::from_array([0, 0, 2, 2])),
+        now,
+    );
+    assert_eq!(
+        stage.image.depth_snapshot().is_triggered("bed-approach"),
+        None,
+        "el depth de bbox no debe reemplazar la referencia de escena"
+    );
+}
+
+#[test]
 fn urgent_request_is_rejected_when_the_backend_model_is_unavailable() {
     let mut stage = stage_for_depth_rules(DepthRules { rules: Vec::new() }, None);
     let config = PerceptionConfig {
@@ -296,6 +316,7 @@ fn urgent_request_is_rejected_when_the_backend_model_is_unavailable() {
                 agreement_quality_weight: 0.60,
             },
             body_parts: crate::config::BodyPartsConfig {
+                mode: crate::config::BodyPartsMode::Validator,
                 frame_local_match_iou: 0.50,
                 face_frame_local_coverage: 0.50,
                 joint_min_confidence: 0.25,
@@ -308,6 +329,10 @@ fn urgent_request_is_rejected_when_the_backend_model_is_unavailable() {
                 cross_model_quality_weight: 0.20,
                 minimum_geometry_extent_px: 1.0,
                 geometry_epsilon: 0.00001,
+                advanced_smoothing_alpha: 0.65,
+                advanced_mask_support_threshold: 0.60,
+                advanced_max_gap_frames: 3,
+                advanced_temporal_quality_decay: 0.85,
             },
         },
     };

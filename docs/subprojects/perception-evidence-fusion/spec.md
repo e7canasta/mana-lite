@@ -150,7 +150,10 @@ En el MVP, el sink JSONL publica `type=body_parts` con `actor_id` para un track
 confirmado o `frame_local_index` para evidencia sin identidad, además de
 `overall_quality` y la lista de partes. Cada parte conserva `geometry`,
 `support`, `source_models`, `quality`, `mask_coverage`,
-`source_frame_numbers` y `stale`. `stale` permanece en `false` hasta el Sprint 3.
+`source_frame_numbers` y `stale`. El modo `validator` mantiene `stale=false`; el
+modo `advanced` puede publicar una parte temporal (`support=temporal`,
+`stale=true`) sólo cuando la geometría histórica queda respaldada por la máscara
+actual.
 
 ## 6. Ventana temporal
 
@@ -168,9 +171,10 @@ La fusion temporal debe:
 - soportar ausencia de una fuente en un frame;
 - no acumular backlog ilimitado.
 
-La ventana temporal y el `EvidenceStore` son trabajo nuevo. El tracker actual
-solo suaviza el bbox y `Track.evidence` conserva nombres de modelos, no frames ni
-timestamps por fuente.
+El modo `advanced` implementa una primera ventana acotada de geometría por
+`track_id`; no conserva RGB ni `InferenceResult` y transforma la geometría
+histórica al bbox actual antes de consultarla contra la máscara. La ventana
+temporal completa y el `EvidenceStore` por fuente siguen siendo trabajo futuro.
 
 ## 7. Observabilidad
 

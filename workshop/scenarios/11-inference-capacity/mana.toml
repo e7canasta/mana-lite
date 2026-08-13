@@ -5,6 +5,25 @@ metrics_file = "workshop/scenarios/11-inference-capacity/metrics.toml"
 viz_file = "config/viz.toml"
 rerun_file = "config/rerun.toml"
 
+[perception.validation]
+relation_support_threshold = 0.50
+source_quality_weight = 0.40
+agreement_quality_weight = 0.60
+
+[perception.body_parts]
+frame_local_match_iou = 0.50
+face_frame_local_coverage = 0.50
+joint_min_confidence = 0.25
+segment_radius_ratio = 0.035
+head_padding_ratio = 0.06
+torso_radius_multiplier = 1.5
+head_face_weight = 0.65
+head_pose_weight = 0.35
+mask_quality_weight = 0.25
+cross_model_quality_weight = 0.20
+minimum_geometry_extent_px = 1.0
+geometry_epsilon = 0.00001
+
 [source]
 url = "rtsp://192.168.1.6:8554/home2"
 username = "admin"

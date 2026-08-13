@@ -82,6 +82,7 @@ impl VizBridge {
                 "+ /world/camera/entities/**",
                 "+ /world/camera/observations/**",
                 "+ /world/camera/detections/**",
+                "+ /world/camera/body_parts/**",
                 "+ /world/camera/rois/**",
             ]);
         let face_crop = Spatial2DView::new("Face crop")

@@ -1,0 +1,54 @@
+# Opt-in body-part depth deployment. The existing detect/face/pose/seg branch
+# remains unchanged; this blueprint adds scene depth and a person-bbox depth
+# child for relative body-part evidence.
+[blueprint]
+name = "detect-face-pose-seg-depth"
+description = "Cross-validated body parts with scene and person-crop depth"
+primary_model = "detect-fast"
+models = [
+    "detect-fast",
+    "face-yolo",
+    "pose-standard",
+    "seg-standard",
+    "depth-standard",
+    "depth-person-s-320",
+]
+requires_tracking = true
+
+[[rules]]
+model = "detect-fast"
+
+[[rules]]
+model = "face-yolo"
+requires = "detect-fast"
+requires_class = "person"
+requires_exact_count = 1
+requires_min_confidence = 0.50
+same_frame = false
+
+[[rules]]
+model = "pose-standard"
+requires = "detect-fast"
+requires_class = "person"
+requires_exact_count = 1
+requires_min_confidence = 0.50
+same_frame = false
+
+[[rules]]
+model = "seg-standard"
+requires = "detect-fast"
+requires_class = "person"
+requires_exact_count = 1
+requires_min_confidence = 0.50
+same_frame = false
+
+[[rules]]
+model = "depth-standard"
+
+[[rules]]
+model = "depth-person-s-320"
+requires = "detect-fast"
+requires_class = "person"
+requires_exact_count = 1
+requires_min_confidence = 0.50
+same_frame = false

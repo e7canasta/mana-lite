@@ -6,7 +6,7 @@ use ultralytics_inference::visualizer::color::{Colormap, DepthViz};
 use crate::depth_map::DepthFrame;
 use crate::infer::CropFrameInfo;
 
-use super::{sanitize_entity_name, Inner, VizBridge, VizImageFormat, DEPTH_OVERLAY_ALPHA};
+use super::{DEPTH_OVERLAY_ALPHA, Inner, VizBridge, VizImageFormat, sanitize_entity_name};
 
 pub(super) fn log_frame_rgb24(
     rec: &rerun::RecordingStream,

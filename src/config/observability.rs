@@ -54,6 +54,8 @@ pub struct VizSendToggles {
     pub mask_debug: bool,
     #[serde(default = "default_true")]
     pub mask_polygons: bool,
+    #[serde(default = "default_true")]
+    pub body_parts: bool,
     #[serde(default)]
     pub roi_rects: bool,
     #[serde(default = "default_true")]
@@ -94,6 +96,7 @@ impl Default for VizSendToggles {
             masks: true,
             mask_debug: false,
             mask_polygons: true,
+            body_parts: true,
             crop_frames: false,
             roi_rects: false,
             decode_latency: true,

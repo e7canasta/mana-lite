@@ -22,8 +22,26 @@ pub struct BodyPartRecord {
     pub source_models: Vec<String>,
     pub quality: f32,
     pub mask_coverage: Option<f32>,
+    pub depth: Option<BodyPartDepthRecord>,
     pub source_frame_numbers: Vec<u64>,
     pub stale: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct BodyPartDepthRecord {
+    pub source_model: String,
+    pub roi: [u32; 4],
+    pub map_width: u32,
+    pub map_height: u32,
+    pub sampled_pixels: u64,
+    pub valid_pixels: u64,
+    pub valid_ratio: Option<f32>,
+    pub min_depth_m: Option<f32>,
+    pub median_depth_m: Option<f32>,
+    pub p10_depth_m: Option<f32>,
+    pub p90_depth_m: Option<f32>,
+    pub max_depth_m: Option<f32>,
+    pub relative_to_torso_m: Option<f32>,
 }
 
 #[derive(Debug, Clone)]

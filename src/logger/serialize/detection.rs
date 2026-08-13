@@ -1,6 +1,8 @@
 use super::Event;
 use super::writers::{write_f32, write_f64, write_json_string, write_u64};
-use crate::logger::event::{BodyGeometryRecord, BodyPartRecord, DetRecord, MaskRecord};
+use crate::logger::event::{
+    BodyGeometryRecord, BodyPartDepthRecord, BodyPartRecord, DetRecord, MaskRecord,
+};
 use crate::metrics::PerClassFrameStats;
 
 pub(super) fn write_detection_event(event: &Event, buf: &mut Vec<u8>) {
@@ -425,6 +427,12 @@ fn write_body_part(part: &BodyPartRecord, buf: &mut Vec<u8>) {
     } else {
         buf.extend_from_slice(b"null");
     }
+    buf.extend_from_slice(b",\"depth\":");
+    if let Some(depth) = &part.depth {
+        write_body_part_depth(depth, buf);
+    } else {
+        buf.extend_from_slice(b"null");
+    }
     buf.extend_from_slice(b",\"source_frame_numbers\":[");
     for (index, frame) in part.source_frame_numbers.iter().enumerate() {
         if index > 0 {
@@ -435,6 +443,50 @@ fn write_body_part(part: &BodyPartRecord, buf: &mut Vec<u8>) {
     buf.extend_from_slice(b"],\"stale\":");
     buf.extend_from_slice(if part.stale { b"true" } else { b"false" });
     buf.push(b'}');
+}
+
+fn write_body_part_depth(depth: &BodyPartDepthRecord, buf: &mut Vec<u8>) {
+    buf.extend_from_slice(b"{\"source_model\":\"");
+    write_json_string(&depth.source_model, buf);
+    buf.extend_from_slice(b"\",\"roi\":[");
+    write_u64(u64::from(depth.roi[0]), buf);
+    buf.push(b',');
+    write_u64(u64::from(depth.roi[1]), buf);
+    buf.push(b',');
+    write_u64(u64::from(depth.roi[2]), buf);
+    buf.push(b',');
+    write_u64(u64::from(depth.roi[3]), buf);
+    buf.extend_from_slice(b"],\"map_width\":");
+    write_u64(u64::from(depth.map_width), buf);
+    buf.extend_from_slice(b",\"map_height\":");
+    write_u64(u64::from(depth.map_height), buf);
+    buf.extend_from_slice(b",\"sampled_pixels\":");
+    write_u64(depth.sampled_pixels, buf);
+    buf.extend_from_slice(b",\"valid_pixels\":");
+    write_u64(depth.valid_pixels, buf);
+    buf.extend_from_slice(b",\"valid_ratio\":");
+    write_optional_f32(depth.valid_ratio, buf);
+    buf.extend_from_slice(b",\"min_depth_m\":");
+    write_optional_f32(depth.min_depth_m, buf);
+    buf.extend_from_slice(b",\"median_depth_m\":");
+    write_optional_f32(depth.median_depth_m, buf);
+    buf.extend_from_slice(b",\"p10_depth_m\":");
+    write_optional_f32(depth.p10_depth_m, buf);
+    buf.extend_from_slice(b",\"p90_depth_m\":");
+    write_optional_f32(depth.p90_depth_m, buf);
+    buf.extend_from_slice(b",\"max_depth_m\":");
+    write_optional_f32(depth.max_depth_m, buf);
+    buf.extend_from_slice(b",\"relative_to_torso_m\":");
+    write_optional_f32(depth.relative_to_torso_m, buf);
+    buf.push(b'}');
+}
+
+fn write_optional_f32(value: Option<f32>, buf: &mut Vec<u8>) {
+    if let Some(value) = value {
+        write_f32(value, buf);
+    } else {
+        buf.extend_from_slice(b"null");
+    }
 }
 
 fn write_body_geometry(geometry: &BodyGeometryRecord, buf: &mut Vec<u8>) {

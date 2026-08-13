@@ -267,6 +267,28 @@ DepthRegionStats {
 | Consulta ROI-local sin expansion | baseline aprobado |
 | Overlay RGBA transparente fuera del ROI | visualizacion opcional |
 
+### Evidencia Por Body Part
+
+El sprint de body parts agrega una rama opcional `depth-person-s-320`, hija de
+`detect-fast`, que usa la bbox del track con margen. La rama no reemplaza a
+`depth-standard`: el depth root conserva el contexto de cama y escena, mientras
+el crop de persona mejora la resolucion efectiva para torso y extremidades.
+
+Cada `BodyPartsEstimate` muestrea sus geometrias derivadas de pose dentro del
+mapa depth seleccionado. Las geometrias de extremidad se expanden como
+capsulas; torso y cabeza usan areas; todos los footprints se recortan contra
+los contornos normalizados de segmentacion. El resultado se publica dentro del
+evento JSONL `type=body_parts` y como escala diagnostica en Rerun.
+
+La estadistica poligonal cuenta `sampled_pixels` y `valid_pixels`, y calcula
+mediana, p10, p90, minimo y maximo. La conversion usa los centros de pixel del
+mapa y escala respecto del ROI, por lo que no asume que `map_width` y
+`map_height` sean iguales al tamano global del crop.
+
+La asociacion de profundidad por track es evidencia de percepcion. Las reglas
+de cama siguen aceptando unicamente el ROI fijo de escena; una salida
+`depth-person` nunca puede actualizar el snapshot que consume el FSM.
+
 La expansion a `1920x1080` no agrega inferencia, pero multiplica memoria,
 colorizacion y ancho de banda visual por aproximadamente `4.5`. Debe ser una
 operacion exclusiva de visualizacion cuando Rerun esta habilitado.

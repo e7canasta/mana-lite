@@ -1,7 +1,7 @@
-use super::writers::{write_control_stamp, write_f32, write_json_string, write_u64};
 use super::Event;
+use super::writers::{write_control_stamp, write_f32, write_json_string, write_u64};
 use crate::logger::event::FaceDwellTimerRecord;
-use mana_control::signals::{scene_signal_catalog, SignalKind, SignalPresence, SignalValue};
+use mana_control::signals::{SignalKind, SignalPresence, SignalValue, scene_signal_catalog};
 
 pub(super) fn write_entity_event(event: &Event, buf: &mut Vec<u8>) {
     let Event::Entity {

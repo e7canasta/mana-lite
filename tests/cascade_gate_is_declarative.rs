@@ -27,8 +27,8 @@ const BLUEPRINTS: &[&str] = &[
 
 fn scheduler(relative: &str) -> (CascadeScheduler, Vec<String>) {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let blueprint: BlueprintConfig = load_config(&root.join(relative))
-        .unwrap_or_else(|err| panic!("cargar {relative}: {err}"));
+    let blueprint: BlueprintConfig =
+        load_config(&root.join(relative)).unwrap_or_else(|err| panic!("cargar {relative}: {err}"));
     let hijos = blueprint
         .rules
         .iter()
@@ -102,7 +102,9 @@ fn un_track_sin_medicion_reciente_no_habilita_al_hijo() {
         }];
         for hijo in &hijos {
             assert!(
-                cascade.target_for(hijo, &perdido, FRAME_W, FRAME_H).is_none(),
+                cascade
+                    .target_for(hijo, &perdido, FRAME_W, FRAME_H)
+                    .is_none(),
                 "{relative}: '{hijo}' no debe recortar sobre un track sin medición"
             );
             assert!(

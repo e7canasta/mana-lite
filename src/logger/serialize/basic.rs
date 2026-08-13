@@ -1,5 +1,5 @@
-use super::writers::{append_field, write_f64, write_json_string, write_u64};
 use super::Event;
+use super::writers::{append_field, write_f64, write_json_string, write_u64};
 use crate::metrics::PerModelMetrics;
 use std::collections::HashMap;
 

@@ -3,7 +3,8 @@ mod records;
 mod scene;
 
 pub use records::{
-    BodyGeometryRecord, BodyPartRecord, DetRecord, FaceDwellTimerRecord, MaskRecord,
+    BodyGeometryRecord, BodyPartDepthRecord, BodyPartRecord, DetRecord, FaceDwellTimerRecord,
+    MaskRecord,
 };
 pub use scene::{scene_events_to_log, track_event_to_log, zone_event_to_log};
 

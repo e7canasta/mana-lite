@@ -5,6 +5,7 @@ use crate::config::{RerunRoot, VizSendToggles};
 use crate::detection::CropRect;
 use crate::domain::{ModelRegistry, ModelRole};
 
+mod body_parts;
 mod boxes;
 mod connection;
 mod frame;

@@ -174,6 +174,11 @@ impl PerceptionStage {
         let Some(depth) = output.depth.as_ref() else {
             return;
         };
+        // Person-crop depth is diagnostic evidence for body parts. Only the
+        // fixed scene ROI is allowed to update the control-side bed rules.
+        if crop_rect.is_some_and(|rect| Some(rect) != self.depth_context_roi) {
+            return;
+        }
         let Some(roi) = crop_rect
             .or(self.depth_context_roi)
             .map(|rect| rect.to_array())

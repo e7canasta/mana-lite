@@ -225,8 +225,14 @@ fn one_missed_deadline_per_blocked_keyframe() {
         report.scan_deadlines_missed, 5,
         "un incumplimiento por keyframe bloqueante, no veinticinco"
     );
-    assert_eq!(report.scan_late_p50_us, 2_000, "la mediana queda en el piso");
-    assert_eq!(report.scan_late_p95_us, 115_000, "la cola delata el bloqueo");
+    assert_eq!(
+        report.scan_late_p50_us, 2_000,
+        "la mediana queda en el piso"
+    );
+    assert_eq!(
+        report.scan_late_p95_us, 115_000,
+        "la cola delata el bloqueo"
+    );
 }
 
 /// El periodo y el atraso son ejes distintos y no se pueden deducir uno del

@@ -4,9 +4,12 @@
 //! keyframe. It derives local geometry from pose/face/segment evidence, but it
 //! never schedules a model and it never crosses raw evidence into control.
 
+use std::collections::BTreeMap;
+
 use super::cross_model_validation::{CrossModelValidation, EvidenceKind};
 use crate::cascade::CascadeTarget;
 use crate::config::BodyPartsConfig;
+use crate::depth_map::DepthFrame;
 use crate::detection::Detection;
 
 /// Temporal identity for a derived estimate. `FrameLocal` is deliberately not
@@ -85,6 +88,29 @@ pub(crate) enum BodyGeometry {
     Polyline { points: Vec<[f32; 2]>, radius: f32 },
 }
 
+/// Robust depth evidence attached to one derived body part.
+///
+/// The value is deliberately evidence, not a posture decision. `roi` and the
+/// map dimensions identify the depth source used for the sample, while
+/// `relative_to_torso_m` is only meaningful when both parts came from the same
+/// depth map.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct BodyPartDepth {
+    pub(crate) source_model: String,
+    pub(crate) roi: [u32; 4],
+    pub(crate) map_width: u32,
+    pub(crate) map_height: u32,
+    pub(crate) sampled_pixels: u64,
+    pub(crate) valid_pixels: u64,
+    pub(crate) valid_ratio: Option<f32>,
+    pub(crate) min_depth_m: Option<f32>,
+    pub(crate) median_depth_m: Option<f32>,
+    pub(crate) p10_depth_m: Option<f32>,
+    pub(crate) p90_depth_m: Option<f32>,
+    pub(crate) max_depth_m: Option<f32>,
+    pub(crate) relative_to_torso_m: Option<f32>,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct BodyPartEstimate {
     pub(crate) part: BodyPartKind,
@@ -93,6 +119,7 @@ pub(crate) struct BodyPartEstimate {
     pub(crate) source_models: Vec<String>,
     pub(crate) quality: f32,
     pub(crate) mask_coverage: Option<f32>,
+    pub(crate) depth: Option<BodyPartDepth>,
     pub(crate) source_frame_numbers: Vec<u64>,
     pub(crate) stale: bool,
 }
@@ -103,6 +130,50 @@ pub(crate) struct BodyPartsEstimate {
     pub(crate) frame_number: u64,
     pub(crate) parts: Vec<BodyPartEstimate>,
     pub(crate) overall_quality: f32,
+    /// Normalized full-frame contours retained for depth sampling. Keeping the
+    /// mask once per actor avoids copying the same segmentation into every
+    /// body-part record.
+    pub(crate) mask_polygons: Option<Vec<Vec<[f32; 2]>>>,
+}
+
+#[derive(Debug, Clone)]
+struct HistoricalPart {
+    geometry: BodyGeometry,
+    actor_bbox: [f32; 4],
+    quality: f32,
+    source_models: Vec<String>,
+    source_frame_numbers: Vec<u64>,
+    observed_frame: u64,
+}
+
+#[derive(Debug, Clone, Default)]
+struct HistoricalActor {
+    last_seen_frame: u64,
+    parts: BTreeMap<BodyPartKind, HistoricalPart>,
+}
+
+/// Temporal memory used only by the opt-in advanced estimator.
+///
+/// The validator remains stateless. This state is keyed by the tracker id and
+/// is never used for frame-local actors, so it cannot turn an untracked spatial
+/// match into a false temporal identity.
+#[derive(Debug, Default)]
+pub(crate) struct BodyPartsTemporalState {
+    actors: BTreeMap<u64, HistoricalActor>,
+}
+
+impl BodyPartsTemporalState {
+    fn prune(&mut self, frame_number: u64, max_gap_frames: u64) {
+        for actor in self.actors.values_mut() {
+            actor.parts.retain(|_, part| {
+                frame_number.saturating_sub(part.observed_frame) <= max_gap_frames
+            });
+        }
+        self.actors.retain(|_, actor| {
+            frame_number.saturating_sub(actor.last_seen_frame) <= max_gap_frames
+                && !actor.parts.is_empty()
+        });
+    }
 }
 
 /// Rich model output adapted at the inference boundary. The raw `Detection`
@@ -197,6 +268,377 @@ impl<'a> BodyPartsEstimator<'a> {
                 )
             })
             .collect()
+    }
+
+    /// Estimates body parts with conservative temporal completion.
+    ///
+    /// A previous geometry is reused only when the current instance mask
+    /// supports it. Without that evidence the method returns the same partial
+    /// geometry as the validator instead of fabricating a limb.
+    #[must_use]
+    pub(crate) fn estimate_advanced(
+        &self,
+        inputs: &[PendingBodyPartsEvidence<'_>],
+        validations: &[CrossModelValidation],
+        frame_number: u64,
+        frame_width: u32,
+        frame_height: u32,
+        temporal: &mut BodyPartsTemporalState,
+    ) -> Vec<BodyPartsEstimate> {
+        if frame_width == 0 || frame_height == 0 {
+            return Vec::new();
+        }
+
+        temporal.prune(frame_number, self.config.advanced_max_gap_frames);
+        let actors = self.collect_actors(inputs, frame_number);
+        actors
+            .into_iter()
+            .filter_map(|actor| {
+                let validation_quality = match actor.actor_ref {
+                    ActorRef::Track(actor_id) => validations
+                        .iter()
+                        .find(|validation| validation.actor_id == actor_id)
+                        .map(|validation| validation.quality),
+                    ActorRef::FrameLocal { .. } => None,
+                };
+                let actor_ref = actor.actor_ref.clone();
+                let actor_bbox = actor.target_bbox;
+                let segment = actor.segment;
+                let current = self.estimate_actor(
+                    actor,
+                    validation_quality,
+                    frame_number,
+                    frame_width,
+                    frame_height,
+                );
+                match actor_ref {
+                    ActorRef::Track(actor_id) => self.enhance_tracked_actor(
+                        current,
+                        actor_id,
+                        actor_bbox,
+                        segment,
+                        validation_quality,
+                        frame_number,
+                        frame_width,
+                        frame_height,
+                        temporal,
+                    ),
+                    ActorRef::FrameLocal { .. } => current,
+                }
+            })
+            .collect()
+    }
+
+    fn enhance_tracked_actor(
+        &self,
+        current: Option<BodyPartsEstimate>,
+        actor_id: u64,
+        actor_bbox: [f32; 4],
+        segment: Option<SourceDetection<'_>>,
+        validation_quality: Option<f32>,
+        frame_number: u64,
+        frame_width: u32,
+        frame_height: u32,
+        temporal: &mut BodyPartsTemporalState,
+    ) -> Option<BodyPartsEstimate> {
+        let previous = temporal.actors.get(&actor_id).cloned();
+        let current_parts = current
+            .as_ref()
+            .map(|estimate| estimate.parts.clone())
+            .unwrap_or_default();
+        let current_by_kind = current_parts
+            .iter()
+            .map(|part| (part.part, part))
+            .collect::<BTreeMap<_, _>>();
+        let mut parts = Vec::with_capacity(BodyPartKind::ALL.len());
+
+        for current_part in current_parts.iter().cloned() {
+            let previous_part = previous
+                .as_ref()
+                .and_then(|actor| actor.parts.get(&current_part.part));
+            parts.push(self.stabilize_current_part(
+                current_part,
+                previous_part,
+                actor_bbox,
+                segment,
+                validation_quality,
+                frame_number,
+                frame_width,
+                frame_height,
+            ));
+        }
+
+        if let Some(previous_actor) = &previous {
+            for (part_kind, previous_part) in &previous_actor.parts {
+                if current_by_kind.contains_key(part_kind) {
+                    continue;
+                }
+                let gap = frame_number.saturating_sub(previous_part.observed_frame);
+                if gap > self.config.advanced_max_gap_frames {
+                    continue;
+                }
+                let predicted = transform_geometry(
+                    &previous_part.geometry,
+                    previous_part.actor_bbox,
+                    actor_bbox,
+                );
+                let coverage =
+                    self.predicted_mask_coverage(&predicted, segment, frame_width, frame_height);
+                if !mask_supports_prediction(coverage, self.config.advanced_mask_support_threshold)
+                {
+                    continue;
+                }
+                parts.push(self.temporal_fallback_part(
+                    *part_kind,
+                    previous_part,
+                    predicted,
+                    coverage,
+                    segment,
+                    validation_quality,
+                    frame_number,
+                ));
+            }
+        }
+
+        if parts.is_empty() {
+            return None;
+        }
+        parts.sort_by_key(|part| part.part);
+
+        let mask_polygons = current
+            .as_ref()
+            .and_then(|estimate| estimate.mask_polygons.clone())
+            .or_else(|| {
+                segment.and_then(|source| {
+                    source
+                        .detection
+                        .mask
+                        .as_ref()
+                        .map(|mask| mask.polygons.as_ref().clone())
+                })
+            });
+
+        self.remember_current_parts(
+            temporal,
+            actor_id,
+            actor_bbox,
+            frame_number,
+            &current_parts,
+            segment,
+        );
+
+        Some(BodyPartsEstimate {
+            actor_ref: ActorRef::Track(actor_id),
+            frame_number,
+            overall_quality: overall_quality(&parts),
+            parts,
+            mask_polygons,
+        })
+    }
+
+    fn stabilize_current_part(
+        &self,
+        mut current: BodyPartEstimate,
+        previous: Option<&HistoricalPart>,
+        actor_bbox: [f32; 4],
+        segment: Option<SourceDetection<'_>>,
+        validation_quality: Option<f32>,
+        frame_number: u64,
+        frame_width: u32,
+        frame_height: u32,
+    ) -> BodyPartEstimate {
+        let Some(previous) = previous else {
+            return current;
+        };
+        let gap = frame_number.saturating_sub(previous.observed_frame);
+        if gap > self.config.advanced_max_gap_frames {
+            return current;
+        }
+        let predicted = transform_geometry(&previous.geometry, previous.actor_bbox, actor_bbox);
+        let predicted_coverage =
+            self.predicted_mask_coverage(&predicted, segment, frame_width, frame_height);
+        let current_is_complete = complete_geometry(current.part, &current.geometry);
+        let current_mask_rejects = current
+            .mask_coverage
+            .is_some_and(|coverage| coverage < self.config.advanced_mask_support_threshold);
+
+        if (!current_is_complete || current_mask_rejects)
+            && mask_supports_prediction(
+                predicted_coverage,
+                self.config.advanced_mask_support_threshold,
+            )
+        {
+            current.geometry = predicted;
+            current.quality = self.temporal_quality(
+                previous.quality,
+                gap,
+                predicted_coverage,
+                segment,
+                validation_quality,
+            );
+            current.mask_coverage = predicted_coverage.or(current.mask_coverage);
+            current.stale = true;
+            add_support(&mut current.support, BodyPartSupport::Temporal);
+            merge_source_models(&mut current.source_models, &previous.source_models);
+            merge_frame_numbers(
+                &mut current.source_frame_numbers,
+                &previous.source_frame_numbers,
+                frame_number,
+            );
+            return current;
+        }
+
+        if current_is_complete
+            && !current_mask_rejects
+            && (segment.is_none()
+                || current.mask_coverage.is_some_and(|coverage| {
+                    coverage >= self.config.advanced_mask_support_threshold
+                }))
+        {
+            let smoothed = blend_geometry(
+                &current.geometry,
+                &predicted,
+                self.config.advanced_smoothing_alpha,
+            );
+            if smoothed != current.geometry {
+                current.geometry = smoothed;
+                current.quality = weighted_average(
+                    current.quality,
+                    previous.quality,
+                    self.config.advanced_smoothing_alpha,
+                    1.0 - self.config.advanced_smoothing_alpha,
+                );
+                current.stale = false;
+                add_support(&mut current.support, BodyPartSupport::Temporal);
+                merge_source_models(&mut current.source_models, &previous.source_models);
+                merge_frame_numbers(
+                    &mut current.source_frame_numbers,
+                    &previous.source_frame_numbers,
+                    frame_number,
+                );
+            }
+        }
+        current
+    }
+
+    fn temporal_fallback_part(
+        &self,
+        part: BodyPartKind,
+        previous: &HistoricalPart,
+        geometry: BodyGeometry,
+        mask_coverage: Option<f32>,
+        segment: Option<SourceDetection<'_>>,
+        validation_quality: Option<f32>,
+        frame_number: u64,
+    ) -> BodyPartEstimate {
+        let gap = frame_number.saturating_sub(previous.observed_frame);
+        let mut source_models = previous.source_models.clone();
+        if let Some(segment) = segment {
+            source_models.push(segment.model_key.to_owned());
+        }
+        source_models.sort_unstable();
+        source_models.dedup();
+        let mut source_frame_numbers = previous.source_frame_numbers.clone();
+        source_frame_numbers.push(frame_number);
+        source_frame_numbers.sort_unstable();
+        source_frame_numbers.dedup();
+        let quality = self.temporal_quality(
+            previous.quality,
+            gap,
+            mask_coverage,
+            segment,
+            validation_quality,
+        );
+        BodyPartEstimate {
+            part,
+            geometry,
+            support: vec![BodyPartSupport::Segment, BodyPartSupport::Temporal],
+            source_models,
+            quality,
+            mask_coverage,
+            depth: None,
+            source_frame_numbers,
+            stale: true,
+        }
+    }
+
+    fn temporal_quality(
+        &self,
+        previous_quality: f32,
+        gap: u64,
+        mask_coverage: Option<f32>,
+        segment: Option<SourceDetection<'_>>,
+        validation_quality: Option<f32>,
+    ) -> f32 {
+        let decay = self
+            .config
+            .advanced_temporal_quality_decay
+            .powi(gap.min(i32::MAX as u64) as i32);
+        let mut quality = clamp01(previous_quality * decay);
+        if let (Some(coverage), Some(segment)) = (mask_coverage, segment) {
+            quality = weighted_average(
+                quality,
+                coverage * clamp01(segment.detection.confidence),
+                1.0 - self.config.mask_quality_weight,
+                self.config.mask_quality_weight,
+            );
+        }
+        apply_validation_quality(&mut quality, validation_quality, self.config);
+        quality
+    }
+
+    fn predicted_mask_coverage(
+        &self,
+        geometry: &BodyGeometry,
+        segment: Option<SourceDetection<'_>>,
+        frame_width: u32,
+        frame_height: u32,
+    ) -> Option<f32> {
+        segment.and_then(|source| {
+            source.detection.mask.as_ref().and_then(|mask| {
+                mask_coverage(
+                    geometry,
+                    mask,
+                    frame_width,
+                    frame_height,
+                    self.config.geometry_epsilon,
+                )
+            })
+        })
+    }
+
+    fn remember_current_parts(
+        &self,
+        temporal: &mut BodyPartsTemporalState,
+        actor_id: u64,
+        actor_bbox: [f32; 4],
+        frame_number: u64,
+        parts: &[BodyPartEstimate],
+        segment: Option<SourceDetection<'_>>,
+    ) {
+        let actor = temporal.actors.entry(actor_id).or_default();
+        actor.last_seen_frame = frame_number;
+        for part in parts {
+            if !complete_geometry(part.part, &part.geometry)
+                || (segment.is_some()
+                    && !part.mask_coverage.is_some_and(|coverage| {
+                        coverage >= self.config.advanced_mask_support_threshold
+                    }))
+            {
+                continue;
+            }
+            actor.parts.insert(
+                part.part,
+                HistoricalPart {
+                    geometry: part.geometry.clone(),
+                    actor_bbox,
+                    quality: part.quality,
+                    source_models: part.source_models.clone(),
+                    source_frame_numbers: part.source_frame_numbers.clone(),
+                    observed_frame: frame_number,
+                },
+            );
+        }
     }
 
     fn collect_actors<'e>(
@@ -325,6 +767,13 @@ impl<'a> BodyPartsEstimator<'a> {
             .is_valid_or(actor.pose.map(|source| source.detection.bbox))
             .or_else(|| actor.face.map(|source| source.detection.bbox))
             .unwrap_or([0.0, 0.0, frame_width as f32, frame_height as f32]);
+        let mask_polygons = actor.segment.and_then(|source| {
+            source
+                .detection
+                .mask
+                .as_ref()
+                .map(|mask| mask.polygons.as_ref().clone())
+        });
         let mut parts = Vec::new();
 
         if let Some(part) = self.estimate_head(
@@ -380,6 +829,7 @@ impl<'a> BodyPartsEstimator<'a> {
             frame_number,
             parts,
             overall_quality: clamp01(local_quality),
+            mask_polygons,
         })
     }
 
@@ -592,6 +1042,7 @@ impl<'a> BodyPartsEstimator<'a> {
             source_models,
             quality: clamp01(quality),
             mask_coverage,
+            depth: None,
             source_frame_numbers: vec![frame_number],
             stale: false,
         }
@@ -619,6 +1070,295 @@ impl<'a> BodyPartsEstimator<'a> {
                     })
             })
             .collect()
+    }
+}
+
+/// Samples one depth map over every body-part footprint in an estimate.
+///
+/// Pose-derived geometry defines the footprint and the segmentation contours
+/// clip it to the visible person. This keeps depth evidence conservative when
+/// a limb geometry crosses the background or the bed.
+pub(crate) fn attach_depth(
+    estimate: &mut BodyPartsEstimate,
+    source_model: &str,
+    depth: &DepthFrame,
+    roi: [u32; 4],
+    frame_width: u32,
+    frame_height: u32,
+) {
+    let clip_polygons = estimate.mask_polygons.as_deref();
+    for part in &mut estimate.parts {
+        let footprints = depth_footprints(&part.geometry);
+        let footprint_refs = footprints.iter().map(Vec::as_slice).collect::<Vec<_>>();
+        let Some(stats) = mana_perception::polygon_stats(
+            depth,
+            roi,
+            &footprint_refs,
+            frame_width,
+            frame_height,
+            clip_polygons,
+        ) else {
+            continue;
+        };
+        let (map_width, map_height) = depth.dims();
+        part.depth = Some(BodyPartDepth {
+            source_model: source_model.to_owned(),
+            roi: stats.roi,
+            map_width,
+            map_height,
+            sampled_pixels: stats.sampled_pixels,
+            valid_pixels: stats.valid_pixels,
+            valid_ratio: stats.valid_ratio,
+            min_depth_m: stats.min_depth_m,
+            median_depth_m: stats.median_depth_m,
+            p10_depth_m: stats.p10_depth_m,
+            p90_depth_m: stats.p90_depth_m,
+            max_depth_m: stats.max_depth_m,
+            relative_to_torso_m: None,
+        });
+    }
+
+    let torso_depth = estimate
+        .parts
+        .iter()
+        .find(|part| part.part == BodyPartKind::Torso)
+        .and_then(|part| part.depth.as_ref())
+        .and_then(|depth| depth.median_depth_m);
+    for part in &mut estimate.parts {
+        let Some(depth) = part.depth.as_mut() else {
+            continue;
+        };
+        depth.relative_to_torso_m = match (part.part, torso_depth, depth.median_depth_m) {
+            (BodyPartKind::Torso, Some(_), Some(_)) => Some(0.0),
+            (_, Some(torso), Some(part_depth)) => Some(part_depth - torso),
+            _ => None,
+        };
+    }
+}
+
+fn depth_footprints(geometry: &BodyGeometry) -> Vec<Vec<[f32; 2]>> {
+    match geometry {
+        BodyGeometry::Bbox([x1, y1, x2, y2]) => {
+            let min_x = x1.min(*x2);
+            let max_x = x1.max(*x2);
+            let min_y = y1.min(*y2);
+            let max_y = y1.max(*y2);
+            (min_x.is_finite()
+                && max_x.is_finite()
+                && min_y.is_finite()
+                && max_y.is_finite()
+                && max_x > min_x
+                && max_y > min_y)
+                .then(|| {
+                    vec![vec![
+                        [min_x, min_y],
+                        [max_x, min_y],
+                        [max_x, max_y],
+                        [min_x, max_y],
+                    ]]
+                })
+                .unwrap_or_default()
+        }
+        BodyGeometry::Polygon(points) => (points.len() >= 3
+            && points.iter().all(|[x, y]| x.is_finite() && y.is_finite()))
+        .then_some(vec![points.clone()])
+        .unwrap_or_default(),
+        BodyGeometry::Polyline { points, radius } => {
+            if points.is_empty() || !radius.is_finite() || *radius <= 0.0 {
+                return Vec::new();
+            }
+            let radius = (*radius).max(1.0);
+            let mut footprints = points
+                .windows(2)
+                .filter_map(|pair| capsule_polygon(pair[0], pair[1], radius))
+                .collect::<Vec<_>>();
+            for &point in points {
+                if point[0].is_finite() && point[1].is_finite() {
+                    footprints.push(circle_polygon(point, radius));
+                }
+            }
+            footprints
+        }
+    }
+}
+
+fn capsule_polygon(start: [f32; 2], end: [f32; 2], radius: f32) -> Option<Vec<[f32; 2]>> {
+    let dx = end[0] - start[0];
+    let dy = end[1] - start[1];
+    let length = (dx * dx + dy * dy).sqrt();
+    if !length.is_finite() || length <= f32::EPSILON {
+        return None;
+    }
+    let nx = -dy / length * radius;
+    let ny = dx / length * radius;
+    Some(vec![
+        [start[0] + nx, start[1] + ny],
+        [end[0] + nx, end[1] + ny],
+        [end[0] - nx, end[1] - ny],
+        [start[0] - nx, start[1] - ny],
+    ])
+}
+
+fn circle_polygon(center: [f32; 2], radius: f32) -> Vec<[f32; 2]> {
+    const SIDES: usize = 8;
+    (0..SIDES)
+        .map(|index| {
+            #[allow(clippy::cast_precision_loss)]
+            let angle = std::f32::consts::TAU * index as f32 / SIDES as f32;
+            [
+                center[0] + radius * angle.cos(),
+                center[1] + radius * angle.sin(),
+            ]
+        })
+        .collect()
+}
+
+fn overall_quality(parts: &[BodyPartEstimate]) -> f32 {
+    parts.iter().map(|part| part.quality).sum::<f32>() / BodyPartKind::ALL.len() as f32
+}
+
+fn complete_geometry(part: BodyPartKind, geometry: &BodyGeometry) -> bool {
+    match part {
+        BodyPartKind::Head => match geometry {
+            BodyGeometry::Bbox(_) => true,
+            BodyGeometry::Polygon(points) | BodyGeometry::Polyline { points, .. } => {
+                !points.is_empty()
+            }
+        },
+        BodyPartKind::Torso => {
+            matches!(geometry, BodyGeometry::Polygon(points) if points.len() >= 4)
+        }
+        BodyPartKind::LeftArm
+        | BodyPartKind::RightArm
+        | BodyPartKind::LeftLeg
+        | BodyPartKind::RightLeg => {
+            matches!(geometry, BodyGeometry::Polyline { points, .. } if points.len() >= 3)
+        }
+    }
+}
+
+fn mask_supports_prediction(coverage: Option<f32>, threshold: f32) -> bool {
+    coverage.is_some_and(|coverage| coverage >= threshold)
+}
+
+fn add_support(support: &mut Vec<BodyPartSupport>, value: BodyPartSupport) {
+    support.push(value);
+    support.sort_unstable();
+    support.dedup();
+}
+
+fn merge_source_models(left: &mut Vec<String>, right: &[String]) {
+    left.extend(right.iter().cloned());
+    left.sort_unstable();
+    left.dedup();
+}
+
+fn merge_frame_numbers(left: &mut Vec<u64>, right: &[u64], current_frame: u64) {
+    left.extend(right.iter().copied());
+    left.push(current_frame);
+    left.sort_unstable();
+    left.dedup();
+}
+
+fn apply_validation_quality(
+    quality: &mut f32,
+    validation_quality: Option<f32>,
+    config: &BodyPartsConfig,
+) {
+    if let Some(cross_quality) = validation_quality {
+        let cross_weight = config.cross_model_quality_weight;
+        *quality = (1.0 - cross_weight) * *quality + cross_weight * clamp01(cross_quality);
+    }
+    *quality = clamp01(*quality);
+}
+
+fn transform_geometry(
+    geometry: &BodyGeometry,
+    previous_bbox: [f32; 4],
+    current_bbox: [f32; 4],
+) -> BodyGeometry {
+    if !valid_bbox(previous_bbox) || !valid_bbox(current_bbox) {
+        return geometry.clone();
+    }
+    let map = |point: [f32; 2]| {
+        [
+            current_bbox[0]
+                + (point[0] - previous_bbox[0]) / (previous_bbox[2] - previous_bbox[0])
+                    * (current_bbox[2] - current_bbox[0]),
+            current_bbox[1]
+                + (point[1] - previous_bbox[1]) / (previous_bbox[3] - previous_bbox[1])
+                    * (current_bbox[3] - current_bbox[1]),
+        ]
+    };
+    let scale_x = (current_bbox[2] - current_bbox[0]) / (previous_bbox[2] - previous_bbox[0]);
+    let scale_y = (current_bbox[3] - current_bbox[1]) / (previous_bbox[3] - previous_bbox[1]);
+    let scale = ((scale_x.abs() + scale_y.abs()) / 2.0).max(f32::EPSILON);
+    match geometry {
+        BodyGeometry::Bbox([x1, y1, x2, y2]) => {
+            let [min_x, min_y] = map([*x1, *y1]);
+            let [max_x, max_y] = map([*x2, *y2]);
+            BodyGeometry::Bbox([min_x, min_y, max_x, max_y])
+        }
+        BodyGeometry::Polygon(points) => {
+            BodyGeometry::Polygon(points.iter().copied().map(map).collect())
+        }
+        BodyGeometry::Polyline { points, radius } => BodyGeometry::Polyline {
+            points: points.iter().copied().map(map).collect(),
+            radius: *radius * scale,
+        },
+    }
+}
+
+fn blend_geometry(
+    current: &BodyGeometry,
+    previous: &BodyGeometry,
+    current_weight: f32,
+) -> BodyGeometry {
+    let current_weight = clamp01(current_weight);
+    let blend_point = |left: [f32; 2], right: [f32; 2]| {
+        [
+            left[0] * current_weight + right[0] * (1.0 - current_weight),
+            left[1] * current_weight + right[1] * (1.0 - current_weight),
+        ]
+    };
+    match (current, previous) {
+        (BodyGeometry::Bbox(current), BodyGeometry::Bbox(previous)) => BodyGeometry::Bbox([
+            current[0] * current_weight + previous[0] * (1.0 - current_weight),
+            current[1] * current_weight + previous[1] * (1.0 - current_weight),
+            current[2] * current_weight + previous[2] * (1.0 - current_weight),
+            current[3] * current_weight + previous[3] * (1.0 - current_weight),
+        ]),
+        (BodyGeometry::Polygon(current), BodyGeometry::Polygon(previous))
+            if current.len() == previous.len() =>
+        {
+            BodyGeometry::Polygon(
+                current
+                    .iter()
+                    .copied()
+                    .zip(previous.iter().copied())
+                    .map(|(current, previous)| blend_point(current, previous))
+                    .collect(),
+            )
+        }
+        (
+            BodyGeometry::Polyline {
+                points: current_points,
+                radius: current_radius,
+            },
+            BodyGeometry::Polyline {
+                points: previous_points,
+                radius: previous_radius,
+            },
+        ) if current_points.len() == previous_points.len() => BodyGeometry::Polyline {
+            points: current_points
+                .iter()
+                .copied()
+                .zip(previous_points.iter().copied())
+                .map(|(current, previous)| blend_point(current, previous))
+                .collect(),
+            radius: current_radius * current_weight + previous_radius * (1.0 - current_weight),
+        },
+        _ => current.clone(),
     }
 }
 
@@ -920,7 +1660,9 @@ impl ValidOr for [f32; 4] {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ndarray::Array2;
     use std::sync::Arc;
+    use ultralytics_inference::DepthMap;
 
     fn detection(class: &str, bbox: [f32; 4], confidence: f32) -> Detection {
         Detection {
@@ -992,6 +1734,7 @@ mod tests {
 
     fn body_parts_config() -> BodyPartsConfig {
         BodyPartsConfig {
+            mode: crate::config::BodyPartsMode::Validator,
             frame_local_match_iou: 0.50,
             face_frame_local_coverage: 0.50,
             joint_min_confidence: 0.25,
@@ -1004,7 +1747,17 @@ mod tests {
             cross_model_quality_weight: 0.20,
             minimum_geometry_extent_px: 1.0,
             geometry_epsilon: 0.00001,
+            advanced_smoothing_alpha: 0.65,
+            advanced_mask_support_threshold: 0.60,
+            advanced_max_gap_frames: 3,
+            advanced_temporal_quality_decay: 0.85,
         }
+    }
+
+    fn advanced_body_parts_config() -> BodyPartsConfig {
+        let mut config = body_parts_config();
+        config.mode = crate::config::BodyPartsMode::Advanced;
+        config
     }
 
     fn inputs<'a>(
@@ -1075,6 +1828,77 @@ mod tests {
     }
 
     #[test]
+    fn depth_is_sampled_inside_part_footprints_and_compared_to_torso() {
+        let data = Array2::from_shape_fn((10, 10), |(_, x)| if x < 5 { 2.0 } else { 4.0 });
+        let depth = DepthFrame::from_ultralytics(DepthMap::new(data, (10, 10)));
+        let mut estimate = BodyPartsEstimate {
+            actor_ref: ActorRef::Track(7),
+            frame_number: 12,
+            parts: vec![
+                BodyPartEstimate {
+                    part: BodyPartKind::Torso,
+                    geometry: BodyGeometry::Polygon(vec![
+                        [10.0, 10.0],
+                        [40.0, 10.0],
+                        [40.0, 40.0],
+                        [10.0, 40.0],
+                    ]),
+                    support: vec![BodyPartSupport::Pose, BodyPartSupport::Segment],
+                    source_models: vec!["pose-standard".into(), "seg-standard".into()],
+                    quality: 1.0,
+                    mask_coverage: Some(1.0),
+                    depth: None,
+                    source_frame_numbers: vec![12],
+                    stale: false,
+                },
+                BodyPartEstimate {
+                    part: BodyPartKind::LeftArm,
+                    geometry: BodyGeometry::Polyline {
+                        points: vec![[60.0, 10.0], [80.0, 10.0], [90.0, 20.0]],
+                        radius: 2.0,
+                    },
+                    support: vec![BodyPartSupport::Pose, BodyPartSupport::Segment],
+                    source_models: vec!["pose-standard".into(), "seg-standard".into()],
+                    quality: 1.0,
+                    mask_coverage: Some(1.0),
+                    depth: None,
+                    source_frame_numbers: vec![12],
+                    stale: false,
+                },
+            ],
+            overall_quality: 1.0,
+            mask_polygons: Some(vec![vec![[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]]]),
+        };
+
+        attach_depth(
+            &mut estimate,
+            "depth-person-s-320",
+            &depth,
+            [0, 0, 100, 100],
+            100,
+            100,
+        );
+
+        let torso = estimate
+            .parts
+            .iter()
+            .find(|part| part.part == BodyPartKind::Torso)
+            .and_then(|part| part.depth.as_ref())
+            .expect("torso depth");
+        let arm = estimate
+            .parts
+            .iter()
+            .find(|part| part.part == BodyPartKind::LeftArm)
+            .and_then(|part| part.depth.as_ref())
+            .expect("arm depth");
+        assert_eq!(torso.median_depth_m, Some(2.0));
+        assert_eq!(arm.median_depth_m, Some(4.0));
+        assert_eq!(arm.relative_to_torso_m, Some(2.0));
+        assert_eq!(arm.source_model, "depth-person-s-320");
+        assert!(arm.sampled_pixels > 0);
+    }
+
+    #[test]
     fn missing_joints_produce_partial_parts() {
         let face = detection("face", [170.0, 90.0, 230.0, 165.0], 0.86);
         let mut pose = pose();
@@ -1107,6 +1931,158 @@ mod tests {
                 .any(|part| part.part == BodyPartKind::RightArm && part.quality < 0.6)
         );
         assert_eq!(estimate.parts.len(), 6);
+    }
+
+    #[test]
+    fn advanced_mode_recovers_mask_supported_missing_limb_from_track_history() {
+        let face = detection("face", [170.0, 90.0, 230.0, 165.0], 0.86);
+        let complete_pose = pose();
+        let segment = segment();
+        let config = advanced_body_parts_config();
+        let mut temporal = BodyPartsTemporalState::default();
+        let first = BodyPartsEstimator::new(&config)
+            .estimate_advanced(
+                &inputs(&face, &complete_pose, &segment, Some(target(Some(7)))),
+                &[],
+                12,
+                1000,
+                1000,
+                &mut temporal,
+            )
+            .pop()
+            .expect("initial advanced estimate");
+        assert!(
+            first
+                .parts
+                .iter()
+                .find(|part| part.part == BodyPartKind::RightArm)
+                .is_some_and(|part| !part.stale)
+        );
+
+        let mut missing_pose = pose();
+        for index in [6, 8, 10] {
+            missing_pose.keypoints.as_mut().unwrap()[index][2] = 0.1;
+        }
+        let recovered = BodyPartsEstimator::new(&config)
+            .estimate_advanced(
+                &inputs(&face, &missing_pose, &segment, Some(target(Some(7)))),
+                &[],
+                13,
+                1000,
+                1000,
+                &mut temporal,
+            )
+            .pop()
+            .expect("advanced estimate with temporal completion");
+        let right_arm = recovered
+            .parts
+            .iter()
+            .find(|part| part.part == BodyPartKind::RightArm)
+            .expect("right arm recovered");
+        assert!(right_arm.stale);
+        assert!(right_arm.support.contains(&BodyPartSupport::Temporal));
+        assert_eq!(geometry_points(&right_arm.geometry).len(), 3);
+        assert!(right_arm.mask_coverage.unwrap_or(0.0) >= 0.60);
+        assert_eq!(right_arm.source_frame_numbers, vec![12, 13]);
+    }
+
+    #[test]
+    fn advanced_mode_does_not_reuse_history_without_mask_support() {
+        let face = detection("face", [170.0, 90.0, 230.0, 165.0], 0.86);
+        let complete_pose = pose();
+        let initial_segment = segment();
+        let config = advanced_body_parts_config();
+        let mut temporal = BodyPartsTemporalState::default();
+        let _ = BodyPartsEstimator::new(&config).estimate_advanced(
+            &inputs(
+                &face,
+                &complete_pose,
+                &initial_segment,
+                Some(target(Some(7))),
+            ),
+            &[],
+            12,
+            1000,
+            1000,
+            &mut temporal,
+        );
+
+        let mut unsupported_segment = segment();
+        unsupported_segment.mask.as_mut().unwrap().polygons = Arc::new(vec![vec![
+            [0.70, 0.70],
+            [0.90, 0.70],
+            [0.90, 0.90],
+            [0.70, 0.90],
+        ]]);
+        let mut missing_pose = pose();
+        for index in [6, 8, 10] {
+            missing_pose.keypoints.as_mut().unwrap()[index][2] = 0.1;
+        }
+        let estimate = BodyPartsEstimator::new(&config)
+            .estimate_advanced(
+                &inputs(
+                    &face,
+                    &missing_pose,
+                    &unsupported_segment,
+                    Some(target(Some(7))),
+                ),
+                &[],
+                13,
+                1000,
+                1000,
+                &mut temporal,
+            )
+            .pop()
+            .expect("partial estimate remains available");
+        let right_arm = estimate
+            .parts
+            .iter()
+            .find(|part| part.part == BodyPartKind::RightArm);
+        assert!(right_arm.is_none() || !right_arm.unwrap().stale);
+    }
+
+    #[test]
+    fn advanced_mode_smooths_complete_track_geometry() {
+        let face = detection("face", [170.0, 90.0, 230.0, 165.0], 0.86);
+        let segment = segment();
+        let config = advanced_body_parts_config();
+        let mut temporal = BodyPartsTemporalState::default();
+        let first_pose = pose();
+        let _ = BodyPartsEstimator::new(&config).estimate_advanced(
+            &inputs(&face, &first_pose, &segment, Some(target(Some(7)))),
+            &[],
+            12,
+            1000,
+            1000,
+            &mut temporal,
+        );
+
+        let mut moved_pose = pose();
+        for index in [6, 8, 10] {
+            moved_pose.keypoints.as_mut().unwrap()[index][0] += 20.0;
+        }
+        let estimate = BodyPartsEstimator::new(&config)
+            .estimate_advanced(
+                &inputs(&face, &moved_pose, &segment, Some(target(Some(7)))),
+                &[],
+                13,
+                1000,
+                1000,
+                &mut temporal,
+            )
+            .pop()
+            .expect("smoothed advanced estimate");
+        let right_arm = estimate
+            .parts
+            .iter()
+            .find(|part| part.part == BodyPartKind::RightArm)
+            .expect("right arm");
+        let BodyGeometry::Polyline { points, .. } = &right_arm.geometry else {
+            panic!("right arm must remain a polyline");
+        };
+        assert!(points[0][0] > 250.0 && points[0][0] < 270.0);
+        assert!(right_arm.support.contains(&BodyPartSupport::Temporal));
+        assert!(!right_arm.stale);
     }
 
     #[test]

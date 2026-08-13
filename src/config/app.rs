@@ -254,9 +254,19 @@ impl CrossModelValidationConfig {
     }
 }
 
+#[derive(Debug, Clone, Copy, Default, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum BodyPartsMode {
+    #[default]
+    Validator,
+    Advanced,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct BodyPartsConfig {
+    #[serde(default)]
+    pub mode: BodyPartsMode,
     pub frame_local_match_iou: f32,
     pub face_frame_local_coverage: f32,
     pub joint_min_confidence: f32,
@@ -269,6 +279,14 @@ pub struct BodyPartsConfig {
     pub cross_model_quality_weight: f32,
     pub minimum_geometry_extent_px: f32,
     pub geometry_epsilon: f32,
+    #[serde(default = "default_advanced_smoothing_alpha")]
+    pub advanced_smoothing_alpha: f32,
+    #[serde(default = "default_advanced_mask_support_threshold")]
+    pub advanced_mask_support_threshold: f32,
+    #[serde(default = "default_advanced_max_gap_frames")]
+    pub advanced_max_gap_frames: u64,
+    #[serde(default = "default_advanced_temporal_quality_decay")]
+    pub advanced_temporal_quality_decay: f32,
 }
 
 impl BodyPartsConfig {
@@ -287,7 +305,30 @@ impl BodyPartsConfig {
             && unit(self.cross_model_quality_weight)
             && positive(self.minimum_geometry_extent_px)
             && positive(self.geometry_epsilon)
+            && self.advanced_smoothing_alpha > 0.0
+            && self.advanced_smoothing_alpha <= 1.0
+            && self.advanced_mask_support_threshold > 0.0
+            && self.advanced_mask_support_threshold <= 1.0
+            && self.advanced_max_gap_frames > 0
+            && (0.0..=1.0).contains(&self.advanced_temporal_quality_decay)
+            && self.advanced_temporal_quality_decay > 0.0
     }
+}
+
+const fn default_advanced_smoothing_alpha() -> f32 {
+    0.65
+}
+
+const fn default_advanced_mask_support_threshold() -> f32 {
+    0.60
+}
+
+const fn default_advanced_max_gap_frames() -> u64 {
+    3
+}
+
+const fn default_advanced_temporal_quality_decay() -> f32 {
+    0.85
 }
 
 fn unit(value: f32) -> bool {

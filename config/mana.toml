@@ -69,6 +69,9 @@ source_quality_weight = 0.40
 agreement_quality_weight = 0.60
 
 [perception.body_parts]
+# `validator` is the original stateless cross-model validator. Set this to
+# `advanced` only when temporal, mask-gated completion is desired.
+mode = "validator"
 frame_local_match_iou = 0.50
 face_frame_local_coverage = 0.50
 joint_min_confidence = 0.25

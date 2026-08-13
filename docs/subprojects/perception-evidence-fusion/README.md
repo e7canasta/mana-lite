@@ -1,6 +1,6 @@
 # Subproyecto: Fusion de Evidencias y Estimador de Partes Corporales
 
-**Estado:** Sprint 2, implementacion inicial de validacion y body parts en working tree
+**Estado:** Sprint 3, con profundidad por body part en modo diagnostico opt-in
 **Alcance:** validacion cruzada entre modelos y estimacion geometrica de partes
 **Dependencias:** cascada cooperativa, consolidacion y tracking existentes
 
@@ -12,6 +12,8 @@ Explorar dos capacidades relacionadas, pero separadas:
    evidencias de `detect`, `face`, `pose` y `segment`.
 2. **Body parts estimator:** construir una estimacion geometrica de partes
    corporales usando detecciones ya inferidas, keypoints, face, mascara y tiempo.
+3. **Depth evidence:** muestrear el mapa depth dentro de cada huella corporal
+   y conservar profundidad relativa al torso para la siguiente etapa postural.
 
 La primera responde: **"que tan coherentes son las evidencias?"**
 
@@ -64,7 +66,9 @@ temporal.
 - [Sprint 0](sprints/sprint-00-charter.md): contrato y limites.
 - [Sprint 1](sprints/sprint-01-cross-model-validation.md): validacion cruzada.
 - [Sprint 2](sprints/sprint-02-body-parts-estimator.md): estimador de partes.
-- [Sprint 3](sprints/sprint-03-temporal-evidence-fusion.md): ventana temporal.
+- [Sprint 3](sprints/sprint-03-temporal-evidence-fusion.md): ventana temporal completa.
+- [Sprint 3 depth](sprints/sprint-03-depth-body-parts.md): profundidad por parte
+  y crop opcional sobre bbox de persona.
 
 ## Relacion con la documentacion existente
 
@@ -87,7 +91,9 @@ children asociados a un track; el caso sin track solo puede ser frame-local.
 El blueprint normal `detect-room-face` no habilita pose ni segmentacion. El MVP
 de este subproyecto debe usar un blueprint que habilite explícitamente
 `detect-fast`, `face-yolo`, `pose-standard` y `seg-standard`, preferentemente el
-perfil `config/blueprints/detect-face-pose-seg/blueprint.toml`.
+perfil `config/blueprints/detect-face-pose-seg/blueprint.toml`. Para probar
+profundidad por partes se agrega el perfil opt-in
+`config/blueprints/detect-face-pose-seg-depth/blueprint.toml`.
 
 ## No objetivos
 

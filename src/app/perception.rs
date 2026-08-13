@@ -39,6 +39,7 @@ use crate::track::Track;
 use mana_control::ProcessImage;
 
 use super::CropFrameQueue;
+use super::body_parts::BodyPartsTemporalState;
 use super::observer::PerceptionObserver;
 use crate::occupancy::{RoomCardinality, SecondPersonState, SignalValidity};
 
@@ -112,6 +113,9 @@ pub struct PerceptionStage {
     /// entera al terminar; control nunca ve una a medio construir.
     pub(crate) image: ProcessImage,
     pub(crate) directive: ControlDirective,
+    /// Temporal memory is only consumed by the opt-in advanced body-parts
+    /// estimator. The validator mode never reads it.
+    pub(crate) body_parts_temporal: BodyPartsTemporalState,
     pub(crate) face_pose_context: Option<super::face_pose::PendingFacePoseContext>,
     pub(crate) boot_wall: chrono::DateTime<chrono::Utc>,
     pub(crate) boot_instant: Instant,
@@ -206,6 +210,7 @@ impl PerceptionSeed {
             last_keyframe_at: self.boot_instant,
             image: ProcessImage::empty(),
             directive: ControlDirective::default(),
+            body_parts_temporal: BodyPartsTemporalState::default(),
             face_pose_context: None,
             boot_wall: self.boot_wall,
             boot_instant: self.boot_instant,
