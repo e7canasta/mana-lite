@@ -1182,6 +1182,16 @@ pub(crate) fn attach_surface_evidence(
             if footprint_refs.is_empty() {
                 continue;
             }
+            let scene_stats = part.depth.is_none().then(|| {
+                mana_perception::polygon_stats(
+                    depth,
+                    roi,
+                    &footprint_refs,
+                    frame_width,
+                    frame_height,
+                    mask_clips,
+                )
+            });
             let mut evidence = Vec::new();
             for (layer, zones) in [
                 (SurfaceLayer::Bed, calibration.zones(SurfaceLayer::Bed)),
@@ -1238,8 +1248,26 @@ pub(crate) fn attach_surface_evidence(
                     evidence.push(candidate);
                 }
             }
-            if let Some(depth) = part.depth.as_mut() {
-                depth.surface_evidence = evidence;
+            if let Some(depth_evidence) = part.depth.as_mut() {
+                depth_evidence.surface_evidence = evidence;
+            } else if let Some(Some(stats)) = scene_stats {
+                let (map_width, map_height) = depth.dims();
+                part.depth = Some(BodyPartDepth {
+                    source_model: source_model.to_owned(),
+                    roi: stats.roi,
+                    map_width,
+                    map_height,
+                    sampled_pixels: stats.sampled_pixels,
+                    valid_pixels: stats.valid_pixels,
+                    valid_ratio: stats.valid_ratio,
+                    min_depth_m: stats.min_depth_m,
+                    median_depth_m: stats.median_depth_m,
+                    p10_depth_m: stats.p10_depth_m,
+                    p90_depth_m: stats.p90_depth_m,
+                    max_depth_m: stats.max_depth_m,
+                    relative_to_torso_m: None,
+                    surface_evidence: evidence,
+                });
             }
         }
     }

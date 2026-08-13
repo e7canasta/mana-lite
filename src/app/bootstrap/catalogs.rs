@@ -1,6 +1,8 @@
 //! Stage 1: load catalogs from disk and resolve the runtime model set.
 
 use std::collections::HashSet;
+use std::fs;
+use std::time::UNIX_EPOCH;
 
 use crate::config::{
     AppConfig, BlueprintConfig, FsmCatalog, MetricsLogConfig, ModelCatalog, RerunBlueprintConfig,
@@ -26,7 +28,8 @@ pub(super) struct LoadedCatalogs {
 /// Load model/blueprint/sidecar catalogs and resolve the enabled runtime set.
 pub(super) fn load_catalogs(config: &AppConfig) -> Result<LoadedCatalogs> {
     let (runtime_catalog, primary_model, blueprint) = load_runtime_models(config)?;
-    let (zones, fsm, depth_rules, surface_calibration) = load_control_sidecars(config)?;
+    let (zones, fsm, depth_rules, surface_calibration) =
+        load_control_sidecars(config, &runtime_catalog)?;
     let (viz_data, metrics_log, rerun_blueprint) = load_observability_sidecars(config)?;
     Ok(LoadedCatalogs {
         runtime_catalog,
@@ -211,6 +214,7 @@ fn validate_blueprint_selection(
 
 fn load_control_sidecars(
     config: &AppConfig,
+    runtime_catalog: &ModelCatalog,
 ) -> Result<(
     Option<ZoneCatalog>,
     Option<FsmCatalog>,
@@ -248,7 +252,53 @@ fn load_control_sidecars(
         .as_ref()
         .map(|path| load_surface_calibration(path))
         .transpose()?;
+    if let Some(ref calibration) = surface_calibration {
+        validate_surface_calibration_context(calibration, runtime_catalog)?;
+    }
     Ok((zones, fsm, depth_rules, surface_calibration))
+}
+
+fn validate_surface_calibration_context(
+    calibration: &mana_perception::SurfaceCalibration,
+    runtime_catalog: &ModelCatalog,
+) -> Result<()> {
+    let Some(model) = runtime_catalog.models.get(&calibration.model_key) else {
+        return Err(ManaError::Config(ConfigError::InvalidValue {
+            field: "inference.depth_calibration_file".into(),
+            msg: format!(
+                "calibration model '{}' is absent from the runtime catalog",
+                calibration.model_key
+            ),
+        }));
+    };
+    if !model.enabled {
+        return Err(ManaError::Config(ConfigError::InvalidValue {
+            field: format!("models.{}", calibration.model_key),
+            msg: "surface calibration requires its depth model to be enabled".into(),
+        }));
+    }
+    let Some(expected) = calibration.model_fingerprint.as_deref() else {
+        return Ok(());
+    };
+    let metadata = fs::metadata(&model.path).map_err(|error| {
+        ManaError::Config(ConfigError::InvalidValue {
+            field: format!("models.{}", calibration.model_key),
+            msg: format!("cannot fingerprint calibration model: {error}"),
+        })
+    })?;
+    let modified = metadata
+        .modified()
+        .ok()
+        .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+        .map_or(0, |duration| duration.as_secs());
+    let actual = format!("bytes:{}:mtime:{}", metadata.len(), modified);
+    if actual != expected {
+        return Err(ManaError::Config(ConfigError::InvalidValue {
+            field: "inference.depth_calibration_file".into(),
+            msg: "calibration model fingerprint differs from the runtime model".into(),
+        }));
+    }
+    Ok(())
 }
 
 fn load_observability_sidecars(
