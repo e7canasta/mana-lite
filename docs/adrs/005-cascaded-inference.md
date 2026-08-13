@@ -7,7 +7,8 @@
 
 This ADR records the earlier FSM-driven and timer-gated designs. The current
 runtime selects a named blueprint first; its rules then feed the cascade
-scheduler. Interval scheduling remains future work.
+scheduler. Basic cooperative interval scheduling is implemented; urgent
+requests and dynamic same-frame scheduling remain future work.
 
 A clinical deployment might have 5+ models (detect, pose, face, segment, depth). Running all of them on every frame is wasteful. We need a lazy execution model that runs expensive models only when context (detections, zone occupancy, FSM state) justifies the cost.
 

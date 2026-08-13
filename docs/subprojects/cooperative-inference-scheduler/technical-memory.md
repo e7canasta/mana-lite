@@ -1,6 +1,7 @@
 # Memoria tecnica: Scheduler Cooperativo de Inferencia
 
-**Estado:** Sprint 3 implementado; corrida de hardware y validacion cruzada pendientes
+**Estado:** Sprint 3 implementado; Sprint 4 listo para validacion cruzada
+face/pose; corrida de hardware pendiente
 **Ultima actualizacion:** 2026-08-12
 
 ## 1. Problema
@@ -130,20 +131,26 @@ elimina y se cuenta una sola vez.
 ## 7. Validacion cruzada
 
 La salida de un modelo no debe invocar directamente a otro modelo ni introducir
-tipos de percepcion en `mana-control`. La forma prevista es:
+tipos de percepcion en `mana-control`. El contrato implementado en Sprint 4 es:
 
 ```text
 face -> senal de incertidumbre
      -> request urgente de pose
 pose -> keypoints
-     -> adaptador de percepcion
-     -> face_pose_confirmed / pose_quality
-     -> FSM
+      -> adaptador de percepcion
+      -> FacePoseValidation { valid, quality, frame_number }
+      -> cara.pose_validada / cara.pose_calidad
+      -> FSM
 ```
 
-La validacion puede ocurrir en el siguiente keyframe, que es la version simple,
-o en el mismo frame mediante una cola dinamica de ejecucion, que sera posterior.
-En ambos casos el resultado debe llevar `frame_number`, timestamp y edad.
+Los keypoints se quedan en percepcion. `SceneSample` recibe solo el resultado
+semantico; `AgedEvidence<SceneSample>` ya aporta timestamp y
+`ProcessImage::observations_age_ms()` aporta edad. La primera version produce la
+request transitoria desde percepcion, conserva el `CascadeTarget` y valida en el
+siguiente keyframe. El mapa de joints usado es COCO `[nose, eyes, ears]`,
+verificado contra la forma `[1, 300, 57]` del ONNX real. El same-frame dinamico
+queda para Sprint 5 y solo si una corrida demuestra que la latencia adicional es
+inaceptable.
 
 ## 8. Por que no workers ahora
 
@@ -171,6 +178,7 @@ modelo largo retrasa sistematicamente la publicacion de modelos livianos.
 - Si el campo de intervalo se llama `interval_min_ms` o `period_ms` en el
   contrato publico. Esta memoria usa `interval_min_ms` porque expresa mejor un
   limite maximo de frecuencia.
-- El formato exacto de `InferenceRequest` para urgencias.
-- La politica de TTL para masks, keypoints y resultados reutilizados en
-  visualizacion.
+- La calibracion clinica final de los thresholds de geometria sobre una fuente
+  RTSP representativa.
+- La transicion concreta del FSM de produccion que exigira pose validada; el
+  motor generico y el fixture ya estan cubiertos.

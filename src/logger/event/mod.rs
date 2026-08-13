@@ -2,7 +2,9 @@ mod constructors;
 mod records;
 mod scene;
 
-pub use records::{DetRecord, FaceDwellTimerRecord, MaskRecord};
+pub use records::{
+    BodyGeometryRecord, BodyPartRecord, DetRecord, FaceDwellTimerRecord, MaskRecord,
+};
 pub use scene::{scene_events_to_log, track_event_to_log, zone_event_to_log};
 
 use crate::metrics::{MetricsReport, PerClassFrameStats};
@@ -116,6 +118,23 @@ pub enum Event {
         bbox: [f32; 4],
         primary_model: String,
         sources: Vec<String>,
+    },
+    CrossModelValidation {
+        frame_id: u64,
+        actor_id: u64,
+        quality: f32,
+        agreement: f32,
+        freshness: f32,
+        supporting_sources: Vec<String>,
+        contradicting_sources: Vec<String>,
+        reasons: Vec<String>,
+    },
+    BodyParts {
+        frame_id: u64,
+        actor_id: Option<u64>,
+        frame_local_index: Option<usize>,
+        overall_quality: f32,
+        parts: Vec<BodyPartRecord>,
     },
     Entity {
         track_id: u64,
@@ -231,6 +250,8 @@ impl Event {
             Event::Depth { .. } => JsonlLevel::Debug,
             Event::DepthRegion { .. } => JsonlLevel::Debug,
             Event::ConsolidatedDetection { .. } => JsonlLevel::Debug,
+            Event::CrossModelValidation { .. } => JsonlLevel::Debug,
+            Event::BodyParts { .. } => JsonlLevel::Debug,
             Event::Entity { .. } => JsonlLevel::Debug,
             Event::Zone { .. } => JsonlLevel::Debug,
         }

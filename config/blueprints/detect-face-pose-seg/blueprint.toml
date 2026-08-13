@@ -15,7 +15,9 @@ requires = "detect-fast"
 requires_class = "person"
 requires_exact_count = 1
 requires_min_confidence = 0.50
-requires_min_area_ratio = 0.01
+# Use the confirmed person track to resolve the dynamic face crop so short
+# detector dropouts do not suppress the face child.
+same_frame = false
 
 [[rules]]
 model = "pose-standard"
@@ -23,7 +25,9 @@ requires = "detect-fast"
 requires_class = "person"
 requires_exact_count = 1
 requires_min_confidence = 0.50
-requires_min_area_ratio = 0.01
+# Use the confirmed person track to resolve the dynamic pose crop so short
+# detector dropouts do not suppress the pose child.
+same_frame = false
 
 [[rules]]
 model = "seg-standard"
@@ -31,4 +35,6 @@ requires = "detect-fast"
 requires_class = "person"
 requires_exact_count = 1
 requires_min_confidence = 0.50
-requires_min_area_ratio = 0.01
+# Use the confirmed person track to resolve the dynamic segmentation crop so
+# short detector dropouts do not suppress the segmentation child.
+same_frame = false

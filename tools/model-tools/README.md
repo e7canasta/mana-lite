@@ -38,7 +38,7 @@ Convert an existing ONNX graph to FP16 without needing the original checkpoint:
 ```bash
 uv run model-tools fp16 \
   --input ../../models/yolo26s.onnx \
-  --output artifacts/yolo26s-fp16-640.onnx
+  --output artifacts/yolo26s-fp16-192.onnx
 ```
 
 The command verifies that the resulting graph contains `FLOAT16` initializers
@@ -60,21 +60,22 @@ uv run model-tools int8 \
 different lighting, occlusion, and empty scenes. Dynamic quantization is not used
 because it is generally a poor first choice for convolution-heavy YOLO graphs.
 
-Export the full small/medium/large/xlarge FP16 matrix for detection, pose,
-segmentation, and depth at both 320 and 640:
+Export the full small/medium/large/xlarge FP16 matrix for detection, pose and
+segmentation at both 192 and 320:
 
 ```bash
 ./scripts/export-yolo26-fp16-matrix.sh
 ```
 
-The script expects these checkpoints in `../../models`:
+The script expects these detection, pose and segmentation checkpoints in
+`../../models`:
 
 ```text
 yolo26{s,m,l,x}.pt
-yolo26{s,m,l,x}-{pose,seg,depth}.pt
+yolo26{s,m,l,x}-{pose,seg}.pt
 ```
 
-It writes 32 artifacts under `artifacts/yolo26-fp16/`. Existing artifacts are
+It writes 24 artifacts under `artifacts/yolo26-fp16/`. Existing artifacts are
 skipped so the command can be resumed; use `--force` to regenerate them. Missing
 checkpoints are reported at the end and cause a non-zero exit status. Use
 `--dry-run` to inspect the matrix first, or restrict it with `--tasks`, `--models`,
@@ -91,17 +92,17 @@ including browser-download suffixes such as `yolov12s-face (1).pt`. It writes
 12 artifacts under `artifacts/yoloface-fp16/`:
 
 ```text
-yolov{11,12}{s,m,l}-face-fp16-{320,640}.onnx
+yolov{11,12}{s,m,l}-face-fp16-{192,320}.onnx
 ```
 
 Use `--dry-run`, `--versions`, `--models`, and `--sizes` to inspect or restrict
 the matrix. The corresponding disabled catalog keys are
-`face-v{11,12}-{s,m,l}-{320,640}`. They include the same face crop and
+`face-v{11,12}-{s,m,l}-{192,320}`. They include the same face crop and
 postprocess policy as the active `face-yolo` entry and can be enabled one at a
 time after latency and detection quality have been compared.
 
 The runtime catalog registers the same matrix with keys such as
-`detect-s-320`, `pose-m-640`, `seg-l-320`, and `depth-x-640`. They are disabled
+`detect-s-320`, `pose-m-192`, and `seg-l-320`. They are disabled
 by default in `config/models.toml`; enable one only after selecting it in the
 cascade and benchmarking its quality and latency.
 

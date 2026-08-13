@@ -79,6 +79,7 @@ fn stall_emits_consecutive_scan_seq_and_blind_on_stale() {
             raw_person_count: 0,
             frame_number: 42,
             face_model_ran: false,
+            face_pose_validation: None,
         },
         start,
     ));

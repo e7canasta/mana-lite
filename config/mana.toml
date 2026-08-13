@@ -42,6 +42,47 @@ face_edge_margin_px = 32
 same_class_iou = 0.5
 
 # ============================================================================
+# POLÍTICA DE FUSIÓN DE EVIDENCIAS
+# Estos valores calibran el significado de apoyo, contradicción y geometría
+# derivada. El código implementa las operaciones; el perfil decide sus pesos.
+# ============================================================================
+[face_pose]
+enabled = true
+pose_model_key = "pose-standard"
+uncertain_face_max_confidence = 0.60
+min_face_confidence = 0.10
+pose_request_priority = 200
+request_ttl_ms = 4000
+keypoint_min_confidence = 0.50
+min_head_joints = 3
+min_face_person_coverage = 0.70
+min_pose_person_iou = 0.20
+max_head_face_center_distance_ratio = 0.75
+quality_face_weight = 0.25
+quality_pose_weight = 0.20
+quality_joint_weight = 0.30
+quality_geometry_weight = 0.25
+
+[perception.validation]
+relation_support_threshold = 0.50
+source_quality_weight = 0.40
+agreement_quality_weight = 0.60
+
+[perception.body_parts]
+frame_local_match_iou = 0.50
+face_frame_local_coverage = 0.50
+joint_min_confidence = 0.25
+segment_radius_ratio = 0.035
+head_padding_ratio = 0.06
+torso_radius_multiplier = 1.5
+head_face_weight = 0.65
+head_pose_weight = 0.35
+mask_quality_weight = 0.25
+cross_model_quality_weight = 0.20
+minimum_geometry_extent_px = 1.0
+geometry_epsilon = 0.00001
+
+# ============================================================================
 # POLÍTICA CLÍNICA
 # Estos tiempos expresan intención del protocolo y son agnósticos de cámara.
 # No multiplicarlos para compensar una frecuencia de I-frame distinta.

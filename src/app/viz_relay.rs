@@ -24,8 +24,8 @@
 
 use std::sync::Arc;
 
-use crate::detection::{ConsolidatedObservation, CropRect, Detection};
 use crate::depth_map::DepthFrame;
+use crate::detection::{ConsolidatedObservation, CropRect, Detection};
 use crate::infer::CropFrameInfo;
 use crate::metrics::PerClassFrameStats;
 use crate::occupancy::{RoomCardinality, SecondPersonState, SignalValidity};

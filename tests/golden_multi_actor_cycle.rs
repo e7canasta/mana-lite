@@ -233,6 +233,7 @@ fn sample(observations: Vec<SceneObservation>, frame: u64) -> SceneSample {
         signal_valid: true,
         raw_person_count,
         frame_number: frame,
+        face_pose_validation: None,
     }
 }
 
@@ -318,7 +319,7 @@ fn tick(
     assert_eq!(stamp.evidence_frame_id, sample.frame_number);
     assert_eq!(stamp.observations_age_ms, 0);
     assert_eq!(snapshot.catalog_version(), 1);
-    assert_eq!(snapshot.len(), 9);
+    assert_eq!(snapshot.len(), 11);
     assert_snapshots_equal(snapshot, &state.signal_snapshot);
     assert_base_signal_parity(state, &sample);
     image.measurement_pending = false;
@@ -347,7 +348,7 @@ fn assert_ratio_signal(snapshot: &SceneSignalsSnapshot, name: &str, expected: f3
 
 fn assert_base_signal_parity(state: &ControlState, sample: &SceneSample) {
     let snapshot = &state.signal_snapshot;
-    assert_eq!(snapshot.len(), 9);
+    assert_eq!(snapshot.len(), 11);
     assert_bool_signal(snapshot, "persona.presente", sample.raw_person_count > 0);
     assert!(matches!(
         signal(snapshot, "persona.cantidad"),

@@ -1,0 +1,112 @@
+# ============================================================================
+# ESCENARIO 08 — CASCADA CON HIJO DE SEGMENTACIÓN
+#
+# Es el 04 con otro hijo: `seg-standard` en vez de `face-yolo`. La compuerta
+# es la misma que la de face —exactamente una persona confirmada—; el punto
+# es la rama: que el ONNX de segmentación carga, que la máscara se emite en
+# el espacio del crop con `origin` al frame, y que viaja al JSONL (Spec-003).
+#
+# La comparación que importa es 08 contra 04: el único cambio es el hijo.
+#
+#   cargo run --release -- --config workshop/scenarios/08-detect-seg/mana.toml
+# ============================================================================
+
+# Archivos de mecanismo del dispositivo, compartidos con producción. No
+# expresan política del escenario, así que no se duplican.
+metrics_file = "config/metrics.toml"
+viz_file = "config/viz.toml"
+rerun_file = "config/rerun.toml"
+
+# Idénticos al escenario 01: es el control del experimento y la comparación no
+# vale si el transporte cambia.
+[source]
+url = "rtsp://192.168.1.6:8554/home2"
+username = "admin"
+password = ""
+transport = "tcp"
+keyframes_only = true
+
+[ingest]
+poll_timeout_ms = 50
+error_window_size = 128
+error_window_threshold = 25
+reconnect_backoff_initial_ms = 1000
+reconnect_backoff_max_ms = 30000
+
+[inference]
+model_catalog = "config/models.toml"
+blueprint_file = "config/blueprints/detect-seg/blueprint.toml"
+# `zones_file`, `fsm_file` y `depth_rules_file` siguen omitidos: la capa bajo
+# prueba es la rama de segmentación, no el catálogo clínico.
+
+# Los knobs de `detection` gobiernan la rama de face y acá quedan inertes: se
+# conservan para que la comparación contra el 04 no cambie dos cosas a la vez.
+[detection]
+face_component_coverage = 0.70
+face_max_center_y_ratio = 0.65
+face_edge_margin_px = 32
+same_class_iou = 0.5
+
+# ----------------------------------------------------------------------------
+# Presencia apagada a propósito, igual que en el 04: la compuerta de la cascada
+# lee los tracks directamente, no el estado de presencia.
+# ----------------------------------------------------------------------------
+[presence]
+enabled = false
+class = "person"
+
+[presence.poi]
+on_ms = 200
+off_ms = 16_000
+
+[presence.occupancy]
+single_confirm_ms = 3000
+empty_confirm_ms = 8000
+multiple_confirm_ms = 5000
+multiple_exit_ms = 5000
+require_confirmed_tracks = false
+
+[tracking]
+max_age_ms = 40_000
+tentative_max_age_ms = 6_000
+ghost_max_ms = 6_000
+min_hits = 2
+iou_threshold = 0.2
+nominal_dt_ms = 2000
+
+[tracking.noise]
+measurement = 1.0
+process_position = 1.0
+process_velocity = 0.25
+
+[health]
+data_stale_ms = 10_000
+stale_warn_ms = 5_000
+panic_window_cycles = 20
+max_panics_in_window = 3
+cycle_budget_ms = 500
+report_interval_s = 5
+
+[output]
+format = "jsonl"
+save_dir = "workshop/runs/08-detect-seg"
+rotate = "hourly"
+snapshot_dir = "workshop/runs/08-detect-seg/snapshots"
+snapshot_verbose = false
+jsonl_level = "debug"
+
+# ----------------------------------------------------------------------------
+# Igual que el 04: inferencia y tracking activos, zonas y FSM apagados.
+# ----------------------------------------------------------------------------
+[pipeline]
+snapshot = false
+infer = true
+track = true
+zones = false
+fsm = false
+
+# Apagado: el tráfico del bridge compite con la ingesta y contaminaría la
+# medición de atraso.
+[viz]
+enabled = false
+rerun_addr = "192.168.1.20:9876"

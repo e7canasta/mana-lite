@@ -1,0 +1,35 @@
+[blueprint]
+name = "inference-capacity-s-320"
+description = "CPU capacity benchmark for detect, face, pose and segmentation at s/320"
+primary_model = "detect-fast"
+models = ["detect-fast", "face-yolo", "pose-standard", "seg-standard"]
+requires_tracking = true
+model_overlay = "models-s-320.toml"
+
+[[rules]]
+model = "detect-fast"
+interval_min_ms = 0
+
+[[rules]]
+model = "face-yolo"
+requires = "detect-fast"
+requires_class = "person"
+requires_exact_count = 1
+requires_min_confidence = 0.50
+interval_min_ms = 0
+
+[[rules]]
+model = "pose-standard"
+requires = "detect-fast"
+requires_class = "person"
+requires_exact_count = 1
+requires_min_confidence = 0.50
+interval_min_ms = 0
+
+[[rules]]
+model = "seg-standard"
+requires = "detect-fast"
+requires_class = "person"
+requires_exact_count = 1
+requires_min_confidence = 0.50
+interval_min_ms = 2000

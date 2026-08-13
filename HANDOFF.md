@@ -3,7 +3,7 @@
 > Para que una sesión nueva retome el trabajo **sin leer nada más**.
 > Lengua del proyecto: español, también en comentarios de código y commits.
 
-*Actualizado: 2026-08-12, al cerrar Sprint 2 y preparar Sprint 3.*
+*Actualizado: 2026-08-12, al cerrar Sprint 3 y preparar Sprint 4.*
 
 ## 1. Qué es esto
 
@@ -59,18 +59,22 @@ alguien que llega hoy.
 
 ### Handoff actual del scheduler cooperativo
 
-Sprint 1 y Sprint 2 del subproyecto están implementados y verificados. Sprint 3
-ya tiene el runtime cooperativo de `InferenceRequest`: requests persistentes en
+Sprint 1, Sprint 2 y Sprint 3 están implementados y verificados. Sprint 3
+quedó en `c902d69` con el runtime cooperativo de `InferenceRequest`: requests persistentes en
 `ControlDirective`, cola transitoria durable, prioridad, TTL, congelamiento por
 keyframe, consumo one-shot, anti-starvation y métricas de espera/expiración. La
-validación semántica face/pose queda para Sprint 4. La corrida con pesos `640`
-queda pendiente porque esos artefactos no están en el checkout.
+validación semántica face/pose queda para Sprint 4. La entrada única de la
+próxima sesión es
+[`docs/subprojects/cooperative-inference-scheduler/sprints/sprint-04-handoff.md`](docs/subprojects/cooperative-inference-scheduler/sprints/sprint-04-handoff.md).
+La corrida física de capacidad ya está medida con los perfiles CPU `s/m` en
+`192` y `320`; `s/320` queda como default y `s/192` como perfil de frecuencia.
+Los resultados están en `workshop/scenarios/11-inference-capacity/README.md`.
 
-La especificación y el plan de Sprint 3 siguen en
-[`docs/subprojects/cooperative-inference-scheduler/sprints/sprint-03-handoff.md`](docs/subprojects/cooperative-inference-scheduler/sprints/sprint-03-handoff.md).
-No usar `Slot<ControlDirective>` para requests transitorias: ese slot es
-latest-wins por diseño. La próxima compuerta es `cargo test --workspace --release`
-y la revisión del diff de Sprint 3.
+La decisión recomendada para Sprint 4 es producir la request transitoria desde
+percepción y exponer al FSM solo `FacePoseValidation`, sin keypoints ni masks.
+No usar `Slot<ControlDirective>` para esa request transitoria: ese slot es
+latest-wins por diseño. La primera compuerta sigue siendo
+`cargo test --workspace --release`.
 
 ## 3. Cómo se trabaja
 

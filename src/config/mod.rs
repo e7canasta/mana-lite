@@ -13,10 +13,10 @@ mod zones;
 
 pub use crate::fsm::{FsmGuard, SignalLiteral};
 pub use app::{
-    AppConfig, DetectionConfig, HealthConfig, InferenceConfig, IngestConfig,
-    MANA_TOML_SCHEMA_VERSION, OccupancyPolicy, OutputConfig, PipelineConfig, PresenceConfig,
-    PresencePoiPolicy, Rotate, ScanConfigSection, SourceConfig, TrackingConfig,
-    TrackingNoiseConfig, VizConfig,
+    AppConfig, BodyPartsConfig, CrossModelValidationConfig, DetectionConfig, FacePoseConfig,
+    HealthConfig, InferenceConfig, IngestConfig, MANA_TOML_SCHEMA_VERSION, OccupancyPolicy,
+    OutputConfig, PerceptionPolicyConfig, PipelineConfig, PresenceConfig, PresencePoiPolicy,
+    Rotate, ScanConfigSection, SourceConfig, TrackingConfig, TrackingNoiseConfig, VizConfig,
 };
 pub use blueprint::{
     BlueprintConfig, BlueprintMetadata, CascadeConfig, CascadeRule, SemanticRegion,
@@ -179,17 +179,31 @@ mod tests {
     }
 
     #[test]
-    fn capacity_workshop_profiles_apply_s_and_m_640_overlays() {
-        for (blueprint_path, overlay, expected_marker) in [
+    fn capacity_workshop_profiles_apply_cpu_overlays() {
+        for (blueprint_path, overlay, expected_marker, expected_imgsz) in [
             (
-                "workshop/scenarios/11-inference-capacity/blueprint-s-640.toml",
-                "workshop/scenarios/11-inference-capacity/models-s-640.toml",
-                "yolo26s-fp16-640.onnx",
+                "workshop/scenarios/11-inference-capacity/blueprint-s-192.toml",
+                "workshop/scenarios/11-inference-capacity/models-s-192.toml",
+                "yolo26s-fp16-192.onnx",
+                192,
             ),
             (
-                "workshop/scenarios/11-inference-capacity/blueprint-m-640.toml",
-                "workshop/scenarios/11-inference-capacity/models-m-640.toml",
-                "yolo26m-fp16-640.onnx",
+                "workshop/scenarios/11-inference-capacity/blueprint-m-192.toml",
+                "workshop/scenarios/11-inference-capacity/models-m-192.toml",
+                "yolo26m-fp16-192.onnx",
+                192,
+            ),
+            (
+                "workshop/scenarios/11-inference-capacity/blueprint-s-320.toml",
+                "workshop/scenarios/11-inference-capacity/models-s-320.toml",
+                "yolo26s-fp16-320.onnx",
+                320,
+            ),
+            (
+                "workshop/scenarios/11-inference-capacity/blueprint-m-320.toml",
+                "workshop/scenarios/11-inference-capacity/models-m-320.toml",
+                "yolo26m-fp16-320.onnx",
+                320,
             ),
         ] {
             let blueprint: BlueprintConfig = load_config(Path::new(blueprint_path)).unwrap();
@@ -225,10 +239,10 @@ mod tests {
             .unwrap();
 
             assert_eq!(overridden.len(), 4);
-            assert_eq!(models.models["detect-fast"].imgsz, Some(640));
+            assert_eq!(models.models["detect-fast"].imgsz, Some(expected_imgsz));
             assert!(models.models["detect-fast"].path.ends_with(expected_marker));
-            assert_eq!(models.models["pose-standard"].imgsz, Some(640));
-            assert_eq!(models.models["seg-standard"].imgsz, Some(640));
+            assert_eq!(models.models["pose-standard"].imgsz, Some(expected_imgsz));
+            assert_eq!(models.models["seg-standard"].imgsz, Some(expected_imgsz));
         }
     }
 
@@ -305,9 +319,9 @@ mod tests {
     #[test]
     fn test_load_fp16_benchmark_matrix() {
         let catalog = load_model_catalog(Path::new("config/models.toml")).unwrap();
-        let tasks = ["detect", "pose", "seg", "depth"];
+        let tasks = ["detect", "pose", "seg"];
         let sizes = ["s", "m", "l", "x"];
-        let input_sizes = [320, 640];
+        let input_sizes = [192, 320, 640];
 
         for task in tasks {
             for size in sizes {
@@ -322,6 +336,20 @@ mod tests {
                     assert_eq!(entry.imgsz, Some(imgsz));
                     assert!(entry.is_valid());
                 }
+            }
+        }
+
+        for size in sizes {
+            for imgsz in [320, 640] {
+                let key = format!("depth-{size}-{imgsz}");
+                let entry = catalog
+                    .models
+                    .get(&key)
+                    .unwrap_or_else(|| panic!("missing FP16 matrix entry {key}"));
+                assert!(!entry.enabled, "benchmark entry {key} must stay disabled");
+                assert!(entry.half, "benchmark entry {key} must be FP16");
+                assert_eq!(entry.imgsz, Some(imgsz));
+                assert!(entry.is_valid());
             }
         }
     }
@@ -385,6 +413,11 @@ mod tests {
         assert!(config.pipeline.zones);
         assert!(config.pipeline.fsm);
         assert_eq!(config.detection.face_edge_margin_px, 32);
+        assert!(config.perception.validation.is_valid());
+        assert!(config.perception.body_parts.is_valid());
+        assert_eq!(config.face_pose.min_head_joints, 3);
+        assert_eq!(config.face_pose.quality_joint_weight, 0.30);
+        assert_eq!(config.perception.body_parts.segment_radius_ratio, 0.035);
         assert_eq!(
             config.inference.blueprint_file,
             Some(PathBuf::from(
@@ -447,7 +480,7 @@ mod tests {
     fn assert_face_matrix_entries(model: &ModelCatalog) {
         for version in [11, 12] {
             for size in ["s", "m", "l"] {
-                for imgsz in [320, 640] {
+                for imgsz in [192, 320, 640] {
                     let key = format!("face-v{version}-{size}-{imgsz}");
                     let entry = model
                         .models

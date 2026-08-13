@@ -1,7 +1,7 @@
-use super::Event;
 use super::writers::{write_control_stamp, write_f32, write_json_string, write_u64};
+use super::Event;
 use crate::logger::event::FaceDwellTimerRecord;
-use mana_control::signals::{SignalKind, SignalValue, scene_signal_catalog};
+use mana_control::signals::{scene_signal_catalog, SignalKind, SignalPresence, SignalValue};
 
 pub(super) fn write_entity_event(event: &Event, buf: &mut Vec<u8>) {
     let Event::Entity {
@@ -247,20 +247,22 @@ pub(super) fn write_scene_signals_event(event: &Event, buf: &mut Vec<u8>) {
     buf.extend_from_slice(b",\"catalog_version\":");
     write_u64(snapshot.catalog_version() as u64, buf);
     buf.extend_from_slice(b",\"signals\":[");
-    for (index, (tag, value)) in snapshot.iter().enumerate() {
-        if index > 0 {
+    let mut first = true;
+    for (tag, value) in snapshot.iter() {
+        let descriptor = scene_signal_catalog()
+            .get(tag)
+            .expect("snapshot tag must be declared in catalog");
+        if value.is_none() && descriptor.presence() == SignalPresence::WhenFacePoseValidation {
+            continue;
+        }
+        if !first {
             buf.push(b',');
         }
+        first = false;
         buf.extend_from_slice(b"{\"tag\":\"");
         write_json_string(tag.as_str(), buf);
         buf.extend_from_slice(b"\",\"kind\":\"");
-        write_signal_kind(
-            scene_signal_catalog()
-                .get(tag)
-                .expect("snapshot tag must be declared in catalog")
-                .kind(),
-            buf,
-        );
+        write_signal_kind(descriptor.kind(), buf);
         buf.push(b'\"');
         match value {
             Some(SignalValue::Bool(value)) => {

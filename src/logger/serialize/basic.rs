@@ -1,5 +1,5 @@
-use super::Event;
 use super::writers::{append_field, write_f64, write_json_string, write_u64};
+use super::Event;
 use crate::metrics::PerModelMetrics;
 use std::collections::HashMap;
 
@@ -201,8 +201,8 @@ pub(super) fn write_metrics_models(
         first_model = false;
         buf.extend_from_slice(b"\"");
         buf.extend_from_slice(name.as_bytes());
-        buf.extend_from_slice(b"\":{");
-        append_field(buf, "calls", m.inferences);
+        buf.extend_from_slice(b"\":{\"calls\":");
+        write_u64(m.inferences, buf);
         append_field(buf, "total_ms", m.infer_total_us / 1000);
         // Sin llamadas no hay mínimo ni máximo, y ausencia no es cero: el
         // acumulador de mínimo arranca en `u64::MAX` y emitirlo publicaba
@@ -331,6 +331,7 @@ mod tests {
         assert!(json.contains(r#""skips":3"#), "falta `skips` en {json}");
         assert!(json.contains(r#""gated":11"#), "falta `gated` en {json}");
         assert!(json.contains(r#""calls":7"#), "falta `calls` en {json}");
+        assert!(!json.contains("{,"), "objeto JSON inválido: {json}");
         assert!(
             json.contains(r#""gap_p95_ms":3200"#),
             "falta gap p95 en {json}"
@@ -389,6 +390,7 @@ mod tests {
             json.contains(r#""gated":5"#),
             "el contador sí tiene que salir"
         );
+        assert!(!json.contains("{,"), "objeto JSON inválido: {json}");
     }
 
     /// Un modelo que nunca fue apagado ni salteado igual publica los dos
@@ -404,6 +406,7 @@ mod tests {
 
         assert!(json.contains(r#""skips":0"#), "falta `skips` en {json}");
         assert!(json.contains(r#""gated":0"#), "falta `gated` en {json}");
+        assert!(!json.contains("{,"), "objeto JSON inválido: {json}");
         assert!(
             json.contains(r#""urgent_requests":0"#),
             "falta urgent_requests en {json}"

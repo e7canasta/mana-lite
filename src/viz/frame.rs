@@ -6,7 +6,7 @@ use ultralytics_inference::visualizer::color::{Colormap, DepthViz};
 use crate::depth_map::DepthFrame;
 use crate::infer::CropFrameInfo;
 
-use super::{DEPTH_OVERLAY_ALPHA, Inner, VizBridge, VizImageFormat, sanitize_entity_name};
+use super::{sanitize_entity_name, Inner, VizBridge, VizImageFormat, DEPTH_OVERLAY_ALPHA};
 
 pub(super) fn log_frame_rgb24(
     rec: &rerun::RecordingStream,
@@ -141,16 +141,32 @@ impl VizBridge {
             _ => return,
         };
         let path = format!("/world/camera/crops/{model}/bgr");
-        if let Err(e) = log_frame_rgb24_owned(
-            rec,
-            &path,
-            &RawFrameV1 {
-                width: crop.w,
-                height: crop.h,
-                ..header.clone()
-            },
-            crop.rgb,
-        ) {
+        let crop_header = RawFrameV1 {
+            width: crop.w,
+            height: crop.h,
+            ..header.clone()
+        };
+        let rgb = crop.rgb;
+        let complete = rgb.len() >= (crop_header.width * crop_header.height * 3) as usize;
+        let result = match self.image_format {
+            VizImageFormat::Jpeg { quality } if complete => {
+                match encode_jpeg(&rgb, crop_header.width, crop_header.height, quality) {
+                    Ok(bytes) => log_at(
+                        rec,
+                        &path,
+                        crop_header.timestamp_ns,
+                        &rerun::EncodedImage::from_file_contents(bytes),
+                        || format!("rrd jpeg crop log failed (model={model})"),
+                    ),
+                    Err(e) => {
+                        log::warn!("viz: jpeg crop encode failed, sending raw: {e}");
+                        log_frame_rgb24_owned(rec, &path, &crop_header, rgb)
+                    }
+                }
+            }
+            _ => log_frame_rgb24_owned(rec, &path, &crop_header, rgb),
+        };
+        if let Err(e) = result {
             log::warn!("viz crop frame {model} failed: {e}");
         }
     }

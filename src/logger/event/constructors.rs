@@ -1,4 +1,6 @@
-use super::{DEPTH_EVENT_VERSION, Event, FaceDwellTimerRecord, JSONL_SCHEMA_VERSION};
+use super::{
+    BodyPartRecord, DEPTH_EVENT_VERSION, Event, FaceDwellTimerRecord, JSONL_SCHEMA_VERSION,
+};
 use crate::metrics::{MetricsReport, PerClassFrameStats};
 use crate::scan::ControlStamp;
 use mana_control::signals::SceneSignalsSnapshot;
@@ -159,6 +161,44 @@ impl Event {
             bbox,
             primary_model: primary_model.into(),
             sources,
+        }
+    }
+
+    pub fn cross_model_validation(
+        actor_id: u64,
+        frame_id: u64,
+        quality: f32,
+        agreement: f32,
+        freshness: f32,
+        supporting_sources: Vec<String>,
+        contradicting_sources: Vec<String>,
+        reasons: Vec<String>,
+    ) -> Self {
+        Event::CrossModelValidation {
+            frame_id,
+            actor_id,
+            quality,
+            agreement,
+            freshness,
+            supporting_sources,
+            contradicting_sources,
+            reasons,
+        }
+    }
+
+    pub fn body_parts(
+        frame_id: u64,
+        actor_id: Option<u64>,
+        frame_local_index: Option<usize>,
+        overall_quality: f32,
+        parts: Vec<BodyPartRecord>,
+    ) -> Self {
+        Event::BodyParts {
+            frame_id,
+            actor_id,
+            frame_local_index,
+            overall_quality,
+            parts,
         }
     }
 

@@ -39,11 +39,11 @@ mana-lite/
 │   ├── viz.toml         # visualizacion: que se envia a Rerun
 │   └── rerun.toml       # blueprint: layout del dashboard en Rerun
 ├── models/
-│   ├── yolo26n.onnx        # detect-fast: rapido, buena confianza
+  │   ├── yolo26s-fp16-320.onnx # detect-fast: baseline FP16 320
 │   ├── yolo26s.onnx        # detect-v2: balance velocidad/precision
 │   ├── yolo26x.onnx        # detect-large: lento, maxima precision
 │   ├── yolo26n-pose.onnx   # pose-standard: keypoints, requiere persona
-│   ├── yolov12l-face.onnx  # face-yolo: face sobre persona (same_frame)
+  │   ├── yolov12s-face.onnx  # face-yolo: face sobre persona (same_frame)
 │   └── yolo26*-seg/depth   # seg-standard / depth-standard (FP16)
 ├── docs/
 │   ├── onboarding.md       # este archivo
@@ -407,7 +407,7 @@ Tres modelos pueden compartir una política sin duplicar todo el TOML:
 
 ```toml
 [models.detect-fast]              # root — sin crop, frame completo
-path = "models/yolo26n.onnx"
+path = "tools/model-tools/artifacts/yolo26-fp16/yolo26s-fp16-320.onnx"
 task = "detect"
 confidence = 0.5
 
@@ -543,7 +543,7 @@ Ambas vistas aparecen en pestañas separadas del blueprint. Los bboxes del model
 # config/models/detect.toml (incluido por models.toml)
 task = "detect"
 [models.detect-fast]
-path = "models/yolo26n.onnx"
+path = "tools/model-tools/artifacts/yolo26-fp16/yolo26s-fp16-320.onnx"
 task = "detect"
 confidence = 0.5
 ```
@@ -576,7 +576,7 @@ root independiente.
 # config/models/detect.toml
 task = "detect"
 [models.detect-fast]
-path = "models/yolo26n.onnx"
+path = "tools/model-tools/artifacts/yolo26-fp16/yolo26s-fp16-320.onnx"
 task = "detect"
 confidence = 0.5
 
@@ -588,13 +588,13 @@ confidence = 0.3
 half = true
 
 [models.face-yolo]
-path = "models/yolov12l-face.onnx"
+path = "tools/model-tools/artifacts/yoloface-fp16/yolov12s-face-fp16-320.onnx"
 task = "detect"
 confidence = 0.10
 
 # config/models/segment.toml
 [models.seg-standard]
-path = "models/yolo26x-seg-fp16-640.onnx"
+path = "tools/model-tools/artifacts/yolo26-fp16/yolo26s-seg-fp16-320.onnx"
 task = "segment"
 half = true
 
@@ -725,7 +725,7 @@ fsm = false                     # sin FSM = sin validacion de estados
 ```toml
 # models.toml — solo el mas chico
 [models.detect-fast]
-path = "models/yolo26n.onnx"
+path = "tools/model-tools/artifacts/yolo26-fp16/yolo26s-fp16-320.onnx"
 task = "detect"
 confidence = 0.4               # mas permisivo
 imgsz = 416                    # resolucion reducida → mas rapido

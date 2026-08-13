@@ -59,7 +59,7 @@ only the fields that differ from its profile.
 
 ```toml
 [models.detect-fast]
-path = "models/yolo26n.onnx"
+path = "tools/model-tools/artifacts/yolo26-fp16/yolo26s-fp16-320.onnx"
 task = "detect"
 enabled = true          # default true; false deshabilita la rama en el cascade
 confidence = 0.5
@@ -67,7 +67,7 @@ iou = 0.5
 max_det = 100
 imgsz = 320
 device = "cpu"
-half = false            # FP16 inference
+half = true             # FP16 inference
 
 [models.detect-fast.postprocess]
 allow_classes = ["person", "wheelchair"]
@@ -84,12 +84,12 @@ imgsz = 320
 half = true
 
 [models.face-yolo]
-path = "models/yolov12l-face.onnx"
+path = "tools/model-tools/artifacts/yoloface-fp16/yolov12s-face-fp16-320.onnx"
 task = "detect"
 confidence = 0.1
 
 [models.seg-standard]
-path = "models/yolo26x-seg-fp16-640.onnx"
+path = "tools/model-tools/artifacts/yolo26-fp16/yolo26s-seg-fp16-320.onnx"
 task = "segment"
 confidence = 0.2
 half = true
@@ -269,6 +269,18 @@ When `pipeline.track = true`, the tracker additionally publishes the canonical
 bbox as a `TrackedEntity` and Rerun can show it in the entity layer. Therefore
 an observation and a tracked entity are deliberately separate outputs, even
 when they describe the same subject in one frame.
+
+When a child model has an unambiguous `CascadeTarget.id`, perception may emit a
+debug `cross_model_validation` event after the current keyframe has run:
+
+```json
+{"type":"cross_model_validation","frame_id":12,"actor_id":7,"quality":0.81,"agreement":0.75,"freshness":1,"supporting_sources":["face-yolo","pose-standard"],"contradicting_sources":[],"reasons":["face_pose=0.75"]}
+```
+
+This is a diagnostic summary, not a second scene entity. It does not move
+keypoints, masks or model payloads into `mana-control`. `freshness = 1` means the
+first implementation only compares outputs from the current keyframe; temporal
+decay belongs to a later evidence-window stage.
 
 Independent freshness and TTL for secondary evidence are planned for the
 tracking stage. They are not part of the current stateless consolidation mode.

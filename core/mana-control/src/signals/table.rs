@@ -402,7 +402,7 @@ mod tests {
 
         let snap = table.snapshot(cat);
         assert_eq!(snap.catalog_version(), 1);
-        assert_eq!(snap.len(), 9);
+        assert_eq!(snap.len(), 11);
 
         match snap.get(&tag("persona.presente")) {
             Some(SignalValue::Bool(true)) => {}
@@ -416,7 +416,7 @@ mod tests {
         let mut sorted = ordered.clone();
         sorted.sort_unstable();
         assert_eq!(ordered, sorted);
-        assert_eq!(ordered.len(), 9);
+        assert_eq!(ordered.len(), 11);
     }
 
     #[test]

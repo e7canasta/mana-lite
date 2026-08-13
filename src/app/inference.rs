@@ -8,8 +8,17 @@ use crate::infer::{InferenceResult, compute_bbox_roi, compute_upper_square_roi};
 use crate::logger::Event;
 use crate::snapshot::FrameBuffer;
 use mana_perception::domain::{ClassName, ModelId};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
+use super::body_parts::{
+    ActorRef, BodyGeometry, BodyPartsEstimate, BodyPartsEstimator, PendingBodyPartsEvidence,
+};
+use super::cross_model_validation::{
+    CrossModelValidation, EvidenceKind, PendingEvidence, validate_pending,
+};
+use super::face_pose::{
+    PendingFacePoseContext, is_uncertain_face, select_pose_detection, validate_face_pose,
+};
 use super::perception::{PerceptionConfig, PerceptionStage};
 use super::{CycleContext, FrameSize};
 
@@ -20,11 +29,13 @@ struct ClinicalSample {
     raw_person_count: usize,
     frame_number: u64,
     face_model_ran: bool,
+    face_pose_validation: Option<mana_control::FacePoseValidation>,
 }
 
 struct PendingModelOutput {
     model_key: String,
     output: InferenceResult,
+    target: Option<CascadeTarget>,
     crop_frame: Option<crate::infer::CropFrameInfo>,
     crop_rect: Option<CropRect>,
 }
@@ -33,6 +44,7 @@ impl PerceptionStage {
     /// Runs one inference cycle over a keyframe, in fixed stage order.
     pub(super) fn run_inference(&mut self, cycle: CycleContext<'_>, config: &PerceptionConfig) {
         let fb = cycle.frame;
+        self.expire_face_pose_context(cycle.now);
         #[cfg(feature = "rerun")]
         self.observer.viz.clear_depth_context_boxes();
 
@@ -71,6 +83,41 @@ impl PerceptionStage {
             urgent_request.as_ref(),
         );
 
+        let cross_model_validations = self.validate_cross_model_from_pending(
+            &pending,
+            cycle.frame_number,
+            fb.w,
+            fb.h,
+            &config.perception.validation,
+            &config.face_pose,
+        );
+        for validation in &cross_model_validations {
+            self.observer.emit(Event::cross_model_validation(
+                validation.actor_id,
+                validation.frame_number,
+                validation.quality,
+                validation.agreement,
+                validation.freshness,
+                validation.supporting_sources.clone(),
+                validation.contradicting_sources.clone(),
+                validation.reasons.clone(),
+            ));
+        }
+        let body_parts = self.estimate_body_parts_from_pending(
+            &pending,
+            &cross_model_validations,
+            cycle.frame_number,
+            fb.w,
+            fb.h,
+            &config.perception.body_parts,
+        );
+        for estimate in &body_parts {
+            self.observer.emit(body_parts_event(estimate));
+        }
+
+        let face_pose_validation =
+            self.validate_face_pose_from_pending(&pending, cycle.frame_number, fb.w, fb.h, config);
+        self.request_face_pose_from_pending(&pending, cycle.frame_number, config, cycle.now);
         let observations = self.consolidate_and_emit(&pending, cycle.frame_number);
         let face_model_ran = pending
             .iter()
@@ -90,6 +137,7 @@ impl PerceptionStage {
                 raw_person_count,
                 frame_number: cycle.frame_number,
                 face_model_ran,
+                face_pose_validation,
             },
             cycle.now,
         );
@@ -292,6 +340,87 @@ impl PerceptionStage {
         }
     }
 
+    fn validate_cross_model_from_pending(
+        &self,
+        pending: &[PendingModelOutput],
+        frame_number: u64,
+        frame_width: u32,
+        frame_height: u32,
+        validation_config: &crate::config::CrossModelValidationConfig,
+        face_pose_config: &crate::config::FacePoseConfig,
+    ) -> Vec<CrossModelValidation> {
+        let inputs = pending
+            .iter()
+            .filter_map(|item| {
+                let kind = if self.models.is_face_model(&item.model_key) {
+                    EvidenceKind::Face
+                } else if self.models.is_pose(&item.model_key) {
+                    EvidenceKind::Pose
+                } else if self.models.is_segment(&item.model_key) {
+                    EvidenceKind::Segment
+                } else if self.models.is_box_model(&item.model_key) {
+                    EvidenceKind::Detection
+                } else {
+                    return None;
+                };
+                Some(PendingEvidence {
+                    model_key: item.model_key.as_str(),
+                    kind,
+                    target: item.target?,
+                    detections: &item.output.detections,
+                })
+            })
+            .collect::<Vec<_>>();
+        validate_pending(
+            &inputs,
+            frame_number,
+            frame_width,
+            frame_height,
+            validation_config,
+            face_pose_config,
+        )
+    }
+
+    fn estimate_body_parts_from_pending(
+        &self,
+        pending: &[PendingModelOutput],
+        validations: &[CrossModelValidation],
+        frame_number: u64,
+        frame_width: u32,
+        frame_height: u32,
+        config: &crate::config::BodyPartsConfig,
+    ) -> Vec<BodyPartsEstimate> {
+        let inputs = pending
+            .iter()
+            .filter_map(|item| {
+                let kind = if self.models.is_face_model(&item.model_key) {
+                    EvidenceKind::Face
+                } else if self.models.is_pose(&item.model_key) {
+                    EvidenceKind::Pose
+                } else if self.models.is_segment(&item.model_key) {
+                    EvidenceKind::Segment
+                } else if self.models.is_box_model(&item.model_key) {
+                    EvidenceKind::Detection
+                } else {
+                    return None;
+                };
+                Some(PendingBodyPartsEvidence {
+                    model_key: item.model_key.as_str(),
+                    kind,
+                    target: item.target,
+                    detections: &item.output.detections,
+                })
+            })
+            .collect::<Vec<_>>();
+        BodyPartsEstimator::new(config).estimate(
+            &inputs,
+            validations,
+            frame_number,
+            frame_width,
+            frame_height,
+        )
+    }
+
     /// Stage: project consolidated sample into the control process image.
     fn publish_clinical_sample(&mut self, sample: ClinicalSample, now: Instant) {
         self.image.observations = Some(mana_control::AgedEvidence::new(
@@ -341,10 +470,116 @@ impl PerceptionStage {
         pending.push(PendingModelOutput {
             model_key: model_key.to_owned(),
             output,
+            target,
             crop_frame,
             crop_rect,
         });
         true
+    }
+
+    fn expire_face_pose_context(&mut self, now: Instant) {
+        if self
+            .face_pose_context
+            .is_some_and(|context| context.expires_at <= now)
+        {
+            self.face_pose_context = None;
+        }
+    }
+
+    fn validate_face_pose_from_pending(
+        &mut self,
+        pending: &[PendingModelOutput],
+        frame_number: u64,
+        frame_width: u32,
+        frame_height: u32,
+        config: &PerceptionConfig,
+    ) -> Option<mana_control::FacePoseValidation> {
+        let context = self.face_pose_context?;
+        let pose_output = pending.iter().find(|item| {
+            item.model_key == config.face_pose.pose_model_key
+                && self.models.is_pose(&item.model_key)
+        });
+        let Some(pose_output) = pose_output else {
+            return None;
+        };
+        let Some(target) = pose_output.target else {
+            self.face_pose_context = None;
+            return None;
+        };
+        let Some(pose) = select_pose_detection(&pose_output.output.detections, target) else {
+            self.face_pose_context = None;
+            return None;
+        };
+        self.face_pose_context = None;
+        validate_face_pose(
+            context,
+            Some(target),
+            pose,
+            frame_number,
+            frame_width,
+            frame_height,
+            &config.face_pose,
+        )
+    }
+
+    fn request_face_pose_from_pending(
+        &mut self,
+        pending: &[PendingModelOutput],
+        frame_number: u64,
+        config: &PerceptionConfig,
+        now: Instant,
+    ) {
+        if !config.face_pose.enabled || self.face_pose_context.is_some() {
+            return;
+        }
+        let pose_model = config.face_pose.pose_model_key.as_str();
+        if !self
+            .cascade
+            .all_models()
+            .iter()
+            .any(|model| model == pose_model)
+            || !self.models.enabled(pose_model)
+            || !self.infer.has_model(pose_model)
+        {
+            return;
+        }
+
+        let candidate = pending
+            .iter()
+            .filter(|item| self.models.is_face_model(&item.model_key))
+            .filter_map(|item| {
+                let target = item.target?;
+                let face = item
+                    .output
+                    .detections
+                    .iter()
+                    .filter(|detection| detection.class == "face")
+                    .filter(|detection| is_uncertain_face(detection, &config.face_pose))
+                    .max_by(|left, right| left.confidence.total_cmp(&right.confidence))?;
+                Some((face.bbox, face.confidence, target))
+            })
+            .max_by(|(_, left_confidence, _), (_, right_confidence, _)| {
+                left_confidence.total_cmp(right_confidence)
+            });
+        let Some((face_bbox, face_confidence, target)) = candidate else {
+            return;
+        };
+        if target.id.is_none() {
+            return;
+        }
+
+        let context = PendingFacePoseContext {
+            face_bbox,
+            face_confidence,
+            target,
+            source_frame_number: frame_number,
+            requested_at: now,
+            expires_at: now + Duration::from_millis(config.face_pose.request_ttl_ms),
+        };
+        let request = context.request(&config.face_pose);
+        if self.enqueue_transient_request(request, config, now) {
+            self.face_pose_context = Some(context);
+        }
     }
 
     fn resolve_crop_rect(
@@ -420,6 +655,48 @@ fn observations_person_count(observations: &[ConsolidatedObservation], class: &s
         .count()
 }
 
+fn body_parts_event(estimate: &BodyPartsEstimate) -> Event {
+    let (actor_id, frame_local_index) = match estimate.actor_ref {
+        ActorRef::Track(actor_id) => (Some(actor_id), None),
+        ActorRef::FrameLocal { index, .. } => (None, Some(index)),
+    };
+    Event::body_parts(
+        estimate.frame_number,
+        actor_id,
+        frame_local_index,
+        estimate.overall_quality,
+        estimate
+            .parts
+            .iter()
+            .map(|part| crate::logger::BodyPartRecord {
+                part: part.part.as_str().into(),
+                geometry: match &part.geometry {
+                    BodyGeometry::Bbox(bbox) => crate::logger::BodyGeometryRecord::Bbox(*bbox),
+                    BodyGeometry::Polygon(points) => {
+                        crate::logger::BodyGeometryRecord::Polygon(points.clone())
+                    }
+                    BodyGeometry::Polyline { points, radius } => {
+                        crate::logger::BodyGeometryRecord::Polyline {
+                            points: points.clone(),
+                            radius: *radius,
+                        }
+                    }
+                },
+                support: part
+                    .support
+                    .iter()
+                    .map(|support| support.as_str().into())
+                    .collect(),
+                source_models: part.source_models.clone(),
+                quality: part.quality,
+                mask_coverage: part.mask_coverage,
+                source_frame_numbers: part.source_frame_numbers.clone(),
+                stale: part.stale,
+            })
+            .collect(),
+    )
+}
+
 fn gate_observations(tracks: &[mana_control::track::Track]) -> Vec<GateObservation> {
     tracks
         .iter()
@@ -474,5 +751,6 @@ fn project_scene_sample(sample: &ClinicalSample) -> mana_control::SceneSample {
         raw_person_count: sample.raw_person_count,
         frame_number: sample.frame_number,
         face_model_ran: sample.face_model_ran,
+        face_pose_validation: sample.face_pose_validation,
     }
 }

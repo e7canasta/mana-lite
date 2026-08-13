@@ -282,7 +282,8 @@ detect-fast (root)
 depth-standard (root independiente, ROI fijo [560,140 1240,820])
 ```
 
-`face-yolo` usa `models/yolov12l-face.onnx`. No es un modelo root: en la
+`face-yolo` usa `tools/model-tools/artifacts/yoloface-fp16/yolov12s-face-fp16-320.onnx`.
+No es un modelo root: en la
 cascada generica puede usar `same_frame = true`; el blueprint activo
 `detect-room-face` usa el track confirmado del padre para construir el crop
 facial dinamico. En ambos casos solo se ejecuta con exactamente una persona.

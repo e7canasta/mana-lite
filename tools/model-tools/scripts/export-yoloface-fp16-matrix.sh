@@ -16,7 +16,7 @@ DRY_RUN=0
 FORCE=0
 VERSIONS=(11 12)
 MODEL_CODES=(s m l)
-INPUT_SIZES=(320 640)
+INPUT_SIZES=(192 320)
 
 declare -a failures=()
 exported=0
@@ -26,14 +26,14 @@ usage() {
     cat <<'EOF'
 Usage: scripts/export-yoloface-fp16-matrix.sh [options]
 
-Export YOLO11/YOLO12 face checkpoints to FP16 ONNX at 320 and 640.
+Export YOLO11/YOLO12 face checkpoints to FP16 ONNX at 192 and 320.
 
 Options:
   --source-dir DIR   Directory containing YOLO face .pt checkpoints
   --output-dir DIR   Artifact directory (default: artifacts/yoloface-fp16)
   --versions LIST    Comma-separated model versions: 11,12
   --models LIST      Comma-separated model sizes: s,m,l
-  --sizes LIST       Comma-separated input sizes (default: 320,640)
+  --sizes LIST       Comma-separated input sizes (default: 192,320)
   --device DEVICE    Ultralytics device (default: cpu)
   --force            Re-export files that already exist
   --dry-run          Print planned exports without running them

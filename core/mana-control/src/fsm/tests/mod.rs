@@ -3,6 +3,7 @@ mod context;
 mod depth;
 mod dwell;
 mod face_dwell;
+mod face_pose;
 mod guards;
 mod lifecycle;
 mod zones;

@@ -2,11 +2,13 @@
 
 Banco de escenarios para homologación funcional y operativa de `mana-lite`.
 
-> **Si llegás hoy al proyecto, leé [`MANUAL.md`](MANUAL.md).** Es el manual
-> operativo del banco: entorno, fuentes de video, los seis peldaños, cómo se lee
-> cada línea del reporte y una tabla de síntoma → dónde mirar. Es autocontenido
-> — este índice y el README de cada escenario son el detalle, no el punto de
-> entrada.
+> **Si llegás hoy al proyecto, leé [`ONBOARDING.md`](ONBOARDING.md).** Es el
+> primer día y el protocolo de prueba de versión: entorno, la escalera con sus
+> compuertas y números de referencia, cómo decidir pasa/no pasa y qué dejar
+> como evidencia. Después, [`MANUAL.md`](MANUAL.md): el manual operativo del
+> banco — fuentes de video, cómo se lee cada línea del reporte y una tabla de
+> síntoma → dónde mirar. Los dos son autocontenidos; este índice y el README de
+> cada escenario son el detalle, no el punto de entrada.
 
 `config/` es la configuración de producción. `workshop/` es donde se prueba una
 cosa por vez, con la configuración completa a la vista y un criterio de
@@ -34,22 +36,35 @@ sospechosas. La escalera existe para que en cada punto haya como mucho una.
 |04|`04-infer-track`|Tracking y cascada con hijo|La compuerta del hijo gobierna y el recorte sigue al track|
 |05|`05-clinical`|Zonas, FSM, presencia, ocupancia|Cadencia en el piso del temporizador con todo encendido|
 |06|`06-clinical-viz`|*(ninguna)* — el 05 con visor|El visor no cuesta evidencia: `kf_pisados` e `img_pisadas` en cero|
+|07|`07-detect-pose`|Rama de pose (`detect-pose`)|`pose-standard` carga, su compuerta gobierna y el recorte sigue al track|
+|08|`08-detect-seg`|Rama de segmentación (`detect-seg`)|`seg-standard` carga y emite `mask` al JSONL con la compuerta gobernando|
+|09|`09-detect-face-pose`|Segunda rama hermana (`detect-face-pose`)|Dos compuertas separadas, dos recortes, costo aditivo|
+|10|`10-detect-face-pose-seg`|Tercera rama hermana (`detect-face-pose-seg`)|Tres compuertas separadas, máscara + pose + face en la misma corrida|
+|11|`11-inference-capacity`|Instrumento de capacidad del scheduler|Gap y atraso por modelo en ventana larga para perfiles `s/m` en `192` y `320`|
 
-Los seis están corridos y verdes al 2026-08-12, con los números medidos en el
-README de cada uno. El 06 es el único que no agrega una capa: existe para
+Los seis primeros están corridos y verdes al 2026-08-12, con los números medidos
+en el README de cada uno. El 06 es el único que no agrega una capa: existe para
 **mirar**, porque los cinco de abajo prueban que el sistema sostiene su contrato
 temporal y ninguno prueba que lo que ve sea razonable.
 
-Sin cobertura todavía: los blueprints `detect-face-pose-seg` y
-`detect-room-raw`.
+Los escenarios 07–10 extienden la escalera por la familia de perfiles ligeros:
+uno por rama (pose, seg) y los dos abanicos (face+pose, face+pose+seg). Los
+cuatro ya tienen corridas formales de 180 s contra `clip1` y `home2` usando el
+baseline `YOLO26s FP16 320` para detección, pose y segmentación, y `YOLO12s FP16
+320` para face. Las cuatro ramas cargan y gobiernan sus salidas sin
+`kf_pisados`; segmentación bajó de aproximadamente 1.1 s por inferencia con
+`YOLO26x 640` a aproximadamente 47–55 ms.
+
+Sin cobertura todavía: el blueprint `detect-room-raw`.
 
 ### La cámara de la instalación suele estar vacía
 
-Los escenarios 04, 05 y 06 no prueban lo que dicen probar sin una persona en
-escena: la cascada no corre, el FSM se queda en `idle`, y una compuerta cerrada
-por la razón correcta no se distingue de una rota. Los tres se corren también
-contra un RTSP local con una persona en cama, a la misma cadencia de keyframe
-que la cámara. El 06 lo tiene como argumento (`run-fuente.sh clip1`).
+Los escenarios 04, 05, 06 y 07–10 no prueban lo que dicen probar sin una
+persona en escena: la cascada no corre, el FSM se queda en `idle`, y una
+compuerta cerrada por la razón correcta no se distingue de una rota. Los que
+tienen cascada se corren también contra un RTSP local con una persona en cama,
+a la misma cadencia de keyframe que la cámara. El 06 lo tiene como argumento
+(`run-fuente.sh clip1`).
 
 ## Cómo correr un escenario
 

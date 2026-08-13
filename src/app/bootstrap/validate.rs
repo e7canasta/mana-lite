@@ -40,6 +40,25 @@ pub(super) fn validate_app_config(config: &AppConfig) -> Result<()> {
             msg: "association ratios must be within 0..=1".into(),
         }));
     }
+    if !config.face_pose.is_valid() {
+        return Err(ManaError::Config(ConfigError::InvalidValue {
+            field: "face_pose".into(),
+            msg: "request, confidence, joint, and geometry settings are invalid".into(),
+        }));
+    }
+    if !config.perception.validation.is_valid() {
+        return Err(ManaError::Config(ConfigError::InvalidValue {
+            field: "perception.validation".into(),
+            msg: "confidence, geometry, relation, and quality weights are invalid".into(),
+        }));
+    }
+    if !config.perception.body_parts.is_valid() {
+        return Err(ManaError::Config(ConfigError::InvalidValue {
+            field: "perception.body_parts".into(),
+            msg: "association, confidence, radius, geometry, and quality settings are invalid"
+                .into(),
+        }));
+    }
     if !config.health.is_valid() {
         return Err(ManaError::Config(ConfigError::InvalidValue {
             field: "health.stale_warn_ms".into(),

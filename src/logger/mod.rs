@@ -3,8 +3,8 @@ mod serialize;
 
 #[allow(unused_imports)]
 pub use event::{
-    DetRecord, Event, FaceDwellTimerRecord, JsonlLevel, MaskRecord, scene_events_to_log,
-    track_event_to_log, zone_event_to_log,
+    BodyGeometryRecord, BodyPartRecord, DetRecord, Event, FaceDwellTimerRecord, JsonlLevel,
+    MaskRecord, scene_events_to_log, track_event_to_log, zone_event_to_log,
 };
 use serialize::write_event;
 
@@ -308,7 +308,10 @@ impl MetricsJsonlConfig {
     fn allows(&self, event: &Event) -> bool {
         match event {
             Event::Frame { .. } => self.frame_events,
-            Event::Detection { .. } | Event::ConsolidatedDetection { .. } => self.detection_events,
+            Event::Detection { .. }
+            | Event::ConsolidatedDetection { .. }
+            | Event::CrossModelValidation { .. }
+            | Event::BodyParts { .. } => self.detection_events,
             Event::Depth { .. } | Event::DepthRegion { .. } => self.depth_events,
             Event::Zone { .. } => self.zone_events,
             Event::Fsm { .. } => self.fsm_events,

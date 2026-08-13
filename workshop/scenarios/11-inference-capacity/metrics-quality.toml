@@ -1,0 +1,25 @@
+[metrics]
+report_interval_s = 60
+
+[metrics.text]
+ingest_line = true
+infer_summary = true
+per_model_lines = true
+cycle_line = true
+deadline_line = true
+evidence_line = true
+keyframe_gap_line = true
+
+[metrics.jsonl]
+frame_events = true
+detection_events = true
+presence_events = true
+face_dwell_events = true
+scene_signals_events = true
+zone_events = false
+fsm_events = false
+metrics_event = true
+per_model_in_window = true
+class_counts_in_window = true
+class_per_frame_stats = true
+depth_events = false

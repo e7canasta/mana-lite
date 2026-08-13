@@ -1,0 +1,17 @@
+extends = "../../../config/models.toml"
+
+[models.detect-fast]
+path = "tools/model-tools/artifacts/yolo26-fp16/yolo26m-fp16-320.onnx"
+imgsz = 320
+
+[models.face-yolo]
+path = "tools/model-tools/artifacts/yoloface-fp16/yolov12m-face-fp16-320.onnx"
+imgsz = 320
+
+[models.pose-standard]
+path = "tools/model-tools/artifacts/yolo26-fp16/yolo26m-pose-fp16-320.onnx"
+imgsz = 320
+
+[models.seg-standard]
+path = "tools/model-tools/artifacts/yolo26-fp16/yolo26m-seg-fp16-320.onnx"
+imgsz = 320

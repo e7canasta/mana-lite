@@ -3,9 +3,11 @@
 **Status:** Accepted for scheduler semantics, deployment selection in [ADR-026](026-inference-blueprints.md)
 **Date:** 2026-08-04
 
-> Estado de implementación: esta iteración implementa dependencias, filtros
-> sobre tracks y scope semántico. El gating temporal por intervalo sigue
-> pendiente y no debe configurarse todavía.
+> Estado de implementación: las dependencias, filtros sobre tracks, scope
+> semántico y el gating temporal cooperativo básico están implementados. La
+> configuración temporal usa `interval_min_ms` en la regla del blueprint. Las
+> urgencias, el catch-up deliberado y la ejecución same-frame dinámica siguen
+> pendientes. Ver `docs/subprojects/cooperative-inference-scheduler/`.
 
 ## Context
 
@@ -145,38 +147,27 @@ impl CascadeScheduler {
 }
 ```
 
-## Configuración en models.toml
+## Configuracion temporal en el blueprint
 
-El cascade se configura por modelo, no globalmente. Esto permite que cada modelo tenga su propia política de scheduling.
+La cadencia pertenece a la regla del blueprint, no al catalogo compartido. Esto
+permite que cada despliegue ajuste el costo temporal sin duplicar artefactos.
 
 ```toml
-[models.detect-fast]
-path = "models/yolo26n.onnx"
-task = "detect"
-confidence = 0.5
-imgsz = 320
-# Root model: sin requires, siempre corre (sujeto a interval)
+# config/blueprints/detect-face-pose-seg/blueprint.toml
+[[rules]]
+model = "detect-fast"
 
-[models.pose-standard]
-path = "models/yolo26n-pose.onnx"
-task = "pose"
-confidence = 0.3
-imgsz = 640
-# Cascade fields:
-cascade_interval_ms = 500       # máximo 2fps
-cascade_requires = "detect-fast"  # solo si detect encontró algo
-cascade_requires_class = "person" # solo si detect encontró persona
-cascade_scope = "crop_largest"    # recortar al bbox de persona más grande
+[[rules]]
+model = "pose-standard"
+requires = "detect-fast"
+requires_class = "person"
+interval_min_ms = 500           # como maximo 2 Hz
 
-[models.face-v12]
-path = "models/yolov12n-face.onnx"
-task = "detect"
-confidence = 0.5
-imgsz = 320
-cascade_interval_ms = 1000     # máximo 1fps
-cascade_requires = "pose-standard"
-cascade_requires_class = "person"
-cascade_scope = "crop_head"    # crop a la región de keypoints de cabeza
+[[rules]]
+model = "seg-standard"
+requires = "detect-fast"
+requires_class = "person"
+interval_min_ms = 2000          # como maximo 0.5 Hz
 ```
 
 ## Scope: crop vs full frame

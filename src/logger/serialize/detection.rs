@@ -1,6 +1,6 @@
 use super::Event;
 use super::writers::{write_f32, write_f64, write_json_string, write_u64};
-use crate::logger::event::{DetRecord, MaskRecord};
+use crate::logger::event::{BodyGeometryRecord, BodyPartRecord, DetRecord, MaskRecord};
 use crate::metrics::PerClassFrameStats;
 
 pub(super) fn write_detection_event(event: &Event, buf: &mut Vec<u8>) {
@@ -69,10 +69,30 @@ pub(super) fn write_det_bbox(d: &DetRecord, buf: &mut Vec<u8>) {
         write_f32(*v, buf);
     }
     buf.extend_from_slice(b"]");
+    if let Some(keypoints) = &d.keypoints {
+        write_det_keypoints(keypoints, buf);
+    }
     if let Some(mask) = &d.mask {
         write_det_mask(mask, buf);
     }
     buf.extend_from_slice(b"}");
+}
+
+pub(super) fn write_det_keypoints(keypoints: &[[f32; 3]], buf: &mut Vec<u8>) {
+    buf.extend_from_slice(b",\"keypoints\":[");
+    for (j, [x, y, confidence]) in keypoints.iter().enumerate() {
+        if j > 0 {
+            buf.push(b',');
+        }
+        buf.push(b'[');
+        write_f32(*x, buf);
+        buf.push(b',');
+        write_f32(*y, buf);
+        buf.push(b',');
+        write_f32(*confidence, buf);
+        buf.push(b']');
+    }
+    buf.push(b']');
 }
 
 pub(super) fn write_det_mask(mask: &MaskRecord, buf: &mut Vec<u8>) {
@@ -322,4 +342,156 @@ pub(super) fn write_consolidated_detection_event(event: &Event, buf: &mut Vec<u8
         buf.push(b'\"');
     }
     buf.extend_from_slice(b"]");
+}
+
+pub(super) fn write_cross_model_validation_event(event: &Event, buf: &mut Vec<u8>) {
+    let Event::CrossModelValidation {
+        frame_id,
+        actor_id,
+        quality,
+        agreement,
+        freshness,
+        supporting_sources,
+        contradicting_sources,
+        reasons,
+    } = event
+    else {
+        unreachable!()
+    };
+    buf.extend_from_slice(b"\"type\":\"cross_model_validation\",\"frame_id\":");
+    write_u64(*frame_id, buf);
+    buf.extend_from_slice(b",\"actor_id\":");
+    write_u64(*actor_id, buf);
+    buf.extend_from_slice(b",\"quality\":");
+    write_f32(*quality, buf);
+    buf.extend_from_slice(b",\"agreement\":");
+    write_f32(*agreement, buf);
+    buf.extend_from_slice(b",\"freshness\":");
+    write_f32(*freshness, buf);
+    write_string_array("supporting_sources", supporting_sources, buf);
+    write_string_array("contradicting_sources", contradicting_sources, buf);
+    write_string_array("reasons", reasons, buf);
+}
+
+pub(super) fn write_body_parts_event(event: &Event, buf: &mut Vec<u8>) {
+    let Event::BodyParts {
+        frame_id,
+        actor_id,
+        frame_local_index,
+        overall_quality,
+        parts,
+    } = event
+    else {
+        unreachable!()
+    };
+    buf.extend_from_slice(b"\"type\":\"body_parts\",\"frame_id\":");
+    write_u64(*frame_id, buf);
+    buf.extend_from_slice(b",\"actor_id\":");
+    if let Some(actor_id) = actor_id {
+        write_u64(*actor_id, buf);
+    } else {
+        buf.extend_from_slice(b"null");
+    }
+    buf.extend_from_slice(b",\"frame_local_index\":");
+    if let Some(index) = frame_local_index {
+        write_u64(*index as u64, buf);
+    } else {
+        buf.extend_from_slice(b"null");
+    }
+    buf.extend_from_slice(b",\"overall_quality\":");
+    write_f32(*overall_quality, buf);
+    buf.extend_from_slice(b",\"parts\":[");
+    for (index, part) in parts.iter().enumerate() {
+        if index > 0 {
+            buf.push(b',');
+        }
+        write_body_part(part, buf);
+    }
+    buf.push(b']');
+}
+
+fn write_body_part(part: &BodyPartRecord, buf: &mut Vec<u8>) {
+    buf.extend_from_slice(b"{\"part\":\"");
+    write_json_string(&part.part, buf);
+    buf.extend_from_slice(b"\",\"geometry\":");
+    write_body_geometry(&part.geometry, buf);
+    write_string_array("support", &part.support, buf);
+    write_string_array("source_models", &part.source_models, buf);
+    buf.extend_from_slice(b",\"quality\":");
+    write_f32(part.quality, buf);
+    buf.extend_from_slice(b",\"mask_coverage\":");
+    if let Some(coverage) = part.mask_coverage {
+        write_f32(coverage, buf);
+    } else {
+        buf.extend_from_slice(b"null");
+    }
+    buf.extend_from_slice(b",\"source_frame_numbers\":[");
+    for (index, frame) in part.source_frame_numbers.iter().enumerate() {
+        if index > 0 {
+            buf.push(b',');
+        }
+        write_u64(*frame, buf);
+    }
+    buf.extend_from_slice(b"],\"stale\":");
+    buf.extend_from_slice(if part.stale { b"true" } else { b"false" });
+    buf.push(b'}');
+}
+
+fn write_body_geometry(geometry: &BodyGeometryRecord, buf: &mut Vec<u8>) {
+    match geometry {
+        BodyGeometryRecord::Bbox(bbox) => {
+            buf.extend_from_slice(b"{\"kind\":\"bbox\",\"bbox\":[");
+            write_f32_array(bbox, buf);
+            buf.extend_from_slice(b"]}");
+        }
+        BodyGeometryRecord::Polygon(points) => {
+            buf.extend_from_slice(b"{\"kind\":\"polygon\",\"points\":[");
+            write_point_array(points, buf);
+            buf.extend_from_slice(b"]}");
+        }
+        BodyGeometryRecord::Polyline { points, radius } => {
+            buf.extend_from_slice(b"{\"kind\":\"polyline\",\"radius\":");
+            write_f32(*radius, buf);
+            buf.extend_from_slice(b",\"points\":[");
+            write_point_array(points, buf);
+            buf.extend_from_slice(b"]}");
+        }
+    }
+}
+
+fn write_f32_array(values: &[f32], buf: &mut Vec<u8>) {
+    for (index, value) in values.iter().enumerate() {
+        if index > 0 {
+            buf.push(b',');
+        }
+        write_f32(*value, buf);
+    }
+}
+
+fn write_point_array(points: &[[f32; 2]], buf: &mut Vec<u8>) {
+    for (index, [x, y]) in points.iter().enumerate() {
+        if index > 0 {
+            buf.push(b',');
+        }
+        buf.push(b'[');
+        write_f32(*x, buf);
+        buf.push(b',');
+        write_f32(*y, buf);
+        buf.push(b']');
+    }
+}
+
+fn write_string_array(name: &str, values: &[String], buf: &mut Vec<u8>) {
+    buf.extend_from_slice(b",\"");
+    write_json_string(name, buf);
+    buf.extend_from_slice(b"\":[");
+    for (index, value) in values.iter().enumerate() {
+        if index > 0 {
+            buf.push(b',');
+        }
+        buf.push(b'"');
+        write_json_string(value, buf);
+        buf.push(b'"');
+    }
+    buf.push(b']');
 }

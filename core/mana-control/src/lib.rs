@@ -40,6 +40,17 @@ pub struct FaceObservation {
     pub confidence: f32,
 }
 
+/// Semantic result of the face/pose cross-validation performed by perception.
+///
+/// Keypoints, masks, model names, and association details stay on the
+/// perception side of the control boundary.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct FacePoseValidation {
+    pub valid: bool,
+    pub quality: f32,
+    pub frame_number: u64,
+}
+
 /// Measurement sample retained by the adapter between control scans.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SceneSample {
@@ -48,6 +59,7 @@ pub struct SceneSample {
     pub raw_person_count: usize,
     pub frame_number: u64,
     pub face_model_ran: bool,
+    pub face_pose_validation: Option<FacePoseValidation>,
 }
 
 impl SceneSample {
@@ -59,6 +71,7 @@ impl SceneSample {
             raw_person_count: 0,
             frame_number: 0,
             face_model_ran: false,
+            face_pose_validation: None,
         }
     }
 }
@@ -331,6 +344,7 @@ mod tests {
                     raw_person_count: 0,
                     frame_number: 1,
                     face_model_ran: false,
+                    face_pose_validation: None,
                 },
                 start,
             )),

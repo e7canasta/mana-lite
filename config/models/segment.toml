@@ -21,9 +21,10 @@ margin = 0.15
 
 [models.seg-standard]
 profile = "person-seg"
-enabled = false
-path = "models/yolo26x-seg-fp16-640.onnx"
-imgsz = 640
+enabled = true
+path = "tools/model-tools/artifacts/yolo26-fp16/yolo26s-seg-fp16-320.onnx"
+imgsz = 320
+half = true
 polygon_simplify = 0.98
 
 [models.seg-s-320]
@@ -65,3 +66,23 @@ imgsz = 320
 enabled = false
 path = "tools/model-tools/artifacts/yolo26-fp16/yolo26x-seg-fp16-640.onnx"
 imgsz = 640
+
+[models.seg-s-192]
+enabled = false
+path = "tools/model-tools/artifacts/yolo26-fp16/yolo26s-seg-fp16-192.onnx"
+imgsz = 192
+
+[models.seg-m-192]
+enabled = false
+path = "tools/model-tools/artifacts/yolo26-fp16/yolo26m-seg-fp16-192.onnx"
+imgsz = 192
+
+[models.seg-l-192]
+enabled = false
+path = "tools/model-tools/artifacts/yolo26-fp16/yolo26l-seg-fp16-192.onnx"
+imgsz = 192
+
+[models.seg-x-192]
+enabled = false
+path = "tools/model-tools/artifacts/yolo26-fp16/yolo26x-seg-fp16-192.onnx"
+imgsz = 192

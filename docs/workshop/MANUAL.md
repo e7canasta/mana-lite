@@ -135,8 +135,8 @@ mana-lite-workspace/
 Están gitignoreados. Viven en `tools/model-tools/artifacts/`:
 
 ```sh
-ls tools/model-tools/artifacts/yolo26-fp16/yolo26x-fp16-320.onnx      # el padre
-ls tools/model-tools/artifacts/yoloface-fp16/yolov12l-face-fp16-320.onnx  # el hijo
+ls tools/model-tools/artifacts/yolo26-fp16/yolo26s-fp16-320.onnx      # el padre
+ls tools/model-tools/artifacts/yoloface-fp16/yolov12s-face-fp16-320.onnx  # el hijo
 ```
 
 Si falta alguno, el arranque falla con `Config(FileNotFound(...))` y dice cuál.

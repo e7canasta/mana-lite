@@ -271,6 +271,7 @@ fn detection_emits_class_and_bbox() {
         bbox: [100.0, 200.0, 300.0, 500.0],
         area_px: 60_000.0,
         area_ratio: 0.1,
+        keypoints: None,
         mask: None,
     }];
     let mut log = test_logger();
@@ -328,6 +329,7 @@ fn detection_emits_mask_wire_record() {
         bbox: [3.0, 4.0, 5.0, 6.0],
         area_px: 4.0,
         area_ratio: 0.0,
+        keypoints: None,
         mask: Some(record),
     }];
     let mut log = test_logger();
@@ -639,12 +641,124 @@ fn negative_float_is_valid_json() {
         bbox: [-10.5, 0.0, 100.0, 200.25],
         area_px: 0.0,
         area_ratio: 0.0,
+        keypoints: None,
         mask: None,
     }];
     let mut log = test_logger();
     log.emit(Event::detection(1, "m", 10, 12, det, 0, 0, None, None));
     let out = collect(&mut log);
     assert!(out.contains("\"bbox\":[-10.5,0,100,200.25]"));
+}
+
+#[test]
+fn detection_emits_keypoints_wire_record() {
+    let det = vec![DetRecord {
+        class: "person".into(),
+        confidence: 0.9,
+        bbox: [100.0, 200.0, 300.0, 500.0],
+        area_px: 60_000.0,
+        area_ratio: 0.1,
+        keypoints: Some(vec![[101.5, 202.25, 0.8], [103.0, 204.0, 0.6]]),
+        mask: None,
+    }];
+    let mut log = test_logger();
+    log.emit(Event::detection(
+        1,
+        "pose-standard",
+        52,
+        60,
+        det,
+        0,
+        0,
+        None,
+        None,
+    ));
+    let out = collect(&mut log);
+    assert!(
+        out.contains("\"keypoints\":[[101.5,202.25,0.8],[103,204,0.6]]"),
+        "missing keypoints: {out}"
+    );
+}
+
+#[test]
+fn detection_without_keypoints_omits_the_field() {
+    let det = vec![DetRecord {
+        class: "person".into(),
+        confidence: 0.9,
+        bbox: [100.0, 200.0, 300.0, 500.0],
+        area_px: 60_000.0,
+        area_ratio: 0.1,
+        keypoints: None,
+        mask: None,
+    }];
+    let mut log = test_logger();
+    log.emit(Event::detection(
+        1,
+        "detect-fast",
+        52,
+        60,
+        det,
+        0,
+        0,
+        None,
+        None,
+    ));
+    let out = collect(&mut log);
+    assert!(!out.contains("keypoints"), "unexpected keypoints: {out}");
+}
+
+#[test]
+fn cross_model_validation_emits_compact_quality_and_sources() {
+    let mut log = test_logger();
+    log.emit(Event::cross_model_validation(
+        7,
+        12,
+        0.8125,
+        0.75,
+        1.0,
+        vec!["face-yolo".into(), "pose-standard".into()],
+        vec![],
+        vec!["face_pose=0.750".into()],
+    ));
+    let out = collect(&mut log);
+    assert!(out.contains("\"type\":\"cross_model_validation\""));
+    assert!(out.contains("\"actor_id\":7"));
+    assert!(out.contains("\"frame_id\":12"));
+    assert!(out.contains("\"quality\":0.8125"));
+    assert!(out.contains("\"supporting_sources\":[\"face-yolo\",\"pose-standard\"]"));
+    assert!(out.contains("\"reasons\":[\"face_pose=0.750\"]"));
+}
+
+#[test]
+fn body_parts_event_serializes_geometry_provenance_and_freshness() {
+    let mut log = test_logger();
+    log.emit(Event::body_parts(
+        12,
+        Some(7),
+        None,
+        0.72,
+        vec![BodyPartRecord {
+            part: "left_arm".into(),
+            geometry: BodyGeometryRecord::Polyline {
+                points: vec![[10.0, 20.0], [30.0, 40.0]],
+                radius: 4.0,
+            },
+            support: vec!["pose".into(), "segment".into()],
+            source_models: vec!["pose-standard".into(), "seg-standard".into()],
+            quality: 0.68,
+            mask_coverage: Some(0.9),
+            source_frame_numbers: vec![12],
+            stale: false,
+        }],
+    ));
+    let out = collect(&mut log);
+    assert!(out.contains("\"type\":\"body_parts\""));
+    assert!(out.contains("\"actor_id\":7"));
+    assert!(out.contains("\"overall_quality\":0.72"));
+    assert!(out.contains("\"kind\":\"polyline\""));
+    assert!(out.contains("\"support\":[\"pose\",\"segment\"]"));
+    assert!(out.contains("\"source_frame_numbers\":[12]"));
+    assert!(out.contains("\"stale\":false"));
 }
 
 #[test]

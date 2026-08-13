@@ -10,7 +10,7 @@
 - razones explicitas `not_due`, `due_but_gated` y `due_but_no_target`;
 - contadores reservados para `urgent` y `urgent_expired`;
 - ventana de reporte de 60 segundos para modelos a `0.5 Hz`;
-- escenario `detect + face + pose + seg` con overlays `s/640` y `m/640`.
+- escenario `detect + face + pose + seg` con overlays `s/m` en `192` y `320`.
 
 ## Decisiones
 
@@ -53,10 +53,10 @@ MANA_SOURCE_URL=rtsp://192.168.1.6:8554/clip1 \
   cargo run --release -- --config workshop/scenarios/11-inference-capacity/mana.toml
 ```
 
-Para el perfil `m/640`:
+Para el perfil `s/192`:
 
 ```sh
 MANA_SOURCE_URL=rtsp://192.168.1.6:8554/clip1 \
-MANA_BLUEPRINT_FILE=workshop/scenarios/11-inference-capacity/blueprint-m-640.toml \
+MANA_BLUEPRINT_FILE=workshop/scenarios/11-inference-capacity/blueprint-s-192.toml \
   cargo run --release -- --config workshop/scenarios/11-inference-capacity/mana.toml
 ```

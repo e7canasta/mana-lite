@@ -4,11 +4,15 @@
 
 ```toml
 [models.seg-standard]
-path = "models/yolo26n-seg.onnx"
-task = "detect"          # segment → detect en el catálogo actual
-confidence = 0.30
-iou = 0.5
-imgsz = 640
+profile = "person-seg"
+enabled = true
+path = "tools/model-tools/artifacts/yolo26-fp16/yolo26s-seg-fp16-320.onnx"
+task = "segment"
+confidence = 0.20
+iou = 0.10
+half = true
+imgsz = 320
+polygon_simplify = 0.98
 
 [models.seg-standard.crop]
 type = "largest_class"
@@ -18,25 +22,29 @@ margin = 0.15
 [models.seg-standard.postprocess]
 allow_classes = ["person"]
 min_confidence = 0.25
-min_area_ratio = 0.01
+min_area_ratio = 0.05
 max_area_ratio = 1.0
-min_component_area_ratio = 0.01
-nms_iou = 0.50
+min_component_area_ratio = 0.05
+mask_threshold = 0.5
+nms_iou = 0.10
 ```
 
-## Regla de cascada (config/cascade.toml)
+## Regla de cascada (blueprint)
 
 ```toml
 [[rules]]
 model = "seg-standard"
 requires = "detect-fast"
 requires_class = "person"
-same_frame = true
+requires_exact_count = 1
+requires_min_confidence = 0.50
+same_frame = false
 ```
 
-- Ejecuta en el mismo frame que `detect-fast` (gating `same_frame`, igual que
-  face), sin depender del tracking.
-- El crop es el bbox `largest_class` de persona con margen 0.15.
+- Ejecuta con gate sobre el **track confirmado** (`same_frame = false`, igual
+  que la rama de face): un dropout corto del detector no apaga al hijo, y el
+  blueprint declara `requires_tracking = true`.
+- El crop es el bbox del track de persona con margen 0.15.
 - La máscara emitida vive en el espacio del crop (`mask_dims`), con `origin`
   apuntando al frame.
 - Los componentes desconectados de la máscara menores que
@@ -48,7 +56,7 @@ same_frame = true
 | Política | Valor | Uso |
 |---|---|---|
 | `mask_threshold` | 0.5 | Binarización de la máscara f32 |
-| `polygon_simplify` | 0.90 | Simplificación RDP (porcentaje) para `seg-standard` |
+| `polygon_simplify` | 0.98 | Simplificación RDP (porcentaje) para `seg-standard` |
 
 ## Salidas
 
@@ -60,8 +68,9 @@ same_frame = true
 
 ## Criterios de aceptación
 
-- Corre con `track = false` en `config/mana.toml`.
+- Requiere `track = true` en `config/mana.toml` (el blueprint declara
+  `requires_tracking = true`).
 - Una persona sintética produce bbox + `CompactMask` + polígono coherentes
   (tests en `src/infer.rs`).
-- `enabled = false` en `[models.seg-standard]` elimina la rama sin efectos en
-  las demás.
+- La rama no aparece ni en detecciones ni en `skips` cuando el modelo no está
+  en el blueprint (`enabled` del catálogo queda sobrescrito por la selección).

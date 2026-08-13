@@ -8,7 +8,29 @@ pub struct DetRecord {
     /// Bounding-box area in source-frame pixels and as a fraction of the full frame.
     pub area_px: f32,
     pub area_ratio: f32,
+    /// Pose keypoints remapped to the source frame, one `[x, y, confidence]`
+    /// per point. Present only for pose models.
+    pub keypoints: Option<Vec<[f32; 3]>>,
     pub mask: Option<MaskRecord>,
+}
+
+#[derive(Debug, Clone)]
+pub struct BodyPartRecord {
+    pub part: String,
+    pub geometry: BodyGeometryRecord,
+    pub support: Vec<String>,
+    pub source_models: Vec<String>,
+    pub quality: f32,
+    pub mask_coverage: Option<f32>,
+    pub source_frame_numbers: Vec<u64>,
+    pub stale: bool,
+}
+
+#[derive(Debug, Clone)]
+pub enum BodyGeometryRecord {
+    Bbox([f32; 4]),
+    Polygon(Vec<[f32; 2]>),
+    Polyline { points: Vec<[f32; 2]>, radius: f32 },
 }
 
 #[derive(Debug, Clone)]
@@ -82,6 +104,7 @@ impl DetRecord {
             bbox: detection.bbox,
             area_px: detection.area_px(),
             area_ratio: detection.area_ratio(frame_w, frame_h),
+            keypoints: detection.keypoints.clone(),
             mask: detection.mask.as_ref().map(MaskRecord::from_mask),
         }
     }

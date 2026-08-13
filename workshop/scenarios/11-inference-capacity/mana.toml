@@ -21,7 +21,7 @@ reconnect_backoff_max_ms = 30000
 
 [inference]
 model_catalog = "config/models.toml"
-blueprint_file = "workshop/scenarios/11-inference-capacity/blueprint-s-640.toml"
+blueprint_file = "workshop/scenarios/11-inference-capacity/blueprint-s-320.toml"
 
 [detection]
 face_component_coverage = 0.70
@@ -81,5 +81,7 @@ zones = false
 fsm = false
 
 [viz]
-enabled = false
-rerun_addr = "192.168.1.20:9876"
+enabled = true
+rerun_addr = "192.168.1.24:9876"
+image_format = "jpeg"
+image_quality = 10

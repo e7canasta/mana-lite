@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 
 use crate::cascade::{CascadeRule, CascadeScheduler};
-use crate::config::{AppConfig, CropType, load_config};
+use crate::config::{load_config, AppConfig, CropType};
 use crate::detection::CropRect;
 use crate::domain::{ModelRegistry, ModelRole};
 use crate::error::{ConfigError, ManaError, Result};

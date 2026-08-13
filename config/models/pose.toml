@@ -21,10 +21,11 @@ margin = 0.15
 
 [models.pose-standard]
 profile = "person"
-enabled = false
+enabled = true
 path = "tools/model-tools/artifacts/yolo26-fp16/yolo26s-pose-fp16-320.onnx"
 confidence = 0.40
 imgsz = 320
+half = true
 
 [models.pose-s-320]
 enabled = false
@@ -65,3 +66,23 @@ imgsz = 320
 enabled = false
 path = "tools/model-tools/artifacts/yolo26-fp16/yolo26x-pose-fp16-640.onnx"
 imgsz = 640
+
+[models.pose-s-192]
+enabled = false
+path = "tools/model-tools/artifacts/yolo26-fp16/yolo26s-pose-fp16-192.onnx"
+imgsz = 192
+
+[models.pose-m-192]
+enabled = false
+path = "tools/model-tools/artifacts/yolo26-fp16/yolo26m-pose-fp16-192.onnx"
+imgsz = 192
+
+[models.pose-l-192]
+enabled = false
+path = "tools/model-tools/artifacts/yolo26-fp16/yolo26l-pose-fp16-192.onnx"
+imgsz = 192
+
+[models.pose-x-192]
+enabled = false
+path = "tools/model-tools/artifacts/yolo26-fp16/yolo26x-pose-fp16-192.onnx"
+imgsz = 192

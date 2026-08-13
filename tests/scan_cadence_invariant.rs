@@ -65,6 +65,7 @@ fn single_at(start: Instant, period_ms: u64) -> Instant {
                 raw_person_count: 1,
                 frame_number: 1,
                 face_model_ran: false,
+                face_pose_validation: None,
             },
             start,
         )),

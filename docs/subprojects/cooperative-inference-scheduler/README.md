@@ -1,6 +1,6 @@
 # Subproyecto: Scheduler Cooperativo de Inferencia
 
-**Estado:** Sprint 1 y 2 cerrados; Sprint 3 implementado en runtime y listo para compuerta
+**Estado:** Sprint 1, 2 y 3 cerrados; Sprint 4 listo para comenzar
 **Fecha:** 2026-08-12
 **Alcance:** cadencia por modelo, latest-wins y ejecucion cooperativa dentro del hilo de percepcion
 
@@ -75,6 +75,8 @@ son workers independientes en esta fase.
 - [Sprint 2](sprints/sprint-02.md): instrumento de capacidad y corrida larga.
 - [Handoff Sprint 3](sprints/sprint-03-handoff.md): contrato, plan y puertas de
   entrada para urgencias cooperativas.
+- [Handoff Sprint 4](sprints/sprint-04-handoff.md): validacion cruzada face/pose,
+  contrato semantico, frescura y plan de integracion.
 - La implementacion de Sprint 3 vive en `CascadeScheduler`,
   `PerceptionStage` y el reporte de metricas; aun no hay productor semantico
   face/pose, que pertenece a Sprint 4.

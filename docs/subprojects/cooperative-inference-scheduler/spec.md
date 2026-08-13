@@ -140,7 +140,7 @@ viajar en `ControlDirective`, pero no revive una request one-shot ya consumida
 mientras conserve el mismo identity key. Una urgencia transitoria que no puede
 perderse usa la cola durable de `CascadeScheduler`, no un slot latest-wins.
 
-## 8. Cross-validation, version futura
+## 8. Cross-validation, Sprint 4
 
 La validacion cruzada debe ser una senal semantica en el adaptador de
 percepcion. Ejemplo:
@@ -150,13 +150,25 @@ face uncertain
     -> urgent pose request
 pose keypoints
     -> validate face geometry
-    -> FacePoseValidation { valid, quality, frame_number, observed_at }
+    -> FacePoseValidation { valid, quality, frame_number }
     -> FSM signal
 ```
 
 La version inicial debe aceptar la latencia de un keyframe adicional. La
 ejecucion same-frame dinamica se implementara solo si una corrida demuestra que
 esa latencia no es aceptable.
+
+El resultado que cruza a control debe ser estrecho:
+
+```text
+FacePoseValidation { valid, quality, frame_number }
+```
+
+`quality` es un ratio finito en `[0,1]`. El timestamp lo aporta
+`AgedEvidence<SceneSample>.observed_at` y la edad se calcula con
+`ProcessImage::observations_age_ms()`. `None` significa que no hubo resultado;
+`Some(valid=false)` significa que la validacion se ejecuto y rechazo la
+evidencia. Keypoints, masks e indices de joints no cruzan el puerto de control.
 
 ## 9. Observabilidad requerida
 
@@ -180,9 +192,10 @@ workshop.
 
 En el reporte de runtime, las distribuciones por modelo se publican como
 `gap_samples`, `gap_min_ms`, `gap_p50_ms`, `gap_p95_ms`, `gap_max_ms` y sus
-equivalentes `due_late_*`. `urgent` y `urgent_expired` forman parte del esquema
-desde Sprint 2 aunque permanecen en cero hasta que exista el productor de
-urgencias de Sprint 3.
+equivalentes `due_late_*`. `urgent`, `urgent_expired`, `urgent_requests`,
+`urgent_wait_*` y `urgent_starvation` forman parte del esquema desde Sprint 3.
+Sprint 4 puede agregar metricas semanticas solo si tienen una decision
+operativa asociada; no reciclar las metricas de urgencia.
 
 ## 10. Compatibilidad
 

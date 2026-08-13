@@ -26,6 +26,9 @@ pub struct AppConfig {
     #[serde(default)]
     pub detection: DetectionConfig,
     #[serde(default)]
+    pub face_pose: FacePoseConfig,
+    pub perception: PerceptionPolicyConfig,
+    #[serde(default)]
     pub presence: PresenceConfig,
     #[serde(default)]
     pub tracking: TrackingConfig,
@@ -184,6 +187,233 @@ impl Default for DetectionConfig {
             same_class_iou: default_same_class_iou(),
         }
     }
+}
+
+/// Policy for the cooperative face/pose cross-validation request and its
+/// deterministic geometric validator.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FacePoseConfig {
+    #[serde(default = "default_face_pose_enabled")]
+    pub enabled: bool,
+    #[serde(default = "default_face_pose_model_key")]
+    pub pose_model_key: String,
+    #[serde(default = "default_face_pose_uncertain_max_confidence")]
+    pub uncertain_face_max_confidence: f32,
+    #[serde(default = "default_face_pose_min_face_confidence")]
+    pub min_face_confidence: f32,
+    #[serde(default = "default_face_pose_request_priority")]
+    pub pose_request_priority: u8,
+    #[serde(default = "default_face_pose_request_ttl_ms")]
+    pub request_ttl_ms: u64,
+    #[serde(default = "default_face_pose_keypoint_min_confidence")]
+    pub keypoint_min_confidence: f32,
+    #[serde(default = "default_face_pose_min_head_joints")]
+    pub min_head_joints: usize,
+    #[serde(default = "default_face_pose_min_face_person_coverage")]
+    pub min_face_person_coverage: f32,
+    #[serde(default = "default_face_pose_min_pose_person_iou")]
+    pub min_pose_person_iou: f32,
+    #[serde(default = "default_face_pose_max_center_distance_ratio")]
+    pub max_head_face_center_distance_ratio: f32,
+    #[serde(default = "default_face_pose_quality_face_weight")]
+    pub quality_face_weight: f32,
+    #[serde(default = "default_face_pose_quality_pose_weight")]
+    pub quality_pose_weight: f32,
+    #[serde(default = "default_face_pose_quality_joint_weight")]
+    pub quality_joint_weight: f32,
+    #[serde(default = "default_face_pose_quality_geometry_weight")]
+    pub quality_geometry_weight: f32,
+}
+
+/// Policies for the perception-side evidence validator and derived body-part
+/// estimator. These values belong in TOML so mechanism code does not encode a
+/// deployment's calibration decisions.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PerceptionPolicyConfig {
+    pub validation: CrossModelValidationConfig,
+    pub body_parts: BodyPartsConfig,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CrossModelValidationConfig {
+    pub relation_support_threshold: f32,
+    pub source_quality_weight: f32,
+    pub agreement_quality_weight: f32,
+}
+
+impl CrossModelValidationConfig {
+    #[must_use]
+    pub fn is_valid(&self) -> bool {
+        unit(self.relation_support_threshold)
+            && non_negative(self.source_quality_weight)
+            && non_negative(self.agreement_quality_weight)
+            && self.source_quality_weight + self.agreement_quality_weight > 0.0
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BodyPartsConfig {
+    pub frame_local_match_iou: f32,
+    pub face_frame_local_coverage: f32,
+    pub joint_min_confidence: f32,
+    pub segment_radius_ratio: f32,
+    pub head_padding_ratio: f32,
+    pub torso_radius_multiplier: f32,
+    pub head_face_weight: f32,
+    pub head_pose_weight: f32,
+    pub mask_quality_weight: f32,
+    pub cross_model_quality_weight: f32,
+    pub minimum_geometry_extent_px: f32,
+    pub geometry_epsilon: f32,
+}
+
+impl BodyPartsConfig {
+    #[must_use]
+    pub fn is_valid(&self) -> bool {
+        unit(self.frame_local_match_iou)
+            && unit(self.face_frame_local_coverage)
+            && unit(self.joint_min_confidence)
+            && positive(self.segment_radius_ratio)
+            && positive(self.head_padding_ratio)
+            && positive(self.torso_radius_multiplier)
+            && non_negative(self.head_face_weight)
+            && non_negative(self.head_pose_weight)
+            && self.head_face_weight + self.head_pose_weight > 0.0
+            && unit(self.mask_quality_weight)
+            && unit(self.cross_model_quality_weight)
+            && positive(self.minimum_geometry_extent_px)
+            && positive(self.geometry_epsilon)
+    }
+}
+
+fn unit(value: f32) -> bool {
+    value.is_finite() && (0.0..=1.0).contains(&value)
+}
+
+fn positive(value: f32) -> bool {
+    value.is_finite() && value > 0.0
+}
+
+fn non_negative(value: f32) -> bool {
+    value.is_finite() && value >= 0.0
+}
+
+impl Default for FacePoseConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_face_pose_enabled(),
+            pose_model_key: default_face_pose_model_key(),
+            uncertain_face_max_confidence: default_face_pose_uncertain_max_confidence(),
+            min_face_confidence: default_face_pose_min_face_confidence(),
+            pose_request_priority: default_face_pose_request_priority(),
+            request_ttl_ms: default_face_pose_request_ttl_ms(),
+            keypoint_min_confidence: default_face_pose_keypoint_min_confidence(),
+            min_head_joints: default_face_pose_min_head_joints(),
+            min_face_person_coverage: default_face_pose_min_face_person_coverage(),
+            min_pose_person_iou: default_face_pose_min_pose_person_iou(),
+            max_head_face_center_distance_ratio: default_face_pose_max_center_distance_ratio(),
+            quality_face_weight: default_face_pose_quality_face_weight(),
+            quality_pose_weight: default_face_pose_quality_pose_weight(),
+            quality_joint_weight: default_face_pose_quality_joint_weight(),
+            quality_geometry_weight: default_face_pose_quality_geometry_weight(),
+        }
+    }
+}
+
+impl FacePoseConfig {
+    #[must_use]
+    pub fn is_valid(&self) -> bool {
+        !self.pose_model_key.trim().is_empty()
+            && self.request_ttl_ms > 0
+            && self.request_ttl_ms <= 5_000
+            && (0.0..=1.0).contains(&self.uncertain_face_max_confidence)
+            && (0.0..=1.0).contains(&self.min_face_confidence)
+            && self.min_face_confidence <= self.uncertain_face_max_confidence
+            && (0.0..=1.0).contains(&self.keypoint_min_confidence)
+            && (0.0..=1.0).contains(&self.min_face_person_coverage)
+            && (0.0..=1.0).contains(&self.min_pose_person_iou)
+            && self.max_head_face_center_distance_ratio.is_finite()
+            && self.max_head_face_center_distance_ratio > 0.0
+            && (3..=5).contains(&self.min_head_joints)
+            && self.uncertain_face_max_confidence.is_finite()
+            && self.min_face_confidence.is_finite()
+            && self.keypoint_min_confidence.is_finite()
+            && self.min_face_person_coverage.is_finite()
+            && self.min_pose_person_iou.is_finite()
+            && non_negative(self.quality_face_weight)
+            && non_negative(self.quality_pose_weight)
+            && non_negative(self.quality_joint_weight)
+            && non_negative(self.quality_geometry_weight)
+            && self.quality_face_weight
+                + self.quality_pose_weight
+                + self.quality_joint_weight
+                + self.quality_geometry_weight
+                > 0.0
+    }
+}
+
+fn default_face_pose_enabled() -> bool {
+    true
+}
+
+fn default_face_pose_model_key() -> String {
+    "pose-standard".into()
+}
+
+const fn default_face_pose_uncertain_max_confidence() -> f32 {
+    0.60
+}
+
+const fn default_face_pose_min_face_confidence() -> f32 {
+    0.10
+}
+
+const fn default_face_pose_request_priority() -> u8 {
+    200
+}
+
+const fn default_face_pose_request_ttl_ms() -> u64 {
+    4_000
+}
+
+const fn default_face_pose_keypoint_min_confidence() -> f32 {
+    0.50
+}
+
+const fn default_face_pose_min_head_joints() -> usize {
+    3
+}
+
+const fn default_face_pose_min_face_person_coverage() -> f32 {
+    0.70
+}
+
+const fn default_face_pose_min_pose_person_iou() -> f32 {
+    0.20
+}
+
+const fn default_face_pose_max_center_distance_ratio() -> f32 {
+    0.75
+}
+
+const fn default_face_pose_quality_face_weight() -> f32 {
+    0.25
+}
+
+const fn default_face_pose_quality_pose_weight() -> f32 {
+    0.20
+}
+
+const fn default_face_pose_quality_joint_weight() -> f32 {
+    0.30
+}
+
+const fn default_face_pose_quality_geometry_weight() -> f32 {
+    0.25
 }
 
 fn default_face_component_coverage() -> f32 {

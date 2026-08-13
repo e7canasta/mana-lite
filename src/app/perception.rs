@@ -112,6 +112,7 @@ pub struct PerceptionStage {
     /// entera al terminar; control nunca ve una a medio construir.
     pub(crate) image: ProcessImage,
     pub(crate) directive: ControlDirective,
+    pub(crate) face_pose_context: Option<super::face_pose::PendingFacePoseContext>,
     pub(crate) boot_wall: chrono::DateTime<chrono::Utc>,
     pub(crate) boot_instant: Instant,
 }
@@ -133,7 +134,7 @@ pub struct PerceptionPorts {
 /// Lo único que la etapa necesita de la configuración.
 ///
 /// Se extrae en el bootstrap en vez de mandar el `AppConfig` entero. No es por
-/// el clone: es que percepción resulta depender de **cuatro knobs**, y tenerlos
+/// el clone: es que percepción resulta depender de un contrato explícito, y tenerlo
 /// enumerados hace verificable que ninguna política clínica se cuele en esta
 /// etapa. El `AppConfig` completo dejaría esa puerta abierta sin que se note.
 #[derive(Debug, Clone)]
@@ -143,6 +144,8 @@ pub struct PerceptionConfig {
     /// Clase que abre la compuerta de la cascada y que se cuenta como persona.
     pub presence_class: String,
     pub disabled_tasks: Vec<String>,
+    pub face_pose: crate::config::FacePoseConfig,
+    pub perception: crate::config::PerceptionPolicyConfig,
 }
 
 impl PerceptionConfig {
@@ -152,6 +155,8 @@ impl PerceptionConfig {
             infer: config.pipeline.infer,
             presence_class: config.presence.class.clone(),
             disabled_tasks: config.inference.disabled_tasks.clone(),
+            face_pose: config.face_pose.clone(),
+            perception: config.perception.clone(),
         }
     }
 }
@@ -201,6 +206,7 @@ impl PerceptionSeed {
             last_keyframe_at: self.boot_instant,
             image: ProcessImage::empty(),
             directive: ControlDirective::default(),
+            face_pose_context: None,
             boot_wall: self.boot_wall,
             boot_instant: self.boot_instant,
         }
@@ -328,14 +334,15 @@ impl PerceptionStage {
         config: &PerceptionConfig,
         now: Instant,
     ) -> Option<PerceptionOutput> {
-        let frame_timestamp_ns =
-            super::frame_timestamp_ns(&self.boot_wall, self.boot_instant, now);
+        let frame_timestamp_ns = super::frame_timestamp_ns(&self.boot_wall, self.boot_instant, now);
         let (frame_buf, decode_us) = self.decoder.decode_timed(&kf.h264);
         let dt_ms = self.on_keyframe(decode_us, now);
 
         #[cfg(feature = "rerun")]
         {
-            self.observer.viz.set_frame_time(self.frame_count, frame_timestamp_ns);
+            self.observer
+                .viz
+                .set_frame_time(self.frame_count, frame_timestamp_ns);
             self.observer.viz.log_keyframe_selection(
                 kf.keyframes_seen,
                 kf.keyframes_dropped,
@@ -397,8 +404,12 @@ impl PerceptionStage {
                 decode_us
             );
         }
-        self.observer
-            .emit(Event::frame_ingest(self.frame_count, true, decode_us, dt_ms));
+        self.observer.emit(Event::frame_ingest(
+            self.frame_count,
+            true,
+            decode_us,
+            dt_ms,
+        ));
         dt_ms
     }
 

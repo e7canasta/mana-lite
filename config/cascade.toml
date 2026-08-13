@@ -1,9 +1,7 @@
-# Semantic regions use original-frame coordinates. They are eligibility gates,
-# not inference crops and not clinical zones.
-[regions.bed]
-rect = [100, 200, 500, 800]
-label = "Bed A"
-
+# Fallback cascade used only when no blueprint file is configured. All
+# deployments use a blueprint, so this file is dormant; keep it aligned with
+# the blueprint pattern (see config/blueprints/detect-face-pose-seg) so a
+# no-blueprint run does not silently apply different gates.
 [[rules]]
 model = "detect-fast"
 
@@ -11,18 +9,17 @@ model = "detect-fast"
 model = "pose-standard"
 requires = "detect-fast"
 requires_class = "person"
+requires_exact_count = 1
 requires_min_confidence = 0.50
-requires_min_area_ratio = 0.01
-requires_region = "bed"
-requires_region_coverage = 0.30
-same_frame = true
+same_frame = false
 
 [[rules]]
 model = "face-yolo"
 requires = "detect-fast"
 requires_class = "person"
 requires_exact_count = 1
-same_frame = true
+requires_min_confidence = 0.50
+same_frame = false
 
 [[rules]]
 model = "depth-standard"
@@ -31,4 +28,6 @@ model = "depth-standard"
 model = "seg-standard"
 requires = "detect-fast"
 requires_class = "person"
-same_frame = true
+requires_exact_count = 1
+requires_min_confidence = 0.50
+same_frame = false

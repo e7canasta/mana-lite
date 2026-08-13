@@ -28,8 +28,8 @@ modelo tecnico + perfil operativo
 - Percepcion tiene un hilo propio y procesa el keyframe mas fresco.
 - La cascada ya tiene orden, dependencias, gates y crops.
 - Los slots ya implementan latest-wins y cuentan overwrites.
-- El gating temporal cooperativo basico de ADR-016 ya esta implementado; las
-  urgencias y la medicion avanzada siguen pendientes.
+- El gating temporal cooperativo y las urgencias de ADR-016 ya estan
+  implementados; la validacion semantica face/pose sigue pendiente.
 - Los blueprints ya son la frontera correcta para seleccionar perfiles.
 
 ## Fases
@@ -61,20 +61,22 @@ una fuente a `1 Hz`, sin catch-up y con metricas honestas.
 
 ### Sprint 2: instrumento de capacidad
 
-**Estado:** instrumentacion completada; corrida de hardware pendiente.
+**Estado:** instrumentacion y corrida CPU `s/m` en `192/320` completadas.
 
 - gaps reales por modelo: p50, p95 y max;
 - atraso contra `next_due`;
 - `not_due`, `due_but_gated`, `due_but_no_target`, `urgent` y expiraciones;
 - ventana larga de reportes para modelos lentos;
-- escenario de workshop con `detect + face + pose + seg` y perfiles `s/m/640`.
+- escenario de workshop con `detect + face + pose + seg` y perfiles `s/m` en
+  `192` y `320`; `640` queda sólo como referencia histórica.
 
 **Puerta de salida:** podemos distinguir un modelo lento de un modelo que corre
 menos por politica o por falta de target.
 
 ### Sprint 3: solicitudes urgentes cooperativas
 
-**Estado:** implementacion runtime completada; compuerta de workspace pendiente.
+**Estado:** completado en `c902d69`; hardware `192/320` pendiente como
+validacion operativa.
 
 - contrato `InferenceRequest`;
 - prioridad y expiracion;
@@ -88,16 +90,27 @@ La primera version ya tiene `InferenceRequest`, persistencia derivada de
 congelamiento por keyframe, prioridad, TTL, consumo one-shot y espera/expiracion
 en metricas. El productor semantico face/pose queda deliberadamente para Sprint 4.
 
-**Puerta de salida:** face puede pedir pose fuera de su periodo y el request no
-se pierde ni puede bloquear el control.
+**Puerta de salida:** una request urgente puede pedir pose fuera de su periodo y
+no se pierde ni puede bloquear el control. La semantica de incertidumbre queda
+deliberadamente para Sprint 4.
 
 ### Sprint 4: validacion cruzada semantica
+
+**Estado:** implementacion inicial y corrida CPU `192/320` completadas; politica
+clinica pendiente.
 
 - senales de percepcion para validacion face/pose;
 - contrato estrecho hacia `mana-control`;
 - `frame_number`, timestamp, calidad y edad;
-- FSM que solicita validacion y consume el resultado;
-- golden de una alerta con validacion cruzada.
+- FSM generico que puede exigir validacion y consumir el resultado;
+- fixtures de una alerta con validacion cruzada;
+- catalogo local con copias fisicas de los artefactos ONNX.
+
+La entrada operativa es
+`sprints/sprint-04-handoff.md`. El primer corte recomendado produce la request
+transitoria desde percepcion y deja al FSM como consumidor de las senales
+semanticas; si se exige origen literal en el FSM, la decision y sus pruebas
+estan explicitadas en el handoff.
 
 **Puerta de salida:** una alerta puede exigir una segunda evidencia sin exponer
 keypoints o masks al FSM.
@@ -115,7 +128,7 @@ anticipacion.
 
 ### Sprint 6: tuning y escalera de modelos
 
-- matrices de `s/m/l/x` y `320/640`;
+- matrices de `s/m/l/x` y `192/320`;
 - perfiles de cadencia por hardware;
 - benchmark de 30 a 180 segundos por fuente;
 - criterios de aceptacion sobre `kf_pisados`, edad de evidencia, p95 y max;

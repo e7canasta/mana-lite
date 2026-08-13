@@ -1,8 +1,8 @@
 # Handoff de Sprint 3: Solicitudes Urgentes Cooperativas
 
 **Fecha de cierre:** 2026-08-12
-**Estado:** implementacion runtime completada; compuerta final pendiente
-**Ultimo sprint cerrado:** Sprint 2, instrumentacion de capacidad
+**Estado:** cerrado en `c902d69`
+**Ultimo sprint cerrado:** Sprint 3, solicitudes urgentes cooperativas
 **Proposito:** permitir que un modelo pida una ejecucion fuera de su intervalo sin
 crear workers, bloquear el control ni perder una solicitud transitoria.
 
@@ -56,18 +56,18 @@ decisión pertenece a Sprint 4.
 
 ## 2. Estado Verificado
 
-- `cargo test --workspace --release`: debe ser la compuerta final de este sprint.
+- `cargo test --workspace --release`: verde en la compuerta final de este sprint.
 - Paquete raíz: 155 tests verdes en la última corrida de la librería.
 - `mana-perception`: 34 tests verdes en la última corrida del crate.
 - `mana-control`: 160 tests verdes.
 - `mana-geometry`: 72 tests verdes.
 - `mana-media`: 17 tests verdes.
-- `mana-perception`: 28 tests verdes.
+- `mana-perception`: 34 tests verdes.
 - `git diff --check`: limpio.
 - `cargo fmt --check`: conserva solamente diferencias preexistentes en archivos
   fuera de este sprint.
-- Los pesos ONNX `640` no estan presentes en el checkout; el workshop de Sprint
-  2 esta preparado pero su corrida fisica sigue pendiente.
+- Los perfiles ONNX FP16 `192` y `320` ya estan presentes en el catalogo local;
+  el workshop de Sprint 2 esta preparado pero su corrida fisica sigue pendiente.
 
 El worktree ya estaba sucio con cambios previos del baseline, blueprints,
 workshop y documentacion. No hacer `reset`, `checkout` ni revertir cambios que no
@@ -215,8 +215,8 @@ preempcion como solucion local.
 
 ## 8. Metricas A Completar
 
-Sprint 2 ya dejo estos campos y metodos, actualmente en cero hasta que haya
-productor:
+Sprint 2 dejo estos campos y metodos; Sprint 3 ya conecto el productor de
+requests sinteticas/directivas:
 
 ```text
 urgent
@@ -331,7 +331,7 @@ No reciclar `not_due`, `gated` ni `skip` para representar espera urgente.
 - Exponer text y JSONL.
 - Mantener el significado actual de `urgent` y `urgent_expired`.
 
-### Paso 5: acceptance — en compuerta
+### Paso 5: acceptance — completado
 
 - Tests unitarios de scheduler y metricas.
 - Test de `ControlDirective` persistente.
@@ -391,6 +391,6 @@ src/app/inference.rs: run_inference, run_root_models, run_child_models
 core/mana-perception/src/cascade.rs: CascadeScheduler, mark_started
 ```
 
-El runtime ya está implementado. Si la compuerta queda verde, revisar el diff,
-crear el commit del Sprint 3 y dejar la corrida física de pesos `640` como
-pendiente explícito; no empezar todavía con integración semántica face/pose.
+El runtime ya está implementado y el commit `c902d69` está creado. La corrida
+física de pesos `192/320` queda pendiente explícita. La siguiente sesión debe usar
+`sprints/sprint-04-handoff.md`; no comenzar con same-frame dinámico.

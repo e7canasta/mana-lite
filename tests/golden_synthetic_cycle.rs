@@ -128,6 +128,7 @@ fn person_in_bed(frame: u64) -> SceneSample {
         raw_person_count: 1,
         frame_number: frame,
         face_model_ran: false,
+        face_pose_validation: None,
     }
 }
 
@@ -138,6 +139,7 @@ fn empty_room(frame: u64) -> SceneSample {
         raw_person_count: 0,
         frame_number: frame,
         face_model_ran: false,
+        face_pose_validation: None,
     }
 }
 

@@ -65,6 +65,24 @@ requires_min_confidence = 0.50
 deshabilitado en el catalogo global puede ser activado explicitamente por un
 blueprint seleccionado.
 
+### Intervalo cooperativo por regla
+
+Una regla puede declarar `interval_min_ms` para limitar la frecuencia maxima de
+ese modelo sin crear un worker independiente:
+
+```toml
+[[rules]]
+model = "seg-standard"
+requires = "detect-fast"
+interval_min_ms = 2000  # como maximo 0.5 Hz
+```
+
+El intervalo se mide entre inicios de ejecucion. `0` u omision conserva la
+politica historica de ejecutar cada keyframe elegible. Si percepcion se atrasa,
+el scheduler no hace catch-up: toma la muestra mas fresca del slot en el ciclo
+siguiente. El contrato completo vive en
+[`SUBSPEC-001`](../subprojects/cooperative-inference-scheduler/spec.md).
+
 ### Configuracion operativa
 
 `config/mana.toml` selecciona el blueprint:
@@ -158,7 +176,9 @@ requires = "detect-fast"
 requires_class = "person"
 requires_exact_count = 1
 requires_min_confidence = 0.50
-requires_min_area_ratio = 0.01
+# Use the confirmed person track to resolve the dynamic pose crop so short
+# detector dropouts do not suppress the pose child.
+same_frame = false
 ```
 
 En un blueprint estable esta regla usa tracking. `min_hits` confirma la

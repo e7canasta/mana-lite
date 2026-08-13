@@ -8,9 +8,12 @@
 //! Ése es el invariante de `HANDOFF.md`: *un PLC cuyo dispositivo de campo es
 //! una cámara; el programa corre a cadencia fija aunque el campo esté muerto.*
 
+mod body_parts;
 mod bootstrap;
+mod cross_model_validation;
 mod cycle;
 mod deadline;
+mod face_pose;
 mod inference;
 mod ingestion;
 mod observer;
@@ -28,7 +31,7 @@ use crate::config::AppConfig;
 use crate::error::Result;
 use crate::face_dwell::FaceDwellLogStrategy;
 use crate::ingest::RawKeyframe;
-use crate::logger::{Event, LogSink, scene_events_to_log};
+use crate::logger::{scene_events_to_log, Event, LogSink};
 use crate::metrics::MetricsEngine;
 use crate::pipeline::PipelineState;
 use crate::scan::{ControlStamp, ControlState, ScanTimeline, SceneEvent};
@@ -37,11 +40,11 @@ use crate::slot::Slot;
 use crate::snapshot::FrameBuffer;
 #[cfg(feature = "rerun")]
 use mana_media::RawFrameV1;
-use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::mpsc::Receiver;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
-use tokio::signal::unix::{SignalKind, signal};
+use tokio::signal::unix::{signal, SignalKind};
 
 pub(crate) static VERSION: &str = env!("CARGO_PKG_VERSION");
 

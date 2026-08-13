@@ -13,9 +13,9 @@ OUTPUT_DIR="$PROJECT_DIR/artifacts/yolo26-fp16"
 DEVICE="cpu"
 DRY_RUN=0
 FORCE=0
-TASKS=(det pos seg depth)
+TASKS=(det pos seg)
 MODEL_CODES=(s m l x)
-INPUT_SIZES=(320 640)
+INPUT_SIZES=(192 320)
 
 declare -a failures=()
 exported=0
@@ -32,7 +32,7 @@ Options:
   --output-dir DIR   Artifact directory (default: artifacts/yolo26-fp16)
   --tasks LIST       Comma-separated: det,pos,seg,depth
   --models LIST      Comma-separated: s,m,l,x
-  --sizes LIST       Comma-separated input sizes (default: 320,640)
+  --sizes LIST       Comma-separated input sizes (default: 192,320)
   --device DEVICE    Ultralytics device (default: cpu)
   --force            Re-export files that already exist
   --dry-run          Print planned exports without running them

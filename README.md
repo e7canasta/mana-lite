@@ -69,6 +69,8 @@ cargo run --release -- --config workshop/scenarios/01-ingest-only/mana.toml
 - [Handoff](HANDOFF.md): dónde estamos, qué falta y cómo retomar.
 - [Observabilidad](docs/observability.md): metricas, toggles y blueprint.
 - [ROI y crops](docs/roi.md): crops estaticos y dinamicos.
+- [Fusion de evidencias y body parts](docs/subprojects/perception-evidence-fusion/README.md):
+  validacion cruzada y estimacion geometrica por partes.
 - [ADRs](docs/adrs/): decisiones de diseño (001-035).
 
 ## Salidas

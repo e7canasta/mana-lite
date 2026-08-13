@@ -339,6 +339,8 @@ fn evaluate_fsm(
         cardinality,
         input.sample.raw_person_count,
         input.sample.face_model_ran,
+        input.valid,
+        input.sample.face_pose_validation,
         &input.sample.observations,
         signals,
     );
@@ -395,6 +397,8 @@ fn update_signals(
     cardinality: RoomCardinality,
     raw: usize,
     face_model_ran: bool,
+    evidence_fresh: bool,
+    face_pose_validation: Option<crate::FacePoseValidation>,
     obs: &[SceneObservation],
     signals: &mut SignalTable,
 ) {
@@ -428,6 +432,19 @@ fn update_signals(
         let ratio = Ratio::new(confidence)
             .unwrap_or_else(|error| panic!("invalid face confidence for scene signal: {error:?}"));
         insert_signal(signals, "cara.confianza", SignalValue::Ratio(ratio));
+    }
+    if evidence_fresh {
+        if let Some(validation) = face_pose_validation {
+            let quality = Ratio::new(validation.quality).unwrap_or_else(|error| {
+                panic!("invalid face/pose quality for scene signal: {error:?}")
+            });
+            insert_signal(
+                signals,
+                "cara.pose_validada",
+                SignalValue::Bool(validation.valid),
+            );
+            insert_signal(signals, "cara.pose_calidad", SignalValue::Ratio(quality));
+        }
     }
     if let Some(in_dwell) = face_in_dwell {
         insert_signal(signals, "cara.en_dwell", SignalValue::Bool(in_dwell));
@@ -579,6 +596,7 @@ mod tests {
                     raw_person_count: 1,
                     frame_number: 1,
                     face_model_ran: false,
+                    face_pose_validation: None,
                 },
                 start,
             )),
@@ -617,6 +635,7 @@ mod tests {
                     raw_person_count: 1,
                     frame_number: 1,
                     face_model_ran: true,
+                    face_pose_validation: None,
                 },
                 start,
             )),
@@ -659,6 +678,7 @@ mod tests {
                 raw_person_count: 0,
                 frame_number: 2,
                 face_model_ran: false,
+                face_pose_validation: None,
             },
             start + Duration::from_millis(200),
         ));
@@ -673,6 +693,105 @@ mod tests {
         assert!(second.is_absent(&SignalTag::new("cara.confianza")));
         assert_bool(second, "cara.en_dwell", false);
         assert_bool(second, "cara.modelo_corrio", false);
+    }
+
+    #[test]
+    fn face_pose_signals_preserve_positive_negative_absent_and_stale_semantics() {
+        let start = Instant::now(); // cfg(test)
+        let mut timeline = ScanTimeline::new(LoopId::default_loop(), start, 200);
+        let mut state = control_state(start, 1000);
+        let mut image = ProcessImage {
+            observations: Some(AgedEvidence::new(
+                SceneSample {
+                    observations: vec![person_with_face()],
+                    signal_valid: true,
+                    raw_person_count: 1,
+                    frame_number: 1,
+                    face_model_ran: true,
+                    face_pose_validation: Some(crate::FacePoseValidation {
+                        valid: true,
+                        quality: 0.8,
+                        frame_number: 2,
+                    }),
+                },
+                start,
+            )),
+            depth: None,
+            measurement_pending: true,
+        };
+
+        scan(&mut state, &image, &timeline);
+        assert_bool(&state.signal_snapshot, "cara.pose_validada", true);
+        let SignalValue::Ratio(quality) = signal(&state.signal_snapshot, "cara.pose_calidad")
+        else {
+            panic!("pose quality must be a ratio");
+        };
+        assert!((quality.get() - 0.8).abs() < f32::EPSILON);
+
+        timeline.advance();
+        image
+            .observations
+            .as_mut()
+            .unwrap()
+            .value
+            .face_pose_validation = Some(crate::FacePoseValidation {
+            valid: false,
+            quality: 0.2,
+            frame_number: 3,
+        });
+        image.observations.as_mut().unwrap().observed_at = timeline.now().as_instant();
+        scan(&mut state, &image, &timeline);
+        assert_bool(&state.signal_snapshot, "cara.pose_validada", false);
+
+        timeline.advance();
+        image
+            .observations
+            .as_mut()
+            .unwrap()
+            .value
+            .face_pose_validation = None;
+        image.observations.as_mut().unwrap().observed_at = timeline.now().as_instant();
+        scan(&mut state, &image, &timeline);
+        assert!(
+            state
+                .signal_snapshot
+                .is_absent(&SignalTag::new("cara.pose_validada"))
+        );
+        assert!(
+            state
+                .signal_snapshot
+                .is_absent(&SignalTag::new("cara.pose_calidad"))
+        );
+
+        let mut stale_state = control_state(start, 100);
+        let stale_timeline = ScanTimeline::new(LoopId::default_loop(), start, 200);
+        let stale_image = ProcessImage {
+            observations: Some(AgedEvidence::new(
+                SceneSample {
+                    observations: vec![person_with_face()],
+                    signal_valid: true,
+                    raw_person_count: 1,
+                    frame_number: 4,
+                    face_model_ran: true,
+                    face_pose_validation: Some(crate::FacePoseValidation {
+                        valid: true,
+                        quality: 0.9,
+                        frame_number: 4,
+                    }),
+                },
+                start,
+            )),
+            depth: None,
+            measurement_pending: true,
+        };
+        let mut stale_timeline = stale_timeline;
+        stale_timeline.advance();
+        scan(&mut stale_state, &stale_image, &stale_timeline);
+        assert!(
+            stale_state
+                .signal_snapshot
+                .is_absent(&SignalTag::new("cara.pose_validada"))
+        );
     }
 
     /// Con el catálogo de FSM que corre en producción y una persona en la
@@ -712,6 +831,7 @@ mod tests {
                         raw_person_count: 1,
                         frame_number: tick,
                         face_model_ran: false,
+                        face_pose_validation: None,
                     },
                     start + Duration::from_millis(PERIODO_MS * tick),
                 )),
@@ -793,6 +913,7 @@ mod tests {
                     raw_person_count: 1,
                     frame_number: 1,
                     face_model_ran: false,
+                    face_pose_validation: None,
                 },
                 start,
             )),
@@ -826,7 +947,7 @@ mod tests {
         };
         assert_eq!(stamp.scan_seq, 1);
         assert_eq!(stamp.evidence_frame_id, 1);
-        assert_eq!(snapshot.len(), 9);
+        assert_eq!(snapshot.len(), 11);
         assert!(snapshot.is_absent(&SignalTag::new("cara.confianza")));
         assert!(snapshot.is_absent(&SignalTag::new("cara.en_dwell")));
         assert!(snapshot.is_absent(&SignalTag::new("cara.estuvo_dentro")));
@@ -860,6 +981,7 @@ mod tests {
                     raw_person_count: 1,
                     frame_number: 1,
                     face_model_ran: false,
+                    face_pose_validation: None,
                 },
                 start,
             )),

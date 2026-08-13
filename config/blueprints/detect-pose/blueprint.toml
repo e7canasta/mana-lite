@@ -1,0 +1,21 @@
+# Lightweight deployment: one primary detector plus pose enrichment.
+# The presence filter holds short detector dropouts before the tracker.
+[blueprint]
+name = "detect-pose"
+description = "Detect one person and run pose on the confirmed track"
+primary_model = "detect-fast"
+models = ["detect-fast", "pose-standard"]
+requires_tracking = true
+
+[[rules]]
+model = "detect-fast"
+
+[[rules]]
+model = "pose-standard"
+requires = "detect-fast"
+requires_class = "person"
+requires_exact_count = 1
+requires_min_confidence = 0.50
+# Use the confirmed person track to resolve the dynamic pose crop so short
+# detector dropouts do not suppress the pose child.
+same_frame = false

@@ -92,6 +92,7 @@ fn depth_evidence_in_process_image_fires_fsm_guard() {
             raw_person_count: 0,
             frame_number: 1,
             face_model_ran: false,
+            face_pose_validation: None,
         },
         start,
     ));
@@ -165,6 +166,7 @@ fn empty_depth_snapshot_does_not_fire_depth_guard() {
             raw_person_count: 0,
             frame_number: 1,
             face_model_ran: false,
+            face_pose_validation: None,
         },
         start,
     ));

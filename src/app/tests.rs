@@ -247,10 +247,16 @@ fn bed_approach_rules() -> DepthRules {
 
 #[test]
 fn evaluate_depth_rules_projects_triggered_rule_into_process_image() {
-    let mut stage = stage_for_depth_rules(bed_approach_rules(), Some(CropRect::from_array([0, 0, 2, 2])));
+    let mut stage = stage_for_depth_rules(
+        bed_approach_rules(),
+        Some(CropRect::from_array([0, 0, 2, 2])),
+    );
     let now = Instant::now();
     stage.image.reset_depth(now);
-    assert_eq!(stage.image.depth_snapshot().is_triggered("bed-approach"), None);
+    assert_eq!(
+        stage.image.depth_snapshot().is_triggered("bed-approach"),
+        None
+    );
 
     stage.evaluate_depth_rules(&depth_only_result(&[&[1.0, 1.0], &[1.0, 1.0]]), None, now);
     assert_eq!(
@@ -282,6 +288,28 @@ fn urgent_request_is_rejected_when_the_backend_model_is_unavailable() {
         infer: true,
         presence_class: "person".into(),
         disabled_tasks: Vec::new(),
+        face_pose: crate::config::FacePoseConfig::default(),
+        perception: crate::config::PerceptionPolicyConfig {
+            validation: crate::config::CrossModelValidationConfig {
+                relation_support_threshold: 0.50,
+                source_quality_weight: 0.40,
+                agreement_quality_weight: 0.60,
+            },
+            body_parts: crate::config::BodyPartsConfig {
+                frame_local_match_iou: 0.50,
+                face_frame_local_coverage: 0.50,
+                joint_min_confidence: 0.25,
+                segment_radius_ratio: 0.035,
+                head_padding_ratio: 0.06,
+                torso_radius_multiplier: 1.5,
+                head_face_weight: 0.65,
+                head_pose_weight: 0.35,
+                mask_quality_weight: 0.25,
+                cross_model_quality_weight: 0.20,
+                minimum_geometry_extent_px: 1.0,
+                geometry_epsilon: 0.00001,
+            },
+        },
     };
     let now = Instant::now();
     let request = InferenceRequest::new(

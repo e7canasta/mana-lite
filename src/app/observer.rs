@@ -1,9 +1,9 @@
 //! Observador de la etapa de percepción: dibujo directo, eventos por cola.
 
-use crate::logger::Event;
-use crate::occupancy::{RoomCardinality, SecondPersonState, SignalValidity};
 #[cfg(feature = "rerun")]
 use super::viz_relay::VizHandle;
+use crate::logger::Event;
+use crate::occupancy::{RoomCardinality, SecondPersonState, SignalValidity};
 
 /// Observador del hilo de percepción.
 ///

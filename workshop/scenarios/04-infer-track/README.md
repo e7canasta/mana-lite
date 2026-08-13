@@ -73,7 +73,9 @@ la cascada no escala en este hardware, y hay que verlo acá y no en producción.
 
 ## Números medidos
 
-Corridas del 2026-08-12, 180 s cada una, 35 ventanas de 5 s.
+Corridas del 2026-08-12, 180 s cada una, con `detect-fast = YOLO26s FP16 320`
+y `face-yolo = YOLO12s FP16 320`. El `evid` p50 es la mediana de los p50
+reportados por las ventanas de 5 s; `max` es el peor maximo reportado.
 
 **La cámara de la instalación estaba vacía**, y un escenario de cascada sin
 persona no ejercita nada: la compuerta se cierra por la razón correcta y no se
@@ -85,18 +87,15 @@ junto a su salida, como en el 02.
 
 |Corrida|`evid` p50/max|`dline` p95|`face-yolo` skips|`kf_pisados`|
 |---|---|---|---|---|
-|`home2`, escena vacía|674 / 1227 ms|2,0–7,6 ms|178 de 178|0|
-|`clip1`, antes del arreglo|711 / 1113 ms|1,2–2,8 ms|**177 de 177**|0|
-|`clip1`, después del arreglo|881 / 1287 ms|2,0–4,5 ms|**8 de 178**|0|
+|`clip1`, persona en cama|498 / 1098 ms|1,6–1,9 ms|12 total|0|
+|`home2`, fuente real|626 / 1073 ms|1,5–2,1 ms|64 total|0|
 
-Las tres con `0 overruns`, `0 missed` fuera del piso del temporizador, sin
-reconexiones y sin deriva de keyframes (180 procesados / 180 vistos).
+Las dos corridas terminaron con `0 overruns`, `0 missed` y `0 kf_pisados`. En
+`clip1`, `detect-fast` tuvo mediana/maximo de 36/54 ms y `face-yolo` 44/134 ms;
+en `home2` fueron 32/38 ms y 39/47 ms respectivamente. La compuerta siguió
+abriendo con persona y cerrando sin ella.
 
-**El costo del segundo modelo, medido sobre la misma escena y la misma fuente:
-+170 ms de edad de evidencia y nada de cadencia.** `face-yolo` corre en 121 ms
-contra los 205 ms de `detect-fast`; el atraso del lazo no se movió del piso y
-`kf_pisados` se mantuvo en cero. El hallazgo que este README anticipaba —la
-cascada dejando de entrar en el intervalo de keyframe— **no ocurrió**.
+### Antecedente histórico
 
 ### El hallazgo que sí hubo: el lazo cerrado no gobernaba
 

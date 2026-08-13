@@ -17,6 +17,8 @@ pub enum SignalPresence {
     Always,
     /// The producer emits a value only when a face was selected.
     WhenFaceSelected,
+    /// The producer emits a value only when face/pose validation ran.
+    WhenFacePoseValidation,
     /// The producer emits a value only when the dwell ROI is configured.
     WhenDwellRoiConfigured,
     /// The producer emits a value while the FSM is active.
@@ -64,7 +66,7 @@ pub struct SignalCatalog {
 }
 
 impl SignalCatalog {
-    /// Catalog schema version. v1 is the initial nine-tag vocabulary.
+    /// Catalog schema version. v1 is the initial scene-signal vocabulary.
     #[must_use]
     pub fn version(&self) -> u32 {
         self.version
@@ -137,7 +139,7 @@ fn descriptor(kind: SignalKind, presence: SignalPresence, labels: &[&str]) -> Si
 
 fn build_v1() -> SignalCatalog {
     let mut descriptors = BTreeMap::new();
-    let entries: [(&str, SignalDescriptor); 9] = [
+    let entries: [(&str, SignalDescriptor); 11] = [
         (
             "persona.presente",
             descriptor(SignalKind::Bool, SignalPresence::Always, &[]),
@@ -153,6 +155,22 @@ fn build_v1() -> SignalCatalog {
         (
             "cara.confianza",
             descriptor(SignalKind::Ratio, SignalPresence::WhenFaceSelected, &[]),
+        ),
+        (
+            "cara.pose_calidad",
+            descriptor(
+                SignalKind::Ratio,
+                SignalPresence::WhenFacePoseValidation,
+                &[],
+            ),
+        ),
+        (
+            "cara.pose_validada",
+            descriptor(
+                SignalKind::Bool,
+                SignalPresence::WhenFacePoseValidation,
+                &[],
+            ),
         ),
         (
             "cara.en_dwell",
@@ -213,17 +231,17 @@ mod tests {
     use super::*;
 
     #[test]
-    fn catalog_v1_has_nine_tags_version_one() {
+    fn catalog_v1_has_eleven_tags_version_one() {
         let cat = scene_signal_catalog();
         assert_eq!(cat.version(), 1);
-        assert_eq!(cat.len(), 9);
+        assert_eq!(cat.len(), 11);
         assert!(!cat.is_empty());
     }
 
     #[test]
     fn catalog_v1_kinds_and_labels() {
         let cat = scene_signal_catalog();
-        let expected: [(&str, SignalKind, SignalPresence, &[&str]); 9] = [
+        let expected: [(&str, SignalKind, SignalPresence, &[&str]); 11] = [
             (
                 "persona.presente",
                 SignalKind::Bool,
@@ -246,6 +264,18 @@ mod tests {
                 "cara.confianza",
                 SignalKind::Ratio,
                 SignalPresence::WhenFaceSelected,
+                &[],
+            ),
+            (
+                "cara.pose_calidad",
+                SignalKind::Ratio,
+                SignalPresence::WhenFacePoseValidation,
+                &[],
+            ),
+            (
+                "cara.pose_validada",
+                SignalKind::Bool,
+                SignalPresence::WhenFacePoseValidation,
                 &[],
             ),
             (
@@ -337,7 +367,7 @@ mod tests {
         let mut sorted = names.clone();
         sorted.sort_unstable();
         assert_eq!(names, sorted);
-        assert_eq!(names.len(), 9);
+        assert_eq!(names.len(), 11);
     }
 
     #[test]
