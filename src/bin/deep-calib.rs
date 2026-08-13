@@ -10,10 +10,14 @@ use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
 use image::GenericImageView;
-use mana_lite::config::{CropType, load_app_config, load_model_catalog};
 use mana_lite::depth_map::DepthFrame;
 use mana_lite::{SurfaceAccumulator, SurfaceCalibration, SurfaceLayer, polygon_stats};
 use ultralytics_inference::{InferenceConfig, YOLOModel};
+
+#[path = "common/mod.rs"]
+mod common;
+
+use common::{catalog_depth_context, derive_depth_roi_from_bbox, zones_bbox};
 
 #[derive(Debug, Default)]
 struct Options {
@@ -50,24 +54,44 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
 
     let catalog_context = if options.model.is_none() || options.roi.is_none() {
-        Some(catalog_model_context(&options.config, &options.model_key)?)
+        Some(catalog_depth_context(&options.config, &options.model_key)?)
     } else {
         None
     };
     let model_path = options
         .model
         .clone()
-        .or_else(|| catalog_context.as_ref().map(|(path, _)| path.clone()))
+        .or_else(|| catalog_context.as_ref().map(|(path, _, _)| path.clone()))
         .ok_or("--model is required when the catalog cannot be loaded")?;
     let model_path = resolve_model_path(model_path, &options.config)?;
-    let configured_roi = catalog_context.and_then(|(_, roi)| roi);
+    let configured_roi = catalog_context.as_ref().and_then(|(_, roi, _)| *roi);
+    let roi_margin = catalog_context.map_or(0.0, |(_, _, margin)| margin);
 
     let first_image = image::open(&options.images[0])?;
     let (frame_width, frame_height) = first_image.dimensions();
-    let roi = options
+    let base_roi = options
         .roi
         .or(configured_roi)
         .unwrap_or([0, 0, frame_width, frame_height]);
+    let mut regions_bbox = polygon_bbox(&polygon)?;
+    if session_path.exists() {
+        let existing: SurfaceCalibration = toml::from_str(&fs::read_to_string(session_path)?)?;
+        if existing.frame_width == frame_width && existing.frame_height == frame_height {
+            if let Some(existing_bbox) = zones_bbox(&existing) {
+                regions_bbox = union_bbox(regions_bbox, existing_bbox);
+            }
+        }
+    }
+    let roi = derive_depth_roi_from_bbox(
+        base_roi,
+        regions_bbox,
+        roi_margin,
+        frame_width,
+        frame_height,
+    )?;
+    println!(
+        "depth roi: base={base_roi:?} regions_bbox={regions_bbox:?} margin={roi_margin:.3} effective={roi:?}"
+    );
     let fingerprint = model_fingerprint(&model_path)?;
     let mut calibration = load_or_create_session(
         session_path,
@@ -79,9 +103,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     )?;
 
     let mut model_config = InferenceConfig::default();
-    if let Some([x1, y1, x2, y2]) = options.roi.or(configured_roi) {
-        model_config = model_config.with_roi(x1, y1, x2, y2);
-    }
+    let [x1, y1, x2, y2] = roi;
+    model_config = model_config.with_roi(x1, y1, x2, y2);
     if let Some(size) = options.imgsz {
         model_config = model_config.with_imgsz(size as usize, size as usize);
     }
@@ -235,24 +258,6 @@ fn model_fingerprint(path: &Path) -> Result<String, Box<dyn Error>> {
     Ok(format!("bytes:{}:mtime:{}", metadata.len(), modified))
 }
 
-fn catalog_model_context(
-    config_path: &Path,
-    model_key: &str,
-) -> Result<(PathBuf, Option<[u32; 4]>), Box<dyn Error>> {
-    let app_config = load_app_config(config_path)?;
-    let catalog = load_model_catalog(&app_config.inference.model_catalog)?;
-    let entry = catalog
-        .models
-        .get(model_key)
-        .ok_or_else(|| format!("model '{model_key}' is absent from the catalog"))?;
-    let configured_roi = entry
-        .crop
-        .as_ref()
-        .filter(|crop| crop.crop_type == CropType::Static)
-        .and_then(|crop| crop.region);
-    Ok((entry.path.clone(), configured_roi))
-}
-
 fn resolve_model_path(path: PathBuf, config_path: &Path) -> Result<PathBuf, Box<dyn Error>> {
     if path.is_absolute() || path.exists() {
         return Ok(path);
@@ -278,6 +283,29 @@ fn resolve_model_path(path: PathBuf, config_path: &Path) -> Result<PathBuf, Box<
     } else {
         Ok(path)
     }
+}
+
+fn polygon_bbox(polygon: &[[f32; 2]]) -> Result<[f32; 4], Box<dyn Error>> {
+    let Some([first_x, first_y]) = polygon.first().copied() else {
+        return Err("polygon must contain at least one point".into());
+    };
+    let mut bbox = [first_x, first_y, first_x, first_y];
+    for [x, y] in polygon.iter().copied().skip(1) {
+        bbox[0] = bbox[0].min(x);
+        bbox[1] = bbox[1].min(y);
+        bbox[2] = bbox[2].max(x);
+        bbox[3] = bbox[3].max(y);
+    }
+    Ok(bbox)
+}
+
+fn union_bbox(left: [f32; 4], right: [f32; 4]) -> [f32; 4] {
+    [
+        left[0].min(right[0]),
+        left[1].min(right[1]),
+        left[2].max(right[2]),
+        left[3].max(right[3]),
+    ]
 }
 
 fn parse_args(args: Vec<String>) -> Result<Options, Box<dyn Error>> {

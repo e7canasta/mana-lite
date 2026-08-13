@@ -13,7 +13,7 @@
 
 [[rules]]
 name = "bed-approach"
-region = [560, 140, 1240, 820]
+region = [452, 140, 1300, 1029]
 metric = "median"
 op = "lt"
 threshold_m = 1.5

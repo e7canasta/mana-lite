@@ -39,6 +39,30 @@ required-features = ["rerun"]
 name = "deep-calib"
 path = "src/bin/deep-calib.rs"
 
+[[bin]]
+name = "deep-calib-preview"
+path = "src/bin/deep-calib-preview.rs"
+
+[[bin]]
+name = "deep-calib-pose"
+path = "src/bin/deep-calib-pose.rs"
+
+[[bin]]
+name = "deep-calib-matrix"
+path = "src/bin/deep-calib-matrix.rs"
+
+[[bin]]
+name = "deep-calib-person"
+path = "src/bin/deep-calib-person.rs"
+
+[[bin]]
+name = "deep-calib-parts"
+path = "src/bin/deep-calib-parts.rs"
+
+[[bin]]
+name = "deep-calib-radio"
+path = "src/bin/deep-calib-radio.rs"
+
 [dependencies]
 mana-media = { path = "std/mana-media", default-features = false }
 mana-geometry = { path = "std/mana-geometry", features = ["polygonize"] }
@@ -51,6 +75,7 @@ futures = "0.3"
 url = "2"
 ultralytics-inference = { path = "../inference", default-features = false }
 serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 toml = "0.8"
 chrono = "0.4"
 thiserror = "2"

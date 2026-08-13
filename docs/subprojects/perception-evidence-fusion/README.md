@@ -71,6 +71,8 @@ temporal.
   y crop opcional sobre bbox de persona.
 - [Sprint 4 surface depth](sprints/sprint-04-surface-relative-depth.md):
   calibracion por zonas de cama/piso y evidencia relativa.
+- [Engine de postura por firmas](../posture-analysis-engine/README.md):
+  subproyecto complementario para consenso offline con evidencia parcial.
 
 ## Relacion con la documentacion existente
 

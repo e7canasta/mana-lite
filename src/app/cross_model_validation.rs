@@ -10,7 +10,7 @@ use crate::detection::Detection;
 use super::face_pose::COCO_HEAD_JOINTS;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum EvidenceKind {
+pub enum EvidenceKind {
     Detection,
     Face,
     Pose,
@@ -26,7 +26,7 @@ pub(crate) struct PendingEvidence<'a> {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct CrossModelValidation {
+pub struct CrossModelValidation {
     pub(crate) actor_id: u64,
     pub(crate) frame_number: u64,
     pub(crate) quality: f32,

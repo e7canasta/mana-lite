@@ -16,9 +16,10 @@ mod run_helpers;
 mod segment_post;
 use crop::extract_crop_frame;
 pub use crop::{compute_bbox_roi, compute_largest_class_roi, compute_upper_square_roi};
+pub use run_helpers::{collect_detections, translate_detections_to_frame};
 use run_helpers::{
     apply_max_detections, apply_nms, apply_postprocess_filter, apply_static_roi_filter,
-    collect_detections, take_depth, translate_detections_to_frame,
+    take_depth,
 };
 
 #[cfg(test)]

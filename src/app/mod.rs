@@ -8,9 +8,9 @@
 //! Ése es el invariante de `HANDOFF.md`: *un PLC cuyo dispositivo de campo es
 //! una cámara; el programa corre a cadencia fija aunque el campo esté muerto.*
 
-pub(crate) mod body_parts;
+pub mod body_parts;
 mod bootstrap;
-mod cross_model_validation;
+pub mod cross_model_validation;
 mod cycle;
 mod deadline;
 mod face_pose;

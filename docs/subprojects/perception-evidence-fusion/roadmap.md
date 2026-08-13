@@ -124,13 +124,18 @@ desconocida sin comparar crops incompatibles.
 
 ### Sprint 5: postura relativa y extremidades fuera de cama
 
-**Estado:** futuro.
+**Estado:** definido como subproyecto complementario; construccion pendiente.
 
 - combinar pose, mascara, superficies y persistencia;
 - clasificar acostado, sentado sobre cama, sentado al borde y parado;
 - detectar manos/pies fuera de cama;
 - validar con escenas etiquetadas;
 - decidir si algun resumen semantico estrecho llega al FSM.
+
+El contrato de construccion y la matriz inicial viven en
+[`posture-analysis-engine`](../posture-analysis-engine/README.md). Este roadmap
+mantiene el ownership conceptual de la evidencia; el nuevo subproyecto define
+el engine offline y sus perfiles TOML sin activar aun politica clinica.
 
 ## Puertas de decision
 

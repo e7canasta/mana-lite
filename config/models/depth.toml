@@ -21,7 +21,10 @@ imgsz = 320
 # Fixed depth context ROI for bed-approach/dwell rules, independent of the
 # dynamic face detection crop.
 type = "static"
-region = [560, 140, 1240, 820]
+region = [452, 140, 1300, 1029]
+# Fraction of the calibrated-region bbox added on each side when deriving the
+# effective scene ROI. The base region above is always preserved.
+margin = 0.10
 
 [models.depth-s-320]
 enabled = false

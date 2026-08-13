@@ -16,13 +16,13 @@ use mana_perception::{SurfaceCalibration, SurfaceLayer, polygon_stats_intersecti
 /// Temporal identity for a derived estimate. `FrameLocal` is deliberately not
 /// persisted: it is only an honest label for same-frame, untracked evidence.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub(crate) enum ActorRef {
+pub enum ActorRef {
     Track(u64),
     FrameLocal { frame_number: u64, index: usize },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub(crate) enum BodyPartKind {
+pub enum BodyPartKind {
     Head,
     Torso,
     LeftArm,
@@ -32,7 +32,7 @@ pub(crate) enum BodyPartKind {
 }
 
 impl BodyPartKind {
-    pub(crate) const ALL: [Self; 6] = [
+    pub const ALL: [Self; 6] = [
         Self::Head,
         Self::Torso,
         Self::LeftArm,
@@ -41,7 +41,7 @@ impl BodyPartKind {
         Self::RightLeg,
     ];
 
-    pub(crate) const fn as_str(self) -> &'static str {
+    pub const fn as_str(self) -> &'static str {
         match self {
             Self::Head => "head",
             Self::Torso => "torso",
@@ -64,7 +64,7 @@ const LIMB_JOINTS: [(BodyPartKind, [usize; 3]); 4] = [
 
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub(crate) enum BodyPartSupport {
+pub enum BodyPartSupport {
     Face,
     Pose,
     Segment,
@@ -72,7 +72,7 @@ pub(crate) enum BodyPartSupport {
 }
 
 impl BodyPartSupport {
-    pub(crate) const fn as_str(self) -> &'static str {
+    pub const fn as_str(self) -> &'static str {
         match self {
             Self::Face => "face",
             Self::Pose => "pose",
@@ -83,7 +83,7 @@ impl BodyPartSupport {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) enum BodyGeometry {
+pub enum BodyGeometry {
     Bbox([f32; 4]),
     Polygon(Vec<[f32; 2]>),
     Polyline { points: Vec<[f32; 2]>, radius: f32 },
@@ -96,60 +96,60 @@ pub(crate) enum BodyGeometry {
 /// `relative_to_torso_m` is only meaningful when both parts came from the same
 /// depth map.
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct BodyPartDepth {
-    pub(crate) source_model: String,
-    pub(crate) roi: [u32; 4],
-    pub(crate) map_width: u32,
-    pub(crate) map_height: u32,
-    pub(crate) sampled_pixels: u64,
-    pub(crate) valid_pixels: u64,
-    pub(crate) valid_ratio: Option<f32>,
-    pub(crate) min_depth_m: Option<f32>,
-    pub(crate) median_depth_m: Option<f32>,
-    pub(crate) p10_depth_m: Option<f32>,
-    pub(crate) p90_depth_m: Option<f32>,
-    pub(crate) max_depth_m: Option<f32>,
-    pub(crate) relative_to_torso_m: Option<f32>,
-    pub(crate) surface_evidence: Vec<SurfaceDepthEvidence>,
+pub struct BodyPartDepth {
+    pub source_model: String,
+    pub roi: [u32; 4],
+    pub map_width: u32,
+    pub map_height: u32,
+    pub sampled_pixels: u64,
+    pub valid_pixels: u64,
+    pub valid_ratio: Option<f32>,
+    pub min_depth_m: Option<f32>,
+    pub median_depth_m: Option<f32>,
+    pub p10_depth_m: Option<f32>,
+    pub p90_depth_m: Option<f32>,
+    pub max_depth_m: Option<f32>,
+    pub relative_to_torso_m: Option<f32>,
+    pub surface_evidence: Vec<SurfaceDepthEvidence>,
 }
 
 /// Depth evidence relative to one calibrated scene surface zone.
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct SurfaceDepthEvidence {
-    pub(crate) source_model: String,
-    pub(crate) surface: String,
-    pub(crate) zone: String,
-    pub(crate) sampled_pixels: u64,
-    pub(crate) valid_ratio: Option<f32>,
-    pub(crate) observed_median: Option<f32>,
-    pub(crate) reference_median: f32,
-    pub(crate) residual: Option<f32>,
-    pub(crate) in_envelope: bool,
+pub struct SurfaceDepthEvidence {
+    pub source_model: String,
+    pub surface: String,
+    pub zone: String,
+    pub sampled_pixels: u64,
+    pub valid_ratio: Option<f32>,
+    pub observed_median: Option<f32>,
+    pub reference_median: f32,
+    pub residual: Option<f32>,
+    pub in_envelope: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct BodyPartEstimate {
-    pub(crate) part: BodyPartKind,
-    pub(crate) geometry: BodyGeometry,
-    pub(crate) support: Vec<BodyPartSupport>,
-    pub(crate) source_models: Vec<String>,
-    pub(crate) quality: f32,
-    pub(crate) mask_coverage: Option<f32>,
-    pub(crate) depth: Option<BodyPartDepth>,
-    pub(crate) source_frame_numbers: Vec<u64>,
-    pub(crate) stale: bool,
+pub struct BodyPartEstimate {
+    pub part: BodyPartKind,
+    pub geometry: BodyGeometry,
+    pub support: Vec<BodyPartSupport>,
+    pub source_models: Vec<String>,
+    pub quality: f32,
+    pub mask_coverage: Option<f32>,
+    pub depth: Option<BodyPartDepth>,
+    pub source_frame_numbers: Vec<u64>,
+    pub stale: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct BodyPartsEstimate {
-    pub(crate) actor_ref: ActorRef,
-    pub(crate) frame_number: u64,
-    pub(crate) parts: Vec<BodyPartEstimate>,
-    pub(crate) overall_quality: f32,
+pub struct BodyPartsEstimate {
+    pub actor_ref: ActorRef,
+    pub frame_number: u64,
+    pub parts: Vec<BodyPartEstimate>,
+    pub overall_quality: f32,
     /// Normalized full-frame contours retained for depth sampling. Keeping the
     /// mask once per actor avoids copying the same segmentation into every
     /// body-part record.
-    pub(crate) mask_polygons: Option<Vec<Vec<[f32; 2]>>>,
+    pub mask_polygons: Option<Vec<Vec<[f32; 2]>>>,
 }
 
 #[derive(Debug, Clone)]
@@ -195,11 +195,11 @@ impl BodyPartsTemporalState {
 /// Rich model output adapted at the inference boundary. The raw `Detection`
 /// type stays unchanged and remains local to perception.
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct PendingBodyPartsEvidence<'a> {
-    pub(crate) model_key: &'a str,
-    pub(crate) kind: EvidenceKind,
-    pub(crate) target: Option<CascadeTarget>,
-    pub(crate) detections: &'a [Detection],
+pub struct PendingBodyPartsEvidence<'a> {
+    pub model_key: &'a str,
+    pub kind: EvidenceKind,
+    pub target: Option<CascadeTarget>,
+    pub detections: &'a [Detection],
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -237,12 +237,12 @@ struct Joint {
 
 /// Stateless body-part estimator for the Sprint 2 MVP.
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct BodyPartsEstimator<'a> {
+pub struct BodyPartsEstimator<'a> {
     config: &'a BodyPartsConfig,
 }
 
 impl<'a> BodyPartsEstimator<'a> {
-    pub(crate) const fn new(config: &'a BodyPartsConfig) -> Self {
+    pub const fn new(config: &'a BodyPartsConfig) -> Self {
         Self { config }
     }
 
@@ -252,7 +252,7 @@ impl<'a> BodyPartsEstimator<'a> {
     /// inputs are emitted as `FrameLocal` and may be associated spatially only
     /// inside this keyframe; they have no temporal identity.
     #[must_use]
-    pub(crate) fn estimate(
+    pub fn estimate(
         &self,
         inputs: &[PendingBodyPartsEvidence<'_>],
         validations: &[CrossModelValidation],
@@ -1094,7 +1094,7 @@ impl<'a> BodyPartsEstimator<'a> {
 /// Pose-derived geometry defines the footprint and the segmentation contours
 /// clip it to the visible person. This keeps depth evidence conservative when
 /// a limb geometry crosses the background or the bed.
-pub(crate) fn attach_depth(
+pub fn attach_depth(
     estimate: &mut BodyPartsEstimate,
     source_model: &str,
     depth: &DepthFrame,
@@ -1157,7 +1157,7 @@ pub(crate) fn attach_depth(
 ///
 /// This always samples the scene depth map. Person-crop depth remains local to
 /// the actor and must not be used as a surface reference.
-pub(crate) fn attach_surface_evidence(
+pub fn attach_surface_evidence(
     estimates: &mut [BodyPartsEstimate],
     source_model: &str,
     depth: &DepthFrame,

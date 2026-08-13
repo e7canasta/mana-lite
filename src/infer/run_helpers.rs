@@ -16,7 +16,7 @@ use crate::detection::{CropRect, Detection, DetectionMask};
     clippy::cast_sign_loss,
     clippy::cast_precision_loss
 )]
-pub(super) fn translate_detections_to_frame(
+pub fn translate_detections_to_frame(
     detections: &mut [Detection],
     offset_x: f32,
     offset_y: f32,
@@ -127,7 +127,7 @@ pub(super) fn apply_postprocess_filter(
     before_postprocess - detections.len()
 }
 
-pub(super) fn collect_detections(
+pub fn collect_detections(
     results: &[Results],
     polygon_simplify: f64,
     min_component_area_ratio: f32,
