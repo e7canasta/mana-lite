@@ -1,0 +1,33 @@
+# mana-pico configuration
+# RTSP → inference → Rerun visualization pipeline.
+
+[source]
+url = "rtsp://127.0.0.1:8554/home2"
+username = "admin"
+password = ""
+transport = "tcp"
+
+[scan]
+period_ms = 200
+
+[ingest]
+poll_timeout_ms = 50
+error_window_size = 128
+error_window_threshold = 25
+reconnect_backoff_initial_ms = 1000
+reconnect_backoff_max_ms = 30000
+dedup_max_suppress_ms = 5000
+
+[inference]
+model_path = "tools/model-tools/artifacts/yolo26-fp16/yolo26s-fp16-320.onnx"
+model_name = "detect-fast"
+confidence = 0.40
+
+[viz]
+enabled = true
+rerun_addr = "127.0.0.1:9876"
+image_format = "jpeg"
+image_quality = 75
+
+[output]
+log_level = "info"

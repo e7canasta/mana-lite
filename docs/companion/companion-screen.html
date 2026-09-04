@@ -1,0 +1,1098 @@
+<title>Latido de guardia</title>
+
+<style>
+  :root {
+    /* del sistema de Manantial (companion.css) */
+    --ground:  #07080b;
+    --ink:     #f3f1ec;
+    --brand:   #00a675;
+    --alert:   #ff453a;
+    --warn:    #f5b730;
+
+    --panel:    #101319;
+    --panel-hi: #171c24;
+    --line:     #1c222b;
+    --line-hi:  #29323d;
+
+    --ink-dim:   rgba(243,241,236,.54);
+    --ink-faint: rgba(243,241,236,.30);
+    --ink-body:  rgba(243,241,236,.80);
+
+    --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    --mono: ui-monospace, "JetBrains Mono", "SF Mono", "DejaVu Sans Mono", Menlo, monospace;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 1rem;
+    line-height: 1.62;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ══════════════════ banco de pruebas ══════════════════ */
+
+  .bench {
+    min-height: 100svh;
+    display: grid;
+    grid-template-rows: 1fr auto;
+    gap: 1.6rem;
+    padding: clamp(1.5rem, 4vw, 3rem) clamp(1rem, 4vw, 3rem) 2rem;
+    background:
+      radial-gradient(120% 80% at 50% 0%, #0c1015 0%, var(--ground) 60%);
+  }
+
+  .tablet-wrap { display: grid; place-items: center; min-height: 0; }
+
+  .tablet {
+    position: relative;
+    width: min(100%, 118vh, 980px);
+    aspect-ratio: 1.436;               /* iPad landscape, 1180 × 822 */
+    border-radius: 22px;
+    padding: 11px;
+    background: linear-gradient(160deg, #23272d 0%, #14171b 45%, #0d1013 100%);
+    box-shadow:
+      0 0 0 1px rgba(255,255,255,.05),
+      0 40px 90px -30px rgba(0,0,0,.9),
+      0 2px 0 rgba(255,255,255,.05) inset;
+  }
+
+  .screen {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    border-radius: 12px;
+    overflow: hidden;
+    background: var(--ground);
+    container-type: size;
+    cursor: pointer;
+    user-select: none;
+    isolation: isolate;
+  }
+
+  .screen canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+
+  .layer { position: absolute; inset: 0; pointer-events: none; }
+
+  /* logo: marca de agua en calma, protagonista sólo cuando no vemos nada */
+  .mark {
+    position: absolute;
+    left: 4cqw;
+    bottom: 4cqh;
+    width: 5.4cqmin;
+    opacity: .30;
+    transition: opacity .7s ease, width .7s ease, left .7s ease, bottom .7s ease, transform .7s ease, filter .7s ease;
+  }
+  .mark svg { display: block; width: 100%; height: auto; }
+
+  .screen[data-s="standby"] .mark {
+    left: 50%; bottom: 50%;
+    width: 11cqmin;
+    transform: translate(-50%, 50%);
+    opacity: .22;
+    filter: grayscale(1) brightness(1.5);
+  }
+  .screen[data-s="alert"] .mark,
+  .screen[data-s="attending"] .mark { opacity: .12; }
+
+  /* la hora es el centro en calma */
+  .clock {
+    position: absolute;
+    left: 50%; top: 50%;
+    transform: translate(-50%, -50%);
+    font-size: 22cqmin;
+    font-weight: 200;
+    letter-spacing: -.045em;
+    font-variant-numeric: tabular-nums;
+    color: var(--ink);
+    opacity: .82;
+    transition: opacity .8s ease, transform .8s ease, font-size .8s ease;
+  }
+  .screen[data-s="standby"]  .clock { opacity: 0; transform: translate(-50%,-50%) scale(.9); }
+  .screen[data-s="approach"] .clock { opacity: .30; transform: translate(-50%,-190%) scale(.30); }
+  .screen[data-s="alert"]     .clock,
+  .screen[data-s="attending"] .clock { opacity: 0; transform: translate(-50%,-50%) scale(.7); }
+
+  /* escena de evento: aproximación, alerta, atendida */
+  .event {
+    position: absolute;
+    left: 50%; top: 50%;
+    transform: translate(-50%, -50%);
+    width: 78cqw;
+    display: grid;
+    justify-items: center;
+    gap: 0;
+    text-align: center;
+    opacity: 0;
+    transition: opacity .5s ease, transform .5s cubic-bezier(.2,.8,.2,1);
+  }
+  .screen[data-s="approach"] .event,
+  .screen[data-s="alert"] .event,
+  .screen[data-s="attending"] .event { opacity: 1; }
+  .screen[data-s="standby"] .event,
+  .screen[data-s="normal"] .event { transform: translate(-50%, calc(-50% + 2cqh)); }
+
+  .kicker {
+    font-family: var(--mono);
+    font-size: 1.5cqmin;
+    letter-spacing: .2em;
+    text-transform: uppercase;
+    color: var(--evt, var(--alert));
+    transition: color .6s ease;
+  }
+  .room {
+    font-family: var(--mono);
+    font-weight: 500;
+    line-height: .82;
+    letter-spacing: -.11em;
+    color: #fff;
+    margin-top: 1.6cqh;
+    font-size: 30cqmin;
+    transition: font-size .6s cubic-bezier(.2,.8,.2,1), text-shadow .6s ease;
+    text-shadow: 0 0 6cqmin color-mix(in srgb, var(--evt, var(--alert)) 26%, transparent);
+  }
+  .screen[data-s="approach"]  .room { font-size: 15cqmin; }
+  .screen[data-s="attending"] .room { font-size: 17cqmin; }
+
+  .evt-title {
+    margin-top: 3.2cqh;
+    font-size: 2.7cqmin;
+    font-weight: 500;
+    letter-spacing: -.015em;
+    color: rgba(243,241,236,.88);
+  }
+  .evt-meta {
+    margin-top: 1.1cqh;
+    font-family: var(--mono);
+    font-size: 1.5cqmin;
+    color: rgba(243,241,236,.44);
+  }
+
+  /* barra tranquila — el único cromo, y se retira sola */
+  .quiet {
+    position: absolute;
+    right: 3.4cqw;
+    bottom: 3.6cqh;
+    display: flex;
+    align-items: center;
+    gap: 1.4cqmin;
+    font-family: var(--mono);
+    font-size: 1.5cqmin;
+    letter-spacing: .02em;
+    color: var(--ink-faint);
+    pointer-events: auto;
+    opacity: 1;
+    transition: opacity .9s ease;
+  }
+  .quiet.away { opacity: 0; pointer-events: none; }
+  .screen[data-s="alert"] .quiet { opacity: 0; pointer-events: none; }
+
+  .quiet .dot { width: .9cqmin; height: .9cqmin; border-radius: 50%; background: var(--brand); flex: none; }
+  .screen[data-s="standby"] .quiet .dot { background: var(--alert); }
+  .quiet time { font-variant-numeric: tabular-nums; }
+
+  .qbtn {
+    display: grid;
+    place-items: center;
+    width: 5.4cqmin;              /* ≥ 44 px reales en tablet */
+    height: 5.4cqmin;
+    border: 1px solid rgba(243,241,236,.10);
+    border-radius: 50%;
+    background: transparent;
+    color: rgba(243,241,236,.42);
+    cursor: pointer;
+    padding: 0;
+  }
+  .qbtn svg { width: 2.2cqmin; height: 2.2cqmin; }
+  .qbtn:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
+
+  .hint {
+    position: absolute;
+    left: 50%;
+    bottom: 3.6cqh;
+    transform: translateX(-50%);
+    font-family: var(--mono);
+    font-size: 1.4cqmin;
+    letter-spacing: .14em;
+    text-transform: uppercase;
+    color: rgba(243,241,236,.20);
+    opacity: 0;
+    transition: opacity .6s ease;
+  }
+  .hint.on { opacity: 1; }
+
+  /* ── controles del banco ── */
+
+  .rig {
+    width: min(100%, 980px);
+    margin-inline: auto;
+    display: grid;
+    gap: .7rem;
+  }
+  .rig-row { display: flex; flex-wrap: wrap; gap: .45rem; align-items: center; }
+  .rig-label {
+    font-family: var(--mono);
+    font-size: .64rem;
+    letter-spacing: .16em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    width: 5.6rem;
+    flex: none;
+  }
+
+  button.b {
+    font-family: var(--mono);
+    font-size: .7rem;
+    letter-spacing: .04em;
+    color: var(--ink-dim);
+    background: var(--panel-hi);
+    border: 1px solid var(--line-hi);
+    border-radius: 3px;
+    padding: .44rem .72rem;
+    cursor: pointer;
+    transition: color .16s, border-color .16s, background .16s;
+  }
+  button.b:hover { color: var(--ink); border-color: #3a4552; }
+  button.b:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
+  button.b[aria-pressed="true"] { color: var(--ground); background: var(--ink-dim); border-color: var(--ink-dim); }
+  button.b.go { color: var(--brand); border-color: color-mix(in srgb, var(--brand) 45%, var(--line-hi)); }
+
+  .readout {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1.3rem;
+    font-family: var(--mono);
+    font-size: .68rem;
+    color: var(--ink-faint);
+    font-variant-numeric: tabular-nums;
+    border-top: 1px solid var(--line);
+    padding-top: .65rem;
+  }
+  .readout b { color: var(--ink-dim); font-weight: 400; }
+  .readout .k { letter-spacing: .12em; text-transform: uppercase; }
+
+  /* ══════════════════ documento ══════════════════ */
+
+  .doc { padding: 0 5vw 9rem; }
+  .doc > * { max-width: 66ch; margin-inline: auto; }
+
+  .doc-head {
+    max-width: 76ch;
+    padding: 6.5rem 0 3rem;
+    border-bottom: 1px solid var(--line);
+    margin-bottom: 3rem;
+  }
+
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: .7rem;
+    letter-spacing: .2em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    margin: 0 0 1.5rem;
+  }
+
+  h1 {
+    font-size: clamp(2rem, 5.2vw, 3.1rem);
+    font-weight: 250;
+    letter-spacing: -.026em;
+    line-height: 1.08;
+    margin: 0 0 1.3rem;
+    text-wrap: balance;
+  }
+
+  .lede {
+    font-size: 1.2rem;
+    font-weight: 300;
+    color: var(--ink-dim);
+    margin: 0;
+    max-width: 56ch;
+    text-wrap: pretty;
+  }
+
+  h2 {
+    font-size: 1.6rem;
+    font-weight: 300;
+    letter-spacing: -.015em;
+    margin: 4rem 0 1.1rem;
+    text-wrap: balance;
+  }
+
+  h3 { font-size: 1rem; font-weight: 500; margin: 2.2rem 0 .45rem; }
+
+  p { margin: 0 0 1.05rem; color: var(--ink-body); text-wrap: pretty; }
+  strong { color: var(--ink); font-weight: 500; }
+  em { color: var(--ink); font-style: italic; }
+
+  code {
+    font-family: var(--mono);
+    font-size: .85em;
+    color: var(--ink-dim);
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 2px;
+    padding: .08em .34em;
+  }
+
+  pre {
+    max-width: 82ch;
+    margin: 1.2rem auto 1.6rem;
+    padding: 1rem 1.1rem;
+    overflow-x: auto;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    font-family: var(--mono);
+    font-size: .76rem;
+    line-height: 1.7;
+    color: var(--ink-dim);
+  }
+  pre b { color: var(--brand); font-weight: 400; }
+  pre i { color: var(--ink-faint); font-style: normal; }
+
+  .doc ul { color: var(--ink-body); padding-left: 1.1rem; margin: 0 0 1.05rem; }
+  .doc li { margin-bottom: .45rem; }
+  .doc li::marker { color: var(--ink-faint); }
+
+  hr.rule { border: 0; border-top: 1px solid var(--line); margin: 3.6rem auto; max-width: 66ch; }
+
+  /* hallazgos */
+  .finds { max-width: 76ch; margin: 2rem auto 0; }
+  .find {
+    display: grid;
+    grid-template-columns: 2.2rem 1fr;
+    gap: 1.4rem;
+    padding: 1.7rem 0;
+    border-top: 1px solid var(--line);
+  }
+  .find:last-child { border-bottom: 1px solid var(--line); }
+  .find-n {
+    font-family: var(--mono);
+    font-size: .8rem;
+    color: var(--ink-faint);
+    padding-top: .15rem;
+    font-variant-numeric: tabular-nums;
+  }
+  .find h3 { margin: 0 0 .5rem; font-size: 1.06rem; font-weight: 450; letter-spacing: -.01em; }
+  .find p:last-child { margin-bottom: 0; }
+  .src {
+    display: inline-block;
+    font-family: var(--mono);
+    font-size: .68rem;
+    color: var(--ink-faint);
+    border: 1px solid var(--line);
+    background: var(--panel);
+    border-radius: 2px;
+    padding: .05em .4em;
+  }
+
+  @media (max-width: 620px) {
+    .find { grid-template-columns: 1fr; gap: .4rem; }
+  }
+
+  /* tabla */
+  .tw { max-width: 1080px; margin: 1.8rem auto 2.4rem; overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; min-width: 660px; font-size: .84rem; }
+  th, td { text-align: left; padding: .7rem 1.1rem .7rem 0; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th {
+    font-family: var(--mono);
+    font-size: .63rem;
+    letter-spacing: .13em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    font-weight: 400;
+    border-bottom-color: var(--line-hi);
+  }
+  td { color: var(--ink-dim); }
+  td.m { font-family: var(--mono); font-size: .76rem; color: var(--ink); white-space: nowrap; }
+  td.t { font-family: var(--mono); font-size: .76rem; color: var(--warn); white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .sw { display: inline-block; width: .55rem; height: .55rem; border-radius: 50%; margin-right: .5rem; vertical-align: baseline; }
+
+  .note {
+    max-width: 70ch;
+    margin: 2rem auto;
+    padding: 1.15rem 1.35rem;
+    border-left: 2px solid var(--warn);
+    background: color-mix(in srgb, var(--warn) 5%, transparent);
+  }
+  .note p:last-child { margin-bottom: 0; }
+  .note .tag {
+    display: block;
+    font-family: var(--mono);
+    font-size: .63rem;
+    letter-spacing: .15em;
+    text-transform: uppercase;
+    color: var(--warn);
+    margin-bottom: .45rem;
+  }
+
+  .qs { max-width: 66ch; margin: 1.8rem auto 0; display: grid; gap: 1.5rem; }
+  .q-q { font-size: 1.2rem; font-weight: 300; color: var(--ink); letter-spacing: -.01em; margin: 0 0 .3rem; text-wrap: balance; }
+  .qs p { margin: 0; }
+
+  ol.plan { max-width: 66ch; margin: 1.4rem auto 0; padding-left: 1.3rem; color: var(--ink-body); }
+  ol.plan li { margin-bottom: .7rem; }
+  ol.plan li::marker { font-family: var(--mono); font-size: .8rem; color: var(--ink-faint); }
+
+  footer {
+    max-width: 66ch;
+    margin: 4.5rem auto 0;
+    padding-top: 1.8rem;
+    border-top: 1px solid var(--line);
+    font-family: var(--mono);
+    font-size: .68rem;
+    letter-spacing: .05em;
+    color: var(--ink-faint);
+    line-height: 1.9;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { transition-duration: 60ms !important; }
+  }
+</style>
+
+<section class="bench">
+  <div class="tablet-wrap">
+    <div class="tablet">
+      <div class="screen" id="screen" data-s="normal">
+        <canvas id="field"></canvas>
+
+        <div class="layer">
+          <div class="mark">
+            <svg viewBox="0 0 192 192" aria-hidden="true">
+              <circle fill="#00a675" cx="96" cy="96" r="96"/>
+              <path fill="#fff" d="M38.8,89.3c-.7,28.8,50.3,52.4,113.5,53.8v-13.3c-58.2-1.2-105-21.8-104.5-47.1.4-21,32-33.7,32-33.7,0,0-40.3,13-41,40.3Z"/>
+              <path fill="#fff" d="M68.6,79c-.5,21.2,37,38.6,83.6,39.7v-9.8c-42.9-.9-77.4-16.1-77-34.7.3-15.5,23.6-24.8,23.6-24.8,0,0-29.7,9.6-30.2,29.7h0Z"/>
+              <path fill="#fff" d="M94.8,69.9c-.3,14.6,25.4,26.5,57.4,27.2v-6.7c-29.5-.6-53.2-11.1-52.9-23.8.2-10.7,16.2-17,16.2-17,0,0-20.4,6.6-20.7,20.4"/>
+            </svg>
+          </div>
+
+          <div class="clock" id="clock">--:--</div>
+
+          <div class="event" id="event">
+            <span class="kicker" id="kicker"></span>
+            <strong class="room" id="room">204</strong>
+            <span class="evt-title" id="evtTitle"></span>
+            <span class="evt-meta" id="evtMeta"></span>
+          </div>
+
+          <div class="hint" id="hint">tocá la pantalla</div>
+        </div>
+
+        <div class="quiet" id="quiet">
+          <span class="dot"></span>
+          <span>Manantial</span>
+          <time id="qtime">--:--</time>
+          <button class="qbtn" id="fsbtn" type="button" aria-label="Pantalla completa" title="Pantalla completa">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"
+                 stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M2 6 V2 H6 M14 6 V2 H10 M2 10 V14 H6 M14 10 V14 H10"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="rig">
+    <div class="rig-row">
+      <span class="rig-label">Escena</span>
+      <button class="b" data-go="normal">calma</button>
+      <button class="b" data-go="approach">se incorpora · 204</button>
+      <button class="b" data-go="alert">sale de la cama · 204</button>
+      <button class="b" data-go="attending">Gastón reconoce</button>
+      <button class="b" data-go="resolve">resuelta</button>
+      <button class="b go" id="script">▶ corrida completa</button>
+    </div>
+    <div class="rig-row">
+      <span class="rig-label">Backend</span>
+      <button class="b" data-poll="up" aria-pressed="true">respondiendo</button>
+      <button class="b" data-poll="down">caído</button>
+      <span class="rig-label" style="width:auto;margin-left:.6rem">Latido</span>
+      <button class="b" data-beat="poll" aria-pressed="true">atado al poll</button>
+      <button class="b" data-beat="loop">loop CSS (hoy)</button>
+    </div>
+    <div class="readout">
+      <span><span class="k">ambient</span> <b id="r-s">normal</b></span>
+      <span><span class="k">último poll</span> <b id="r-age">0,0 s</b></span>
+      <span><span class="k">salud</span> <b id="r-h">live</b></span>
+      <span><span class="k">latido</span> <b id="r-b">atado al poll</b></span>
+      <span><span class="k">barra</span> <b id="r-q">visible</b></span>
+    </div>
+  </div>
+</section>
+
+<main class="doc">
+  <header class="doc-head">
+    <p class="eyebrow">Manantial · Alerta Care · companion en tablet</p>
+    <h1>La pantalla tiene que respirar con el sistema, no con el CSS</h1>
+    <p class="lede">Arriba está tu companion en una tablet, con los dos estados que le faltan y el latido atado al poll real. Probá «loop CSS (hoy)» y después bajá el backend: eso es lo que pasa ahora.</p>
+  </header>
+
+  <h2>Lo que ya está bien</h2>
+
+  <p>Antes de la crítica, lo que no hay que tocar, porque ya es la decisión difícil bien tomada:</p>
+
+  <ul>
+    <li><strong>Una sola cosa en pantalla.</strong> Cero métricas, cero tarjetas, cero grillas de habitaciones. El companion muestra <em>la</em> alerta, no el estado del piso. Es la decisión que más se pelea y la tuviste.</li>
+    <li><strong>El número de habitación gigante.</strong> <code>clamp(116px, 21vw, 260px)</code> en mono. Es el único dato que hace falta para levantarse de la silla, y se lee desde el pasillo. Es exactamente el instinto correcto.</li>
+    <li><strong>El sheet desde abajo con la cámara adentro.</strong> Confirmar antes de correr, y confirmar con la imagen. En tablet, además, es la geometría correcta: el pulgar llega.</li>
+    <li><strong>La barra tranquila.</strong> 11&nbsp;px, esquina, sin caja. La restricción está bien puesta.</li>
+  </ul>
+
+  <p>El problema no es el gusto. Es que <strong>hay tres estados donde el sistema tiene cinco</strong>, y que la señal de vida no está conectada a nada.</p>
+
+  <hr class="rule">
+
+  <h2>Seis cosas concretas</h2>
+
+  <div class="finds">
+    <div class="find">
+      <div class="find-n">01</div>
+      <div>
+        <h3>El pulso es una animación de loop, no un latido</h3>
+        <p><span class="src">companion.css:44</span> — <code>animation: companion-monitor-pulse 4.8s ease-in-out infinite</code>. Late exactamente igual con el backend vivo que con el backend muerto. Lo único que dice la verdad es un punto de 4&nbsp;px en la esquina inferior derecha.</p>
+        <p>Eso es el fallo más peligroso que puede tener este producto: <strong>una pantalla en calma, verde y respirando, con las cámaras caídas</strong>. Transmite una seguridad que nadie verificó. Y la información ya la tenés: <code>lastUpdated</code> se escribe en cada refresh, y el poll es de 5&nbsp;s.</p>
+        <p>Hay un segundo camino al mismo fallo, y este ya está activo. <span class="src">CompanionScreen.jsx:197</span> — <code>camerasReady</code> acepta <code>['live', 'stale']</code> como equivalentes, y en <code>parameters.js</code> el umbral de <code>stale</code> es de <strong>120 segundos</strong>. O sea: una cámara puede llevar dos minutos sin decir nada y la pantalla sigue en verde, respirando, sin distinguirse en un pixel de una cámara que respondió hace medio segundo. Dos minutos es tiempo de sobra para una caída completa.</p>
+        <p>El arreglo es chico: que cada poll exitoso dispare <em>un</em> latido, en vez de dejar corriendo un <code>infinite</code>. Sin frames no hay latido, y la ausencia de movimiento en una pantalla que siempre se movió se ve desde la puerta sin leer nada.</p>
+      </div>
+    </div>
+
+    <div class="find">
+      <div class="find-n">02</div>
+      <div>
+        <h3>El backend ya gradúa el riesgo y la pantalla lo tira</h3>
+        <p>Esto lo tenía anotado como «falta un estado intermedio». Es peor y es mejor: <strong>el estado intermedio ya existe, completo, y la pantalla lo descarta</strong>.</p>
+        <p><span class="src">api/policies.js:16</span> proyecta una escalera clínica de verdad — <code>laying_in_bed</code> → <code>sitting_in_bed</code> (<code>limb_near_edge</code>) → <code>sitting_on_bed_edge</code> (<code>limb_out_of_bed</code>) → <code>head_off_bed</code>, que es la única que sube a <code>high</code>. Y <code>monitoringLabel</code> ya tiene la frase escrita para cada peldaño, en castellano: «Al borde de la cama», «Extremidad fuera de la cama», «Cabeza fuera de la cama».</p>
+        <p>De todo eso, al companion le llegan dos cosas: <code>medium</code> y <code>high</code>. Y <span class="src">companion.css:21</span> hace que <code>medium</code> sólo cambie el color a ámbar — la puesta en escena es idéntica: número gigante, «Atencion requerida», pantalla tomada. Alguien sentado al borde de la cama y alguien con la cabeza fuera gritan con la misma voz.</p>
+        <p>Es el error que quema el aparato. Si los dos gritan igual, en dos semanas el personal filtra los dos. Y el peldaño intermedio es el <em>más valioso</em> del sistema: es el único momento en que todavía se puede prevenir en vez de reportar.</p>
+        <p>La solución no es más color: es <strong>escala y quietud</strong>. Número mediano, sin ataque, sin tomar la pantalla, el halo desplazado, y la frase que <code>policies.js</code> ya escribió. Miralo arriba en «se incorpora».</p>
+      </div>
+    </div>
+
+    <div class="find">
+      <div class="find-n">03</div>
+      <div>
+        <h3>Reconocer una alerta no cambia nada en la pared</h3>
+        <p><span class="src">CompanionScreen.jsx:7</span> — <code>ACTIVE_ALERT_STATUSES</code> incluye <code>attending</code>, así que la pantalla sigue en alerta a pantalla completa mientras alguien <em>ya está en la habitación</em>. Lo único que cambia es el texto del meta, en 11&nbsp;px.</p>
+        <p>El dato ya existe y el estado ya está modelado en el backend. Falta en el diseño: <strong>«alguien va en camino» tiene que verse distinto de «nadie sabe»</strong>, o el segundo cuidador que pasa por el pasillo no tiene forma de saber que no lo necesitan. La pantalla se calma, pero no vuelve a la calma: sigue mostrando la habitación, en frío, con el nombre de quien está.</p>
+      </div>
+    </div>
+
+    <div class="find">
+      <div class="find-n">04</div>
+      <div>
+        <h3>La alerta entra suave y sale de golpe</h3>
+        <p><span class="src">companion.css:181</span> — <code>companion-alert-in .7s</code> para entrar. Para salir no hay nada: cuando la alerta se resuelve, React desmonta el nodo y la pantalla salta a la calma en un frame.</p>
+        <p>Está al revés. Escalar tiene que ser rápido y con ataque; volver tiene que ser lento. Un corte seco hacia la calma se lee como «se colgó» y deja al cuidador sin saber si el episodio se cerró o si el aparato se murió. El descenso largo <em>narra</em> que la cosa se resolvió — y es la única confirmación que va a recibir alguien que resolvió desde el pasillo.</p>
+      </div>
+    </div>
+
+    <div class="find">
+      <div class="find-n">05</div>
+      <div>
+        <h3>En calma, el elemento grande es el logo</h3>
+        <p><span class="src">companion.css:48</span> — el favicon de Manantial ocupa el centro, hasta 150&nbsp;px, veinte horas por día. La hora vive en 11&nbsp;px en la esquina.</p>
+        <p>Un logo grande y centrado durante veinte horas no es identidad: es un cartel. El aparato se gana la pared siendo <em>útil</em> mientras no pasa nada, y lo único útil en ese rato es la hora — como un reloj de mesa que además vigila. Invertilo: <strong>la hora al centro, la marca a marca de agua</strong>. La identidad no se pierde; se gana el respeto de no estar gritando el nombre propio en una habitación ajena.</p>
+      </div>
+    </div>
+
+    <div class="find">
+      <div class="find-n">06</div>
+      <div>
+        <h3>La alerta no se puede previsualizar</h3>
+        <p><span class="src">CompanionScreen.jsx:193</span> — <code>forcedAmbientState</code> acepta sólo <code>normal</code> y <code>standby</code>. El estado que más trabajo de diseño necesita es justamente el que no podés abrir sin datos reales.</p>
+        <p>Es lo que te está frenando ahora mismo. Abrí el forzado a todos los estados, con una habitación de mentira: <code>?screen=companion&amp;state=alert&amp;room=204</code>. Diez líneas, y podés dirigir la puesta en escena sin backend.</p>
+      </div>
+    </div>
+  </div>
+
+  <hr class="rule">
+
+  <h2>Cinco estados, no tres</h2>
+
+  <p>Ninguno de estos estados es invención mía: <strong>los cinco ya existen en tus datos</strong>. La escalera clínica sale de <code>api/policies.js</code>, la frescura de <code>monitoringFreshness</code>, y el reconocimiento del ciclo de vida de la alerta. El companion los colapsa en tres. El mapeo que propongo, con el vocabulario que ya usás:</p>
+
+  <div class="tw">
+    <table>
+      <thead>
+        <tr><th>En la pared</th><th>Viene de</th><th>Período</th><th>Puesta en escena</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="m"><span class="sw" style="background:#5b6268"></span>standby</td>
+          <td><code>freshness: offline</code> · sin conexión</td>
+          <td class="t">sin latido</td>
+          <td>Ceniza, marca al centro en gris, línea plana. El único número crudo de toda la pantalla: desde cuándo.</td>
+        </tr>
+        <tr>
+          <td class="m"><span class="sw" style="background:#00a675"></span>normal</td>
+          <td><code>laying_in_bed</code> · <code>unoccupied</code></td>
+          <td class="t">5 s</td>
+          <td>La hora al centro. Un latido por poll. Nadie mira, y está bien.</td>
+        </tr>
+        <tr>
+          <td class="m"><span class="sw" style="background:#f5b730"></span>approach</td>
+          <td><code>sitting_in_bed</code> · <code>sitting_on_bed_edge</code> · <code>standing</code> → <code>medium</code></td>
+          <td class="t">2,2 s</td>
+          <td>Ámbar, halo desplazado, número mediano, y la frase de <code>monitoringLabel</code>. Informa, no interrumpe. <strong>Nuevo en la pantalla, no en los datos.</strong></td>
+        </tr>
+        <tr>
+          <td class="m"><span class="sw" style="background:#ff453a"></span>alert</td>
+          <td><code>head_off_bed</code> → <code>high</code></td>
+          <td class="t">1,1 s</td>
+          <td>Ataque único, la habitación levanta luz, número gigante. Después se sostiene: no titila.</td>
+        </tr>
+        <tr>
+          <td class="m"><span class="sw" style="background:#c45644"></span>attending</td>
+          <td><code>acknowledged</code> · <code>attending</code></td>
+          <td class="t">2,6 s</td>
+          <td>Mismo evento, menos energía. Número mediano, color enfriado, quién está. <strong>Nuevo en la pantalla, no en los datos.</strong></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>Dos decisiones que van con esto y que conviene dejar escritas.</p>
+
+  <p><strong>«No sé» no es rojo.</strong> <code>standby</code> se sale de la escala de color en vez de subir por ella. Un semáforo pondría la cámara caída en el mismo cajón que la persona saliéndose de la cama, y son cosas distintas: una manda a la habitación, la otra manda a llamar a soporte. En <code>mana-lite</code> esto ya está escrito — <code>blind</code> es el rol <code>safe</code> de la FSM, no el de peligro.</p>
+
+  <div class="note">
+    <span class="tag">Una pregunta de política que dejo abierta</span>
+    <p>En <code>policies.js</code>, el único estado que llega a <code>high</code> es <code>head_off_bed</code>. Un residente <strong>de pie y sin asistencia</strong> —<code>room_state: 'occupied'</code>, línea 11— queda en <code>medium</code>, igual que uno sentado al borde.</p>
+    <p>A las tres de la mañana eso parece invertido: alguien ya parado y solo es exactamente el escenario de la caída, no su preámbulo. Puede estar bien decidido y yo no conozco el criterio clínico detrás — pero es una decisión de política que hoy está en un <code>else if</code>, y que la pantalla va a amplificar sea cual sea. Vale confirmarla con quien corresponda antes de darle una puesta en escena.</p>
+  </div>
+
+  <p><strong>El canal primario es el ritmo, no el color.</strong> El ojo periférico detecta cambios de cadencia mucho antes que cambios de tono, y una tablet en la pared se ve casi siempre de reojo. Por eso cada estado tiene un período propio y el color sólo confirma. Además sobrevive al daltonismo y a la tablet con el brillo bajo a la noche.</p>
+
+  <hr class="rule">
+
+  <h2>Para tablet</h2>
+
+  <p>Lo que cambia por ser una tablet en la pared y no una pantalla de escritorio.</p>
+
+  <h3>El maximizar, y por qué hoy no existe</h3>
+
+  <p><span class="src">shell.jsx:117</span> — el modo companion hace <code>return</code> antes del shell, así que se saltea toda la barra y con ella el botón de pantalla completa. El atajo <code>F</code> sigue registrado y funciona… en una tablet que no tiene teclado. En la práctica: <strong>no hay forma de entrar a pantalla completa desde el aparato</strong>, y sin pantalla completa la barra del navegador arruina la única cosa que este diseño necesita, que es el borde a borde.</p>
+
+  <p>Va en la barra tranquila, reusando el ícono del nursing panel <span class="src">topBar.jsx:64</span> — mismo <code>icon-swap</code>, mismos <code>path</code> de cuatro esquinas — para que sea un solo sistema y no un botón nuevo. Sutil quiere decir tres cosas concretas:</p>
+
+  <ul>
+    <li><strong>Se retira solo.</strong> La barra entera baja a opacidad 0 después de 8&nbsp;s sin tocar la pantalla. Un toque en cualquier lado la trae de vuelta por otros 8&nbsp;s. Es el patrón del reproductor de video, y es el único que respeta una pantalla que vive encendida.</li>
+    <li><strong>Chico a la vista, grande al dedo.</strong> El ícono queda en 14&nbsp;px; el área táctil no baja de 44&nbsp;px. En la tablet nadie apunta con precisión.</li>
+    <li><strong>Desaparece en alerta.</strong> Durante un evento no hay cromo. Nada compite.</li>
+  </ul>
+
+  <pre><i>// companion/CompanionScreen.jsx — la barra que se retira sola</i>
+const [chromeOn, setChromeOn] = useState(true);
+useEffect(() =&gt; {
+  if (!chromeOn) return;
+  const t = setTimeout(() =&gt; setChromeOn(false), <b>8000</b>);
+  return () =&gt; clearTimeout(t);
+}, [chromeOn, now]);
+
+<i>// cualquier toque en la pantalla la trae de vuelta</i>
+&lt;main className="companion-screen" onPointerDown={() =&gt; setChromeOn(true)}&gt;</pre>
+
+  <p>Y el <code>toggleFullscreen</code> ya está escrito en <code>shell.jsx:76</code>: no hay que reimplementarlo, hay que pasárselo al companion en la línea 117, que hoy lo tira.</p>
+
+  <h3>Lo demás que la tablet impone</h3>
+
+  <ul>
+    <li><strong>Wake lock, o nada de esto importa.</strong> Una tablet en la pared se apaga sola a los dos minutos. <code>navigator.wakeLock.request('screen')</code>, y re-pedirlo en <code>visibilitychange</code> porque se pierde al volver de background. Sin esto el mejor diseño del mundo mira una pantalla negra.</li>
+    <li><strong>No hay hover.</strong> <code>companion-manual-button:hover</code> y <code>companion-action:hover</code> no existen en el aparato: hacen falta estados <code>:active</code> con respuesta inmediata, porque el toque sin respuesta se siente roto y la gente toca dos veces.</li>
+    <li><strong>Confirmación destructiva.</strong> «Resolver alerta» a un toque, en una pantalla que cualquiera puede tocar al pasar, cierra un evento clínico. En tablet eso pide mantener presionado o un segundo toque — no un diálogo, que rompe la urgencia.</li>
+    <li><strong>Rotación.</strong> Si va montada, fijar orientación y no diseñar dos layouts. Vertical con el número gigante se ve peor y no aporta nada.</li>
+    <li><strong>Brillo de noche.</strong> El fondo <code>#07080b</code> ya está bien elegido. El que hay que revisar es el blanco del número de habitación en alerta: a las 3 de la mañana, <code>#fff</code> a 260&nbsp;px ilumina el pasillo. Eso puede estar bien —es su función— pero tiene que ser una decisión, no un accidente.</li>
+  </ul>
+
+  <hr class="rule">
+
+  <h2>Las tres preguntas que hay que sobrevivir</h2>
+
+  <p>Pusiste a Steve y a Jony en la sala. Lo útil de esa fantasía no son los adjetivos: son tres preguntas que matan features.</p>
+
+  <div class="qs">
+    <div>
+      <p class="q-q">«¿Qué pasa si nadie está mirando la pantalla?»</p>
+      <p>Es la pregunta que define el producto, porque la respuesta honesta es <em>casi siempre nadie está mirando</em>. Si nadie mira, lo que tiene que cambiar es la luz de la habitación, no un ícono. Por eso la alerta levanta la luminancia de todo el campo. El aparato se diseña para el ojo periférico de alguien que está de espaldas.</p>
+    </div>
+    <div>
+      <p class="q-q">«¿Cuántas cosas muestra?»</p>
+      <p>Una. Ya lo tenés y hay que defenderlo de la próxima reunión, porque siempre aparece alguien que quiere el estado de las doce habitaciones acá. Ese es el nursing panel. Si un dato no cambia lo que el cuidador hace en los próximos treinta segundos, no va.</p>
+    </div>
+    <div>
+      <p class="q-q">«¿Qué material es esto?»</p>
+      <p>Luz difusa, no pixeles. Ningún borde duro, ninguna caja, ninguna sombra proyectada. La pantalla se comporta como una lámpara que sabe algo, y ese encuadre resuelve solo las decisiones chicas. Corolario incómodo: no dibujar un ECG falso. No estamos midiendo el corazón de nadie, y la primera persona con formación clínica que lo vea de cerca va a dejar de creerle al aparato.</p>
+    </div>
+  </div>
+
+  <h2>En qué orden</h2>
+
+  <ol class="plan">
+    <li><strong>Abrir el forzado de estados</strong> por query string. Es lo que te desbloquea para dirigir todo lo demás sin backend, y son diez líneas.</li>
+    <li><strong>Atar el latido a <code>lastUpdated</code></strong> y dejar que la falta de datos se vea sola. Es el arreglo con más consecuencia clínica por línea de código.</li>
+    <li><strong>Maximizar en la barra tranquila</strong> + wake lock. Sin esto la tablet no es un producto, es una demo.</li>
+    <li><strong>Los dos estados nuevos</strong>, <code>approach</code> y <code>attending</code>. Los datos ya están; es puesta en escena.</li>
+    <li><strong>La salida lenta</strong> del estado de alerta. Un <code>resolved</code> que se sostiene unos segundos antes de enfriar.</li>
+    <li><strong>La hora al centro</strong>, la marca a marca de agua. Es la más discutible de la lista y la dejo última a propósito: se ve arriba, decidila mirándola.</li>
+  </ol>
+
+  <footer>
+    Manantial · Alerta Care — propuesta de companion en tablet · 13 ago 2026<br>
+    Referencias verificadas contra <code>src/apps/companion/</code>, <code>src/shell.jsx</code>, <code>src/apps/nursing-panel/components/layout/topBar.jsx</code><br>
+    Escalera clínica y frescura: <code>api/policies.js</code>, <code>api/parameters.js</code>, <code>src/config/runtime.js</code><br>
+    Corroboración del modelo de tres bandas en el monitor: <code>mana-lite</code> — <code>config/fsm.toml</code>, <code>core/mana-control/src/health.rs</code>
+  </footer>
+</main>
+
+<script>
+(() => {
+  "use strict";
+
+  const REDUCED = matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  const POLL_MS = 5000;           // MONITORING_POLL_MS
+  const STALE_AFTER = 2.4;        // polls perdidos → el latido se apaga
+  const DOWN_AFTER = 3.2;         // polls perdidos → standby
+  const CHROME_MS = 8000;         // la barra tranquila se retira sola
+
+  const LOOK = {
+    standby:   { rgb: [ 91,  98, 104], period: 0,    amp: 0,    base: 0.10, lift: 0.00, off: 0 },
+    normal:    { rgb: [  0, 166, 117], period: 5000, amp: 0.14, base: 0.17, lift: 0.02, off: 0 },
+    approach:  { rgb: [245, 183,  48], period: 2200, amp: 0.26, base: 0.21, lift: 0.07, off: 1 },
+    alert:     { rgb: [255,  69,  58], period: 1100, amp: 0.52, base: 0.29, lift: 0.24, off: 0 },
+    attending: { rgb: [196,  86,  68], period: 2600, amp: 0.16, base: 0.20, lift: 0.09, off: 0 },
+  };
+
+  const RANK = { standby: -1, normal: 0, approach: 1, attending: 2, alert: 3 };
+
+  const COPY = {
+    approach:  { kicker: "seguimiento",        title: "Se está incorporando en la cama", meta: () => "monitor · hace 4s" },
+    alert:     { kicker: "atención requerida", title: "Salida de cama",                  meta: () => "Nueva · hace " + evtAge() + "s" },
+    attending: { kicker: "en habitación",      title: "Salida de cama",                  meta: () => "Gastón está en la habitación" },
+  };
+
+  const sim = {
+    state: "normal",
+    poll: "up",
+    beatMode: "poll",
+    lastPoll: performance.now(),
+    nextPoll: performance.now() + POLL_MS,
+    evtAt: performance.now(),
+  };
+
+  const view = {
+    rgb: LOOK.normal.rgb.slice(),
+    base: LOOK.normal.base,
+    amp: LOOK.normal.amp,
+    lift: LOOK.normal.lift,
+    off: 0,
+    phase: 0,
+    beatAt: -9999,
+    beatGain: 1,
+    attack: 0,
+    rising: false,
+  };
+
+  const screen  = document.getElementById("screen");
+  const cv      = document.getElementById("field");
+  const ctx     = cv.getContext("2d");
+  const elClock = document.getElementById("clock");
+  const elQTime = document.getElementById("qtime");
+  const elKick  = document.getElementById("kicker");
+  const elTitle = document.getElementById("evtTitle");
+  const elMeta  = document.getElementById("evtMeta");
+  const quiet   = document.getElementById("quiet");
+  const hint    = document.getElementById("hint");
+
+  function evtAge() { return Math.max(1, Math.floor((performance.now() - sim.evtAt) / 1000)); }
+
+  let W = 0, H = 0;
+  function resize() {
+    const d = Math.min(devicePixelRatio || 1, 2);
+    const r = cv.getBoundingClientRect();
+    W = r.width; H = r.height;
+    cv.width = Math.round(W * d);
+    cv.height = Math.round(H * d);
+    ctx.setTransform(d, 0, 0, d, 0, 0);
+  }
+  addEventListener("resize", resize);
+
+  // ── el backend responde, o no ──
+  function pumpPoll(now) {
+    if (sim.poll === "down") return;
+    if (now < sim.nextPoll) return;
+    sim.lastPoll = now;
+    sim.nextPoll = now + POLL_MS;
+    if (sim.beatMode === "poll") { view.beatAt = now; view.beatGain = 1; }   // un poll = un latido
+  }
+
+  function missedPolls(now) { return (now - sim.lastPoll) / POLL_MS; }
+
+  function vitality(now) {
+    const m = missedPolls(now);
+    if (m <= 1.2) return 1;
+    if (m >= STALE_AFTER) return 0;
+    return 1 - (m - 1.2) / (STALE_AFTER - 1.2);
+  }
+
+  function go(next, now) {
+    if (sim.state === next) return;
+    view.rising = RANK[next] > RANK[sim.state];
+    sim.state = next;
+    if (next === "alert") { view.attack = 1; sim.evtAt = now; }
+    if (next === "approach") sim.evtAt = now;
+    screen.dataset.s = next;
+    paintEvent();
+    showChrome(now);
+  }
+
+  function tickSim(now) {
+    const m = missedPolls(now);
+    if (m > DOWN_AFTER) { go("standby", now); return; }
+    if (sim.state === "standby" && m <= 1.2) go("normal", now);
+  }
+
+  function approachTo(cur, target, dt, tau) { return cur + (target - cur) * (1 - Math.exp(-dt / tau)); }
+
+  function tickView(dt, now) {
+    const look = LOOK[sim.state];
+    // subir rápido, bajar lento — una sola constante para toda la transición
+    const tau = view.rising ? 280 : 2400;
+
+    for (let i = 0; i < 3; i++) view.rgb[i] = approachTo(view.rgb[i], look.rgb[i], dt, tau);
+    view.base = approachTo(view.base, look.base, dt, tau);
+    view.amp  = approachTo(view.amp,  look.amp,  dt, tau);
+    view.lift = approachTo(view.lift, look.lift, dt, view.rising ? 340 : 2400);
+    view.off  = approachTo(view.off,  look.off,  dt, look.off ? 900 : 2400);
+    view.attack = approachTo(view.attack, 0, dt, 540);
+
+    const vit = vitality(now);
+
+    // el latido: por poll (propuesta) o por loop de CSS (hoy)
+    if (sim.beatMode === "loop" && look.period > 0) {
+      const p0 = view.phase;
+      view.phase += dt / look.period;
+      if (Math.floor(view.phase) > Math.floor(p0)) { view.beatAt = now; view.beatGain = 1; }
+    } else if (sim.beatMode === "poll" && look.period > 0 && look.period !== 5000) {
+      // en evento el ritmo lo marca la urgencia, pero se apaga sin evidencia
+      if (vit > 0.02) {
+        const p0 = view.phase;
+        view.phase += dt / look.period;
+        if (Math.floor(view.phase) > Math.floor(p0)) { view.beatAt = now; view.beatGain = vit; }
+      }
+    }
+    return vit;
+  }
+
+  function envelope(since, period) {
+    const attackMs = 95;
+    if (since < 0) return 0;
+    if (since < attackMs) return 1 - Math.pow(1 - since / attackMs, 3);
+    return Math.exp(-(since - attackMs) / (period * 0.36));
+  }
+
+  const rgba = (c, a) => `rgba(${c[0] | 0},${c[1] | 0},${c[2] | 0},${a})`;
+
+  function halo(g, cx, cy, r, c, intensity, squash) {
+    const layers = [
+      { m: 2.70, a: 0.050 },
+      { m: 1.70, a: 0.095 },
+      { m: 1.00, a: 0.185 },
+      { m: 0.52, a: 0.310 },
+      { m: 0.20, a: 0.460 },
+    ];
+    g.save();
+    g.translate(cx, cy);
+    g.scale(squash, 1 / Math.sqrt(squash));
+    for (const L of layers) {
+      const rr = r * L.m;
+      const grad = g.createRadialGradient(0, 0, 0, 0, 0, rr);
+      grad.addColorStop(0, rgba(c, L.a * intensity));
+      grad.addColorStop(0.55, rgba(c, L.a * intensity * 0.34));
+      grad.addColorStop(1, rgba(c, 0));
+      g.fillStyle = grad;
+      g.beginPath();
+      g.arc(0, 0, rr, 0, Math.PI * 2);
+      g.fill();
+    }
+    g.restore();
+  }
+
+  function draw(now, vit) {
+    const look = LOOK[sim.state];
+    const min = Math.min(W, H);
+
+    ctx.fillStyle = "#07080b";
+    ctx.fillRect(0, 0, W, H);
+
+    if (view.lift > 0.004) {
+      const wash = ctx.createRadialGradient(W / 2, H / 2, 0, W / 2, H / 2, Math.max(W, H) * 0.9);
+      wash.addColorStop(0, rgba(view.rgb, view.lift * 0.5));
+      wash.addColorStop(1, rgba(view.rgb, 0));
+      ctx.fillStyle = wash;
+      ctx.fillRect(0, 0, W, H);
+    }
+
+    const period = look.period || 4800;
+    const env = look.period > 0 ? envelope(now - view.beatAt, period) * view.beatGain : 0;
+    const k = REDUCED ? 0.28 : 1;
+    const r = min * (view.base * (1 + view.amp * env * k + view.attack * 0.20 * k));
+    const alive = look.period > 0 ? vit : 0.4;
+    const intensity = (0.56 + 0.44 * env * k) * (0.34 + 0.66 * alive);
+
+    const cx = W / 2 + view.off * min * 0.17;
+    const cy = H / 2;
+
+    halo(ctx, cx, cy, r, view.rgb, intensity, 1 + view.off * 0.24);
+
+    // sin evidencia: línea plana donde estaba el latido
+    if (vit <= 0.02 || look.period === 0) {
+      const a = look.period === 0 ? 0.46 : 0.2;
+      const w = min * 0.30;
+      const grad = ctx.createLinearGradient(cx - w, cy, cx + w, cy);
+      grad.addColorStop(0, rgba(view.rgb, 0));
+      grad.addColorStop(0.5, rgba(view.rgb, a));
+      grad.addColorStop(1, rgba(view.rgb, 0));
+      ctx.strokeStyle = grad;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(cx - w, cy + 0.5);
+      ctx.lineTo(cx + w, cy + 0.5);
+      ctx.stroke();
+    }
+
+    const vig = ctx.createRadialGradient(W / 2, H / 2, min * 0.28, W / 2, H / 2, Math.max(W, H) * 0.78);
+    vig.addColorStop(0, "rgba(7,8,11,0)");
+    vig.addColorStop(1, "rgba(7,8,11,0.5)");
+    ctx.fillStyle = vig;
+    ctx.fillRect(0, 0, W, H);
+  }
+
+  // ── texto ──
+  function paintEvent() {
+    const c = COPY[sim.state];
+    screen.style.setProperty("--evt", sim.state === "approach" ? "#f5b730"
+      : sim.state === "attending" ? "#c45644" : "#ff453a");
+    if (!c) return;
+    elKick.textContent = c.kicker;
+    elTitle.textContent = c.title;
+    elMeta.textContent = c.meta();
+  }
+
+  function paintClock(now) {
+    const d = new Date();
+    const hh = String(d.getHours()).padStart(2, "0");
+    const mm = String(d.getMinutes()).padStart(2, "0");
+    elClock.textContent = hh + ":" + mm;
+
+    if (sim.state === "standby") {
+      const s = Math.floor((now - sim.lastPoll) / 1000);
+      elQTime.textContent = "sin señal · hace " + String(Math.floor(s / 60)).padStart(2, "0") + ":" + String(s % 60).padStart(2, "0");
+    } else {
+      elQTime.textContent = hh + ":" + mm;
+    }
+    if (COPY[sim.state]) elMeta.textContent = COPY[sim.state].meta();
+  }
+
+  // ── la barra tranquila se retira sola ──
+  let chromeUntil = performance.now() + CHROME_MS;
+  function showChrome(now) { chromeUntil = now + CHROME_MS; }
+  function tickChrome(now) {
+    const on = now < chromeUntil && sim.state !== "alert";
+    quiet.classList.toggle("away", !on);
+    hint.classList.toggle("on", !on && sim.state !== "alert");
+    return on;
+  }
+  screen.addEventListener("pointerdown", () => showChrome(performance.now()));
+
+  document.getElementById("fsbtn").addEventListener("click", (e) => {
+    e.stopPropagation();
+    const el = screen.closest(".tablet");
+    if (document.fullscreenElement) document.exitFullscreen();
+    else el.requestFullscreen?.();
+    showChrome(performance.now());
+  });
+
+  // ── readout ──
+  const r_s = document.getElementById("r-s");
+  const r_age = document.getElementById("r-age");
+  const r_h = document.getElementById("r-h");
+  const r_b = document.getElementById("r-b");
+  const r_q = document.getElementById("r-q");
+
+  function paintReadout(now, chromeOn) {
+    const m = missedPolls(now);
+    r_s.textContent = sim.state;
+    r_age.textContent = ((now - sim.lastPoll) / 1000).toFixed(1).replace(".", ",") + " s";
+    r_h.textContent = m > DOWN_AFTER ? "sin conexión" : m > STALE_AFTER ? "stale" : "live";
+    r_b.textContent = sim.beatMode === "poll" ? "atado al poll" : "loop CSS (miente)";
+    r_q.textContent = chromeOn ? "visible" : "retirada";
+  }
+
+  // ── loop ──
+  let last = performance.now(), acc = 0;
+  function frame(now) {
+    const dt = Math.min(now - last, 100);
+    last = now;
+    pumpPoll(now);
+    tickSim(now);
+    const vit = tickView(dt, now);
+    draw(now, vit);
+    const chromeOn = tickChrome(now);
+    acc += dt;
+    if (acc > 220) { acc = 0; paintClock(now); paintReadout(now, chromeOn); }
+    requestAnimationFrame(frame);
+  }
+
+  // ── controles ──
+  let timers = [];
+  const btnScript = document.getElementById("script");
+  function stopScript() { timers.forEach(clearTimeout); timers = []; btnScript.textContent = "▶ corrida completa"; }
+
+  document.querySelectorAll("[data-go]").forEach(b => {
+    b.addEventListener("click", () => {
+      stopScript();
+      const g = b.dataset.go;
+      go(g === "resolve" ? "normal" : g, performance.now());
+    });
+  });
+
+  const pollBtns = [...document.querySelectorAll("[data-poll]")];
+  pollBtns.forEach(b => b.addEventListener("click", () => {
+    sim.poll = b.dataset.poll;
+    if (sim.poll === "up") { sim.lastPoll = performance.now(); sim.nextPoll = performance.now(); }
+    pollBtns.forEach(o => o.setAttribute("aria-pressed", String(o === b)));
+  }));
+
+  const beatBtns = [...document.querySelectorAll("[data-beat]")];
+  beatBtns.forEach(b => b.addEventListener("click", () => {
+    sim.beatMode = b.dataset.beat;
+    beatBtns.forEach(o => o.setAttribute("aria-pressed", String(o === b)));
+  }));
+
+  btnScript.addEventListener("click", () => {
+    if (timers.length) { stopScript(); return; }
+    btnScript.textContent = "■ cortar";
+    const steps = [
+      [0,     "normal"],
+      [3000,  "approach"],
+      [10000, "alert"],
+      [17000, "attending"],
+      [25000, "normal"],
+    ];
+    steps.forEach(([t, s]) => timers.push(setTimeout(() => go(s, performance.now()), t)));
+    timers.push(setTimeout(stopScript, 26000));
+  });
+
+  resize();
+  paintEvent();
+  paintClock(performance.now());
+  requestAnimationFrame(frame);
+})();
+</script>

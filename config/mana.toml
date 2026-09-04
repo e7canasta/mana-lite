@@ -9,8 +9,8 @@ rerun_file = "config/rerun.toml"
 # ============================================================================
 [source]
 #url = "rtsp://192.168.1.6:8554/mana015"
-#url = "rtsp://192.168.1.15:8554/clip1"
-url = "rtsp://192.168.1.6:8554/home2"
+url = "rtsp://127.0.0.1:8554/home2"
+#url = "rtsp://127.0.0.1:8554/clip1"
 username = "admin"
 password = ""
 transport = "tcp"
@@ -158,4 +158,4 @@ zones = true
 fsm = true
 [viz]
 enabled = true
-rerun_addr = "192.168.1.20:9876"
+rerun_addr = "192.168.1.27:9876"

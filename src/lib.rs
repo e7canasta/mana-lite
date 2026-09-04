@@ -41,5 +41,7 @@ pub mod viz;
 pub use mana_control::window;
 pub use mana_control::zones;
 
+pub mod pico;
+
 pub use app::App;
 pub use error::{ManaError, Result};
