@@ -4,6 +4,8 @@ La documentacion vigente se organiza por contrato y por uso:
 
 - [Manual del workshop](../workshop/MANUAL.md): ejecutar escenarios y leer
   resultados.
+- [Guia de despliegue](guides/deployment.md): instalar, configurar y operar
+  `mana-lite` en Linux.
 - [Onboarding del workshop](../workshop/ONBOARDING.md): homologar una version.
 - [Observabilidad](observability.md): metricas, JSONL y Rerun.
 - [ROI y crops](roi.md): coordenadas y recortes.

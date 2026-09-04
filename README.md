@@ -57,6 +57,8 @@ cargo run --release -- --config workshop/scenarios/01-ingest-only/mana.toml
   subproyectos.
 - [Manual del workshop](workshop/MANUAL.md): administracion, configuracion,
   escenarios, JSONL, Rerun y troubleshooting.
+- [Guia de despliegue](docs/guides/deployment.md): instalar y operar el binario
+  en un equipo Linux con `systemd`.
 - [Onboarding del workshop](workshop/ONBOARDING.md): homologacion de versiones.
 - [Especificaciones](docs/specs/): blueprints de ramas — depth
   ([depth-standard](docs/specs/depth-standard.md)), segmentacion
